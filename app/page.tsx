@@ -38,9 +38,11 @@ export default function HomePage() {
       <header className="relative z-20 border-b border-white/10 bg-[#07090d]/80 backdrop-blur-xl">
         <div className="mx-auto flex max-w-7xl items-center justify-between px-5 py-5 md:px-8">
           <a href="/" className="flex items-center gap-3">
-            <span className="grid h-10 w-10 place-items-center rounded-xl border border-orange-400/30 bg-orange-500/10 font-black text-orange-400">
-              CF
-            </span>
+            <img
+  src="/crucible-forge-mark.jpg"
+  alt="Crucible Forge"
+  className="h-12 w-12 rounded-xl object-cover"
+/>
 
             <div>
               <div className="font-semibold tracking-tight">Crucible Forge</div>
