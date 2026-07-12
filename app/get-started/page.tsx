@@ -2,14 +2,17 @@
 
 import { FormEvent, useState } from "react";
 
+type FormStatus = "idle" | "sending" | "success" | "error";
+
 export default function GetStartedPage() {
-  const [status, setStatus] = useState<
-    "idle" | "sending" | "success" | "error"
-  >("idle");
+  const [status, setStatus] = useState<FormStatus>("idle");
+  const [errorMessage, setErrorMessage] = useState("");
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+
     setStatus("sending");
+    setErrorMessage("");
 
     const form = event.currentTarget;
     const formData = new FormData(form);
@@ -24,13 +27,25 @@ export default function GetStartedPage() {
       });
 
       if (!response.ok) {
-        throw new Error("Submission failed");
+        const data = await response.json().catch(() => null);
+
+        const message =
+          data?.errors?.map((error: { message: string }) => error.message).join(", ") ||
+          "Your request could not be sent. Please try again.";
+
+        throw new Error(message);
       }
 
       form.reset();
       setStatus("success");
-    } catch {
+    } catch (error) {
       setStatus("error");
+
+      setErrorMessage(
+        error instanceof Error
+          ? error.message
+          : "Your request could not be sent. Please try again."
+      );
     }
   }
 
@@ -68,7 +83,10 @@ export default function GetStartedPage() {
 
             <button
               type="button"
-              onClick={() => setStatus("idle")}
+              onClick={() => {
+                setStatus("idle");
+                setErrorMessage("");
+              }}
               className="mt-6 rounded-xl border border-white/15 px-5 py-3 font-semibold text-white transition hover:bg-white/10"
             >
               Submit another request
@@ -85,6 +103,12 @@ export default function GetStartedPage() {
               value="New Crucible Project Request"
             />
 
+            <input
+              type="hidden"
+              name="_source"
+              value="crucibleforge.org/get-started"
+            />
+
             <div>
               <label
                 htmlFor="name"
@@ -98,6 +122,7 @@ export default function GetStartedPage() {
                 name="name"
                 type="text"
                 required
+                autoComplete="name"
                 placeholder="Your name"
                 className="w-full rounded-xl border border-white/10 bg-[#0d1016] px-4 py-3 text-white outline-none transition placeholder:text-white/30 focus:border-orange-400"
               />
@@ -116,6 +141,7 @@ export default function GetStartedPage() {
                 name="email"
                 type="email"
                 required
+                autoComplete="email"
                 placeholder="you@example.com"
                 className="w-full rounded-xl border border-white/10 bg-[#0d1016] px-4 py-3 text-white outline-none transition placeholder:text-white/30 focus:border-orange-400"
               />
@@ -156,15 +182,21 @@ export default function GetStartedPage() {
                 <option value="" disabled>
                   Select a service
                 </option>
+
                 <option value="AI integration">AI integration</option>
+
                 <option value="Website or application">
                   Website or application
                 </option>
+
                 <option value="Automation">Automation</option>
+
                 <option value="Private data and searchable knowledge">
                   Private data and searchable knowledge
                 </option>
+
                 <option value="Custom software">Custom software</option>
+
                 <option value="Other">Other</option>
               </select>
             </div>
@@ -205,19 +237,25 @@ export default function GetStartedPage() {
                 <option value="" disabled>
                   Select a range
                 </option>
+
                 <option value="Under $1,000">Under $1,000</option>
+
                 <option value="$1,000–$5,000">$1,000–$5,000</option>
+
                 <option value="$5,000–$15,000">$5,000–$15,000</option>
+
                 <option value="$15,000+">$15,000+</option>
+
                 <option value="Not sure yet">Not sure yet</option>
               </select>
             </div>
 
             {status === "error" && (
-              <p className="rounded-xl border border-red-400/30 bg-red-400/10 p-4 text-sm text-red-200">
-                The request could not be sent. Check your connection and try
-                again.
-              </p>
+              <div className="rounded-xl border border-red-400/30 bg-red-400/10 p-4">
+                <p className="text-sm text-red-200">
+                  {errorMessage}
+                </p>
+              </div>
             )}
 
             <button
@@ -229,6 +267,10 @@ export default function GetStartedPage() {
                 ? "Sending request..."
                 : "Submit project request"}
             </button>
+
+            <p className="text-center text-xs leading-5 text-white/40">
+              Your information is sent securely through Formspree.
+            </p>
           </form>
         )}
       </div>
