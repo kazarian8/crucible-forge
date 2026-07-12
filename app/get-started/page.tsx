@@ -1,1 +1,200 @@
 
+"use client";
+
+import { FormEvent, useState } from "react";
+
+export default function GetStartedPage() {
+  const [submitted, setSubmitted] = useState(false);
+
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setSubmitted(true);
+  }
+
+  return (
+    <main className="min-h-screen bg-[#07090d] px-5 py-16 text-white">
+      <div className="mx-auto max-w-2xl">
+        <a
+          href="/"
+          className="mb-10 inline-block text-sm text-white/60 transition hover:text-white"
+        >
+          ← Back to Crucible
+        </a>
+
+        <p className="mb-3 text-sm font-semibold uppercase tracking-[0.3em] text-orange-400">
+          Start a project
+        </p>
+
+        <h1 className="text-4xl font-bold tracking-tight sm:text-6xl">
+          Build with Crucible
+        </h1>
+
+        <p className="mt-6 text-lg leading-8 text-white/65">
+          Tell us what you are building, what problem you need solved, and what
+          success looks like.
+        </p>
+
+        {submitted ? (
+          <section className="mt-12 rounded-2xl border border-green-400/30 bg-green-400/10 p-8">
+            <h2 className="text-2xl font-semibold">Request received.</h2>
+
+            <p className="mt-3 text-white/70">
+              Thank you for contacting Crucible. We will be in touch shortly.
+            </p>
+
+            <button
+              type="button"
+              onClick={() => setSubmitted(false)}
+              className="mt-6 rounded-xl border border-white/15 px-5 py-3 font-semibold text-white transition hover:bg-white/10"
+            >
+              Submit another request
+            </button>
+          </section>
+        ) : (
+          <form
+            onSubmit={handleSubmit}
+            className="mt-12 space-y-6 rounded-2xl border border-white/10 bg-white/[0.03] p-6 sm:p-8"
+          >
+            <div>
+              <label
+                htmlFor="name"
+                className="mb-2 block text-sm font-medium text-white/80"
+              >
+                Name
+              </label>
+
+              <input
+                id="name"
+                name="name"
+                type="text"
+                required
+                placeholder="Your name"
+                className="w-full rounded-xl border border-white/10 bg-[#0d1016] px-4 py-3 text-white outline-none transition placeholder:text-white/30 focus:border-orange-400"
+              />
+            </div>
+
+            <div>
+              <label
+                htmlFor="email"
+                className="mb-2 block text-sm font-medium text-white/80"
+              >
+                Email
+              </label>
+
+              <input
+                id="email"
+                name="email"
+                type="email"
+                required
+                placeholder="you@example.com"
+                className="w-full rounded-xl border border-white/10 bg-[#0d1016] px-4 py-3 text-white outline-none transition placeholder:text-white/30 focus:border-orange-400"
+              />
+            </div>
+
+            <div>
+              <label
+                htmlFor="company"
+                className="mb-2 block text-sm font-medium text-white/80"
+              >
+                Company or project
+              </label>
+
+              <input
+                id="company"
+                name="company"
+                type="text"
+                placeholder="Optional"
+                className="w-full rounded-xl border border-white/10 bg-[#0d1016] px-4 py-3 text-white outline-none transition placeholder:text-white/30 focus:border-orange-400"
+              />
+            </div>
+
+            <div>
+              <label
+                htmlFor="service"
+                className="mb-2 block text-sm font-medium text-white/80"
+              >
+                What do you need?
+              </label>
+
+              <select
+                id="service"
+                name="service"
+                required
+                defaultValue=""
+                className="w-full rounded-xl border border-white/10 bg-[#0d1016] px-4 py-3 text-white outline-none transition focus:border-orange-400"
+              >
+                <option value="" disabled>
+                  Select a service
+                </option>
+                <option value="ai-integration">AI integration</option>
+                <option value="website-app">Website or application</option>
+                <option value="automation">Automation</option>
+                <option value="private-data">
+                  Private data and searchable knowledge
+                </option>
+                <option value="custom-software">Custom software</option>
+                <option value="other">Other</option>
+              </select>
+            </div>
+
+            <div>
+              <label
+                htmlFor="details"
+                className="mb-2 block text-sm font-medium text-white/80"
+              >
+                Project details
+              </label>
+
+              <textarea
+                id="details"
+                name="details"
+                required
+                rows={6}
+                placeholder="Describe your project, goals, problem, and deadline."
+                className="w-full resize-none rounded-xl border border-white/10 bg-[#0d1016] px-4 py-3 text-white outline-none transition placeholder:text-white/30 focus:border-orange-400"
+              />
+            </div>
+
+            <div>
+              <label
+                htmlFor="budget"
+                className="mb-2 block text-sm font-medium text-white/80"
+              >
+                Estimated budget
+              </label>
+
+              <select
+                id="budget"
+                name="budget"
+                required
+                defaultValue=""
+                className="w-full rounded-xl border border-white/10 bg-[#0d1016] px-4 py-3 text-white outline-none transition focus:border-orange-400"
+              >
+                <option value="" disabled>
+                  Select a range
+                </option>
+                <option value="under-1000">Under $1,000</option>
+                <option value="1000-5000">$1,000–$5,000</option>
+                <option value="5000-15000">$5,000–$15,000</option>
+                <option value="15000-plus">$15,000+</option>
+                <option value="not-sure">Not sure yet</option>
+              </select>
+            </div>
+
+            <button
+              type="submit"
+              className="w-full rounded-xl bg-orange-500 px-6 py-4 font-semibold text-black transition hover:bg-orange-400"
+            >
+              Submit project request
+            </button>
+
+            <p className="text-center text-xs leading-5 text-white/40">
+              This version displays a confirmation after submission. We will
+              connect the form to your email next.
+            </p>
+          </form>
+        )}
+      </div>
+    </main>
+  );
+}
