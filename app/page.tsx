@@ -318,7 +318,7 @@ console.log(result.output);`}</code>
           </p>
 
           <a
-            href="mailto:hello@crucibleforge.ai"
+            href="mailto:kazakazaate@gmail.com?subject=Crucible%20Forge%20Project%20Inquiry"
             className="mt-9 inline-flex rounded-full bg-white px-7 py-4 font-semibold text-black transition hover:bg-orange-400"
           >
             Contact Crucible Forge
