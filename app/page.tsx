@@ -1,66 +1,215 @@
-const platformCards = [
+"use client";
+
+import { ChangeEvent, useEffect, useRef, useState } from "react";
+
+const forgeStages = [
+  {
+    title: "Crucible is forging...",
+    description: "Preparing your audio for refinement.",
+  },
+  {
+    title: "Melting out impurities...",
+    description: "Inspecting noise, distortion, and unwanted residue.",
+  },
+  {
+    title: "Filtering the static...",
+    description: "Refining clarity while preserving the character of your track.",
+  },
+  {
+    title: "Tempering the dynamics...",
+    description: "Preparing the track for stronger balance, punch, and impact.",
+  },
+  {
+    title: "Polishing the sound...",
+    description: "Preparing your project for Justice to personally remaster.",
+  },
+];
+
+const services = [
   {
     number: "01",
-    title: "AI Bridge",
+    title: "Free Remaster",
     description:
-      "Route requests across multiple AI providers using policies for quality, cost, latency, availability, and privacy.",
+      "Send your track through the forge for a free remastering review by Justice.",
   },
   {
     number: "02",
-    title: "Data Cloud",
+    title: "Custom Production",
     description:
-      "Connect private documents, application data, embeddings, memory, and searchable knowledge.",
+      "Original instrumentals, custom samples, arrangement, and creative production.",
   },
   {
     number: "03",
-    title: "Developer Platform",
+    title: "Digital Design",
     description:
-      "Build with unified APIs, SDKs, monitoring, analytics, usage controls, and deployment tools.",
+      "Album covers, posters, merchandise graphics, promotional artwork, and visual branding.",
+  },
+  {
+    number: "04",
+    title: "Rap Training",
+    description:
+      "Instrumentals paired with synchronized rhyme stacks, cadence exercises, and writing practice.",
+  },
+  {
+    number: "05",
+    title: "Producer Showcase",
+    description:
+      "Featured production, artist releases, creative projects, and future producer spotlights.",
+  },
+  {
+    number: "06",
+    title: "Beat Battles",
+    description:
+      "Producer-versus-producer battles, community voting, challenges, and featured winners.",
   },
 ];
 
-const capabilities = [
-  "Intelligent routing",
-  "Provider fallback",
-  "Cost controls",
-  "Private data access",
-  "Request tracing",
-  "Usage visibility",
-];
+function formatFileSize(bytes: number) {
+  if (bytes < 1024 * 1024) {
+    return `${Math.round(bytes / 1024)} KB`;
+  }
+
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
 
 export default function HomePage() {
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [audioUrl, setAudioUrl] = useState("");
+  const [isForging, setIsForging] = useState(false);
+  const [forgeComplete, setForgeComplete] = useState(false);
+  const [stageIndex, setStageIndex] = useState(0);
+  const [progress, setProgress] = useState(0);
+
+  useEffect(() => {
+    return () => {
+      if (audioUrl) {
+        URL.revokeObjectURL(audioUrl);
+      }
+    };
+  }, [audioUrl]);
+
+  useEffect(() => {
+    if (!isForging) return;
+
+    const progressTimer = window.setInterval(() => {
+      setProgress((current) => {
+        const nextProgress = Math.min(current + 1, 100);
+
+        const nextStage = Math.min(
+          Math.floor(nextProgress / 20),
+          forgeStages.length - 1,
+        );
+
+        setStageIndex(nextStage);
+
+        if (nextProgress === 100) {
+          window.clearInterval(progressTimer);
+
+          window.setTimeout(() => {
+            setIsForging(false);
+            setForgeComplete(true);
+          }, 500);
+        }
+
+        return nextProgress;
+      });
+    }, 55);
+
+    return () => window.clearInterval(progressTimer);
+  }, [isForging]);
+
+  function openFilePicker() {
+    fileInputRef.current?.click();
+  }
+
+  function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+
+    if (!file) return;
+
+    if (!file.type.startsWith("audio/")) {
+      alert("Please choose an audio file.");
+      event.target.value = "";
+      return;
+    }
+
+    if (audioUrl) {
+      URL.revokeObjectURL(audioUrl);
+    }
+
+    const nextAudioUrl = URL.createObjectURL(file);
+
+    setSelectedFile(file);
+    setAudioUrl(nextAudioUrl);
+    setProgress(0);
+    setStageIndex(0);
+    setForgeComplete(false);
+    setIsForging(true);
+  }
+
+  function resetForge() {
+    if (audioUrl) {
+      URL.revokeObjectURL(audioUrl);
+    }
+
+    setSelectedFile(null);
+    setAudioUrl("");
+    setProgress(0);
+    setStageIndex(0);
+    setForgeComplete(false);
+    setIsForging(false);
+
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+  }
+
+  const inquirySubject = selectedFile
+    ? `Crucible Remaster Request - ${selectedFile.name}`
+    : "Crucible Forge Project Inquiry";
+
+  const inquiryBody = selectedFile
+    ? `Hi Justice,%0D%0A%0D%0AI would like to request a free remaster review for:%0D%0A${encodeURIComponent(
+        selectedFile.name,
+      )}%0D%0A%0D%0AArtist name:%0D%0ASong title:%0D%0AWhat I want improved:%0D%0A`
+    : "Hi Justice,%0D%0A%0D%0AI would like to discuss a project with Crucible Forge.%0D%0A";
+
   return (
-    <main className="min-h-screen overflow-hidden bg-[#07090d] text-white">
-      <div className="background-grid pointer-events-none fixed inset-0 opacity-40" />
+    <main className="min-h-screen overflow-hidden bg-[#09070f] text-white">
+      <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(circle_at_50%_0%,rgba(126,34,206,0.24),transparent_42%),radial-gradient(circle_at_15%_45%,rgba(236,72,153,0.08),transparent_30%),linear-gradient(to_bottom,#09070f,#050409)]" />
 
-      <div className="pointer-events-none fixed inset-x-0 top-0 h-[700px] bg-[radial-gradient(circle_at_50%_0%,rgba(249,115,22,0.18),transparent_55%)]" />
+      <div className="pointer-events-none fixed inset-0 opacity-[0.035] [background-image:linear-gradient(rgba(255,255,255,.8)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,.8)_1px,transparent_1px)] [background-size:46px_46px]" />
 
-      <header className="relative z-20 border-b border-white/10 bg-[#07090d]/80 backdrop-blur-xl">
-        <div className="mx-auto flex max-w-7xl items-center justify-between px-5 py-5 md:px-8">
+      <header className="relative z-30 border-b border-white/10 bg-[#09070f]/80 backdrop-blur-xl">
+        <div className="mx-auto flex max-w-7xl items-center justify-between px-5 py-4 md:px-8">
           <a href="/" className="flex items-center gap-3">
             <img
-  src="/crucible-forge-mark.jpg"
-  alt="Crucible Forge"
-  className="h-12 w-12 rounded-xl object-cover"
-/>
+              src="/crucible-forge-mark.jpg"
+              alt="Crucible Forge"
+              className="h-11 w-11 rounded-xl border border-white/10 object-cover"
+            />
 
             <div>
-              <div className="font-semibold tracking-tight">Crucible Forge</div>
+              <div className="font-semibold tracking-tight">
+                Crucible Forge
+              </div>
               <div className="text-xs text-white/40">
-                Intelligence Infrastructure
+                Music forged with purpose
               </div>
             </div>
           </a>
 
-          <nav className="hidden items-center gap-8 text-sm text-white/60 md:flex">
-            <a className="transition hover:text-white" href="#platform">
-              Platform
+          <nav className="hidden items-center gap-7 text-sm text-white/60 md:flex">
+            <a className="transition hover:text-white" href="#forge">
+              Remaster
             </a>
-            <a className="transition hover:text-white" href="#bridge">
-              AI Bridge
+            <a className="transition hover:text-white" href="#services">
+              Services
             </a>
-            <a className="transition hover:text-white" href="#developers">
-              Developers
+            <a className="transition hover:text-white" href="#showcase">
+              Showcase
             </a>
             <a className="transition hover:text-white" href="#contact">
               Contact
@@ -68,270 +217,197 @@ export default function HomePage() {
           </nav>
 
           <a
-            href="#contact"
-            className="rounded-full bg-white px-5 py-2.5 text-sm font-semibold text-black transition hover:bg-orange-400"
+            href="#forge"
+            className="rounded-full bg-gradient-to-r from-violet-600 to-fuchsia-600 px-5 py-2.5 text-sm font-semibold text-white shadow-[0_0_35px_rgba(168,85,247,.25)] transition hover:scale-[1.02]"
           >
-            Start building
+            Free remaster
           </a>
         </div>
       </header>
 
-      <section className="relative z-10 px-5 pb-24 pt-20 md:px-8 md:pb-32 md:pt-28">
+      <section className="relative z-10 px-5 pb-20 pt-16 md:px-8 md:pb-28 md:pt-24">
         <div className="mx-auto max-w-7xl">
-          <div className="mx-auto max-w-5xl text-center">
-            <div className="mb-7 inline-flex items-center gap-2 rounded-full border border-orange-400/20 bg-orange-400/10 px-4 py-2 text-xs font-medium tracking-[0.18em] text-orange-300">
-              INTELLIGENCE INFRASTRUCTURE
+          <div className="mx-auto max-w-4xl text-center">
+            <div className="mb-7 inline-flex items-center gap-2 rounded-full border border-violet-400/25 bg-violet-400/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-violet-200">
+              Your first remaster is free
             </div>
 
-            <h1 className="text-balance text-5xl font-semibold leading-[0.98] tracking-[-0.055em] sm:text-6xl md:text-8xl">
-              Build intelligence
-              <span className="block bg-gradient-to-r from-orange-300 via-orange-500 to-red-500 bg-clip-text text-transparent">
-                without limits.
+            <h1 className="text-balance text-5xl font-semibold leading-[0.96] tracking-[-0.055em] sm:text-6xl md:text-8xl">
+              Feed your sound
+              <span className="block bg-gradient-to-r from-violet-300 via-fuchsia-400 to-orange-300 bg-clip-text text-transparent">
+                into the forge.
               </span>
             </h1>
 
             <p className="mx-auto mt-7 max-w-3xl text-pretty text-lg leading-8 text-white/60 md:text-xl">
-              Connect leading AI models, private data, and intelligent workflows
-              through one secure infrastructure layer.
+              Upload your song and let Justice personally refine its clarity,
+              balance, power, and presence.
             </p>
-
-            <div className="mt-10 flex flex-col items-center justify-center gap-4 sm:flex-row">
-              <a
-                href="#platform"
-                className="w-full rounded-full bg-orange-500 px-7 py-4 font-semibold text-white shadow-[0_0_50px_rgba(249,115,22,0.22)] transition hover:bg-orange-400 sm:w-auto"
-              >
-                Explore the platform
-              </a>
-
-              <a
-                href="#architecture"
-                className="w-full rounded-full border border-white/15 bg-white/5 px-7 py-4 font-semibold text-white transition hover:bg-white/10 sm:w-auto"
-              >
-                View architecture
-              </a>
-            </div>
-
-            <p className="mt-6 text-sm text-white/35">
-              Designed for builders who need control over quality, cost,
-              reliability, and data.
-            </p>
-          </div>
-
-          <div className="relative mx-auto mt-20 max-w-6xl rounded-[2rem] border border-white/10 bg-white/[0.035] p-3 shadow-2xl shadow-black/40">
-            <div className="rounded-[1.5rem] border border-white/10 bg-[#0b0e14] p-6 md:p-10">
-              <div className="flex flex-col justify-between gap-5 border-b border-white/10 pb-6 md:flex-row md:items-center">
-                <div>
-                  <p className="text-sm text-orange-400">
-                    Crucible Routing Layer
-                  </p>
-                  <h2 className="mt-2 text-2xl font-semibold">
-                    One request. The right intelligence.
-                  </h2>
-                </div>
-
-                <div className="flex items-center gap-2 text-sm text-emerald-400">
-                  <span className="h-2 w-2 rounded-full bg-emerald-400" />
-                  Platform preview
-                </div>
-              </div>
-
-              <div className="grid gap-4 pt-6 md:grid-cols-4">
-                {["Request", "Routing Engine", "Model Providers", "Application"].map(
-                  (label, index) => (
-                    <div
-                      key={label}
-                      className="rounded-2xl border border-white/10 bg-white/[0.025] p-5"
-                    >
-                      <div className="flex items-center justify-between">
-                        <span className="font-medium">{label}</span>
-                        <span className="text-xs text-white/30">
-                          0{index + 1}
-                        </span>
-                      </div>
-
-                      <div className="mt-8 h-1.5 overflow-hidden rounded-full bg-white/10">
-                        <div
-                          className="h-full rounded-full bg-gradient-to-r from-orange-500 to-red-500"
-                          style={{ width: `${94 - index * 9}%` }}
-                        />
-                      </div>
-
-                      <p className="mt-3 text-xs text-white/40">
-                        {index === 0 && "Input received"}
-                        {index === 1 && "Policy evaluated"}
-                        {index === 2 && "Best route selected"}
-                        {index === 3 && "Response delivered"}
-                      </p>
-                    </div>
-                  ),
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <section
-        id="platform"
-        className="relative z-10 border-y border-white/10 bg-white/[0.02] px-5 py-24 md:px-8 md:py-32"
-      >
-        <div className="mx-auto max-w-7xl">
-          <div className="max-w-3xl">
-            <p className="font-medium text-orange-400">One unified platform</p>
-
-            <h2 className="mt-4 text-4xl font-semibold tracking-[-0.04em] md:text-6xl">
-              One infrastructure layer. Every intelligent system.
-            </h2>
-
-            <p className="mt-6 text-lg leading-8 text-white/55">
-              Developers should not have to stitch together model providers,
-              databases, observability tools, billing systems, and workflow
-              engines manually.
-            </p>
-          </div>
-
-          <div className="mt-14 grid gap-5 md:grid-cols-3">
-            {platformCards.map((card) => (
-              <article
-                key={card.title}
-                className="min-h-[330px] rounded-[1.75rem] border border-white/10 bg-white/[0.03] p-7 transition hover:-translate-y-1 hover:border-orange-400/30 hover:bg-white/[0.05]"
-              >
-                <div className="text-sm font-medium text-orange-400">
-                  {card.number}
-                </div>
-
-                <div className="mt-20">
-                  <h3 className="text-2xl font-semibold">{card.title}</h3>
-                  <p className="mt-4 leading-7 text-white/50">
-                    {card.description}
-                  </p>
-                </div>
-              </article>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      <section
-        id="bridge"
-        className="relative z-10 px-5 py-24 md:px-8 md:py-32"
-      >
-        <div className="mx-auto grid max-w-7xl gap-12 lg:grid-cols-2 lg:items-center">
-          <div>
-            <p className="font-medium text-orange-400">AI Bridge</p>
-
-            <h2 className="mt-4 text-4xl font-semibold tracking-[-0.04em] md:text-6xl">
-              The right intelligence for every request.
-            </h2>
-
-            <p className="mt-6 max-w-2xl text-lg leading-8 text-white/55">
-              Route requests across providers using policies for quality, cost,
-              latency, availability, privacy, and fallback behavior.
-            </p>
-
-            <div className="mt-8 grid gap-3 sm:grid-cols-2">
-              {capabilities.map((item) => (
-                <div
-                  key={item}
-                  className="rounded-xl border border-white/10 bg-white/[0.025] px-4 py-3 text-sm text-white/70"
-                >
-                  {item}
-                </div>
-              ))}
-            </div>
           </div>
 
           <div
-            id="developers"
-            className="overflow-hidden rounded-[2rem] border border-white/10 bg-[#05070a]"
+            id="forge"
+            className="relative mx-auto mt-14 max-w-5xl scroll-mt-28 overflow-hidden rounded-[2.2rem] border border-white/10 bg-white/[0.035] p-3 shadow-[0_35px_120px_rgba(0,0,0,.65)]"
           >
-            <div className="border-b border-white/10 px-6 py-4 text-sm text-white/45">
-              Proposed SDK interface
-            </div>
+            <div className="relative overflow-hidden rounded-[1.7rem] border border-white/10 bg-[#0c0912] px-5 py-10 md:px-10 md:py-14">
+              <div className="pointer-events-none absolute inset-x-0 bottom-0 h-56 bg-[radial-gradient(circle_at_50%_100%,rgba(168,85,247,.28),transparent_60%)]" />
 
-            <pre className="overflow-x-auto p-6 text-sm leading-7 text-white/70 md:p-8">
-              <code>{`const result = await crucible.generate({
-  route: "balanced",
-  input: "Analyze this contract",
-  requirements: {
-    privacy: "strict",
-    fallback: true
-  }
-});
+              <div className="relative z-10 mx-auto max-w-3xl text-center">
+                <p className="text-sm font-medium text-violet-300">
+                  The Crucible Remastering Forge
+                </p>
 
-console.log(result.output);`}</code>
-            </pre>
-          </div>
-        </div>
-      </section>
+                <h2 className="mt-3 text-3xl font-semibold tracking-tight md:text-5xl">
+                  Drop your track into the furnace
+                </h2>
 
-      <section
-        id="architecture"
-        className="relative z-10 border-y border-white/10 bg-white/[0.02] px-5 py-24 md:px-8 md:py-32"
-      >
-        <div className="mx-auto max-w-7xl">
-          <div className="max-w-3xl">
-            <p className="font-medium text-orange-400">Architecture</p>
+                <p className="mx-auto mt-4 max-w-2xl leading-7 text-white/50">
+                  WAV, MP3, M4A, AAC, or FLAC. Use the strongest-quality version
+                  you have available.
+                </p>
 
-            <h2 className="mt-4 text-4xl font-semibold tracking-[-0.04em] md:text-6xl">
-              Built as a unified intelligence layer.
-            </h2>
-          </div>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="audio/*,.wav,.mp3,.m4a,.aac,.flac"
+                  className="hidden"
+                  onChange={handleFileChange}
+                />
 
-          <div className="mt-14 grid gap-4 md:grid-cols-3">
-            {[
-              "Applications",
-              "Crucible API Gateway",
-              "Routing & Policy Engine",
-              "Model Providers",
-              "Data Cloud",
-              "Observability & Governance",
-            ].map((layer, index) => (
-              <div
-                key={layer}
-                className="rounded-2xl border border-white/10 bg-[#0b0e14] p-6"
-              >
-                <div className="text-xs text-orange-400">
-                  LAYER {index + 1}
-                </div>
-                <h3 className="mt-3 text-lg font-semibold">{layer}</h3>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
+                <button
+                  type="button"
+                  onClick={openFilePicker}
+                  disabled={isForging}
+                  className="group relative mx-auto mt-10 flex min-h-[330px] w-full max-w-xl flex-col items-center justify-center overflow-hidden rounded-[2rem] border border-dashed border-violet-400/35 bg-gradient-to-b from-violet-500/[0.08] to-black/20 px-6 py-10 transition hover:border-violet-300/70 hover:bg-violet-500/[0.12] disabled:cursor-wait"
+                >
+                  <div
+                    className={`pointer-events-none absolute inset-0 transition duration-700 ${
+                      isForging
+                        ? "bg-[radial-gradient(circle_at_50%_70%,rgba(249,115,22,.28),transparent_40%),radial-gradient(circle_at_50%_60%,rgba(168,85,247,.22),transparent_65%)]"
+                        : "bg-[radial-gradient(circle_at_50%_70%,rgba(168,85,247,.16),transparent_55%)]"
+                    }`}
+                  />
 
-      <section
-        id="contact"
-        className="relative z-10 px-5 py-24 text-center md:px-8 md:py-32"
-      >
-        <div className="mx-auto max-w-4xl rounded-[2rem] border border-white/10 bg-gradient-to-br from-orange-500/15 to-white/[0.025] px-6 py-16 md:px-12">
-          <p className="font-medium text-orange-400">Forge what comes next.</p>
+                  <div
+                    className={`relative flex h-52 w-52 items-center justify-center rounded-full border transition duration-700 ${
+                      isForging
+                        ? "scale-105 border-orange-300/40 shadow-[0_0_80px_rgba(249,115,22,.35)]"
+                        : "border-violet-300/20 shadow-[0_0_70px_rgba(168,85,247,.22)] group-hover:scale-105"
+                    }`}
+                  >
+                    <div
+                      className={`absolute inset-3 rounded-full blur-2xl transition duration-700 ${
+                        isForging
+                          ? "bg-orange-500/35"
+                          : "bg-violet-600/20"
+                      }`}
+                    />
 
-          <h2 className="mt-4 text-4xl font-semibold tracking-[-0.04em] md:text-6xl">
-            Build the next generation of intelligent software.
-          </h2>
+                    <img
+                      src="/crucible.png"
+                      alt="Crucible furnace"
+                      onError={(event) => {
+                        event.currentTarget.src = "/crucible-forge-mark.jpg";
+                      }}
+                      className={`relative h-40 w-40 rounded-full object-contain transition duration-700 ${
+                        isForging
+                          ? "animate-pulse brightness-125 saturate-150"
+                          : ""
+                      }`}
+                    />
+                  </div>
 
-          <p className="mx-auto mt-6 max-w-2xl text-lg leading-8 text-white/55">
-            Tell us what you are building and where your current AI stack is
-            slowing you down.
-          </p>
+                  <div className="relative mt-7">
+                    {!selectedFile && (
+                      <>
+                        <p className="text-xl font-semibold">
+                          Feed the forge
+                        </p>
+                        <p className="mt-2 text-sm text-white/45">
+                          Tap the furnace to select your audio file
+                        </p>
+                      </>
+                    )}
 
-          <a
-            href="mailto:kazakazaate@gmail.com?subject=Crucible%20Forge%20Project%20Inquiry"
-            className="mt-9 inline-flex rounded-full bg-white px-7 py-4 font-semibold text-black transition hover:bg-orange-400"
-          >
-            Contact Crucible Forge
-          </a>
-        </div>
-      </section>
+                    {isForging && (
+                      <>
+                        <p className="text-xl font-semibold text-orange-100">
+                          {forgeStages[stageIndex].title}
+                        </p>
+                        <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-white/50">
+                          {forgeStages[stageIndex].description}
+                        </p>
+                      </>
+                    )}
 
-      <footer className="relative z-10 border-t border-white/10 px-5 py-8 md:px-8">
-        <div className="mx-auto flex max-w-7xl flex-col justify-between gap-4 text-sm text-white/35 md:flex-row">
-          <p>© 2026 Crucible Forge. All rights reserved.</p>
-          <p>The Intelligence Infrastructure Company</p>
-        </div>
-      </footer>
-    </main>
-  );
-}
+                    {forgeComplete && (
+                      <>
+                        <p className="text-xl font-semibold text-violet-200">
+                          Your track entered the forge.
+                        </p>
+                        <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-white/50">
+                          Complete your request below so Justice can personally
+                          review and remaster it.
+                        </p>
+                      </>
+                    )}
+                  </div>
+
+                  {selectedFile && (
+                    <div className="relative mt-6 w-full max-w-md">
+                      <div className="h-2 overflow-hidden rounded-full bg-white/10">
+                        <div
+                          className="h-full rounded-full bg-gradient-to-r from-violet-500 via-fuchsia-500 to-orange-400 transition-all duration-300"
+                          style={{ width: `${progress}%` }}
+                        />
+                      </div>
+
+                      <div className="mt-3 flex items-center justify-between text-xs text-white/40">
+                        <span>{selectedFile.name}</span>
+                        <span>{progress}%</span>
+                      </div>
+                    </div>
+                  )}
+                </button>
+
+                {selectedFile && !isForging && (
+                  <div className="mx-auto mt-6 max-w-xl rounded-2xl border border-white/10 bg-white/[0.035] p-5 text-left">
+                    <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
+                      <div>
+                        <p className="font-medium text-white">
+                          {selectedFile.name}
+                        </p>
+                        <p className="mt-1 text-sm text-white/40">
+                          {formatFileSize(selectedFile.size)}
+                        </p>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={resetForge}
+                        className="text-sm font-medium text-white/50 transition hover:text-white"
+                      >
+                        Choose another track
+                      </button>
+                    </div>
+
+                    {audioUrl && (
+                      <audio
+                        controls
+                        src={audioUrl}
+                        className="mt-5 w-full"
+                      />
+                    )}
+
+                    <a
+                      href={`mailto:kazakazaate@gmail.com?subject=${encodeURIComponent(
+                        inquirySubject,
+                      )}&body=${inquiryBody}`}
+                      className="mt-5 flex w-full items-center justify-center rounded-full bg-gradient-to-r from-violet-600 to-fuchsia-600 px-6 py-4 font-semibold text-white transition hover:brightness-110"
+                    >
+                      Complete free remaster request
+                    </a>
+
+                    <p className="mt-4 text-center text-xs leading-5 text-white/35">
+                      The secure cloud-upload connection will be added next.
+                      This first version previews your selected audio locally
