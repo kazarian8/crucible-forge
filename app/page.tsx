@@ -19,7 +19,7 @@ export default function HomePage() {
 
   return (
     <main className="relative min-h-screen overflow-hidden bg-black text-white">
-      {/* Blurred background fills wide screens */}
+      {/* Blurred background fills wider screens */}
       <div
         className="absolute inset-0 scale-110 bg-cover bg-center opacity-50 blur-2xl"
         style={{
@@ -45,7 +45,7 @@ export default function HomePage() {
           {/* Dark cinematic shading */}
           <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/20 via-transparent to-black/50" />
 
-          {/* Small branding */}
+          {/* Branding */}
           <div className="absolute left-5 top-5 z-20 rounded-2xl border border-white/15 bg-black/50 px-4 py-3 backdrop-blur-md md:left-8 md:top-8">
             <p className="text-sm font-semibold tracking-[0.22em] text-orange-200">
               CRUCIBLE FORGE
@@ -62,7 +62,7 @@ export default function HomePage() {
             aria-label="Enter the Crucible studio"
             onClick={enterStudio}
             disabled={isEntering}
-            className="group absolute left-[35.4%] top-[41.7%] z-30 h-[13.4%] w-[13.8%] cursor-pointer rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-400 disabled:cursor-wait"
+            className="group absolute left-[51.5%] top-[46.8%] z-30 h-[9.8%] w-[12.5%] cursor-pointer rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-400 disabled:cursor-wait"
           >
             <span
               className={`absolute inset-0 rounded-sm border transition duration-500 ${
@@ -72,16 +72,16 @@ export default function HomePage() {
               }`}
             />
 
-            <span className="absolute inset-x-[-40%] top-1/2 -translate-y-1/2 transition group-hover:scale-105">
-              <span className="inline-flex rounded-full border border-orange-300/30 bg-black/70 px-4 py-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-orange-100 shadow-2xl backdrop-blur-md sm:text-xs md:px-5 md:py-3">
+            <span className="absolute inset-x-[-55%] top-1/2 -translate-y-1/2 transition group-hover:scale-105">
+              <span className="inline-flex rounded-full border border-orange-300/30 bg-black/70 px-3 py-2 text-[9px] font-semibold uppercase tracking-[0.18em] text-orange-100 shadow-2xl backdrop-blur-md sm:text-xs md:px-5 md:py-3">
                 {isEntering ? "Entering…" : "Tap screen to enter"}
               </span>
             </span>
           </button>
 
           {/* Mobile instruction */}
-          <div className="absolute inset-x-0 bottom-7 z-20 flex justify-center px-5 md:bottom-10">
-            <div className="rounded-full border border-white/15 bg-black/55 px-5 py-3 text-center text-xs uppercase tracking-[0.18em] text-white/70 backdrop-blur-md">
+          <div className="absolute inset-x-0 bottom-4 z-20 flex justify-center px-5 md:bottom-8">
+            <div className="rounded-full border border-white/15 bg-black/55 px-4 py-2 text-center text-[10px] uppercase tracking-[0.16em] text-white/70 backdrop-blur-md">
               Enter the studio through the monitor
             </div>
           </div>
