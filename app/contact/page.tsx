@@ -19,6 +19,7 @@ export default function ContactPage() {
           <p className="text-xs font-semibold uppercase tracking-[0.22em] text-orange-200">
             Crucible Forge
           </p>
+
           <p className="text-[10px] text-white/35">
             Contact Justice
           </p>
@@ -27,7 +28,7 @@ export default function ContactPage() {
         <button
           type="button"
           onClick={() => router.push("/studio")}
-          className="rounded-full border border-white/15 bg-white/5 px-4 py-2 text-sm text-white/70"
+          className="rounded-full border border-white/15 bg-white/5 px-4 py-2 text-sm text-white/70 transition hover:bg-white/10 hover:text-white"
         >
           Back to studio
         </button>
@@ -50,13 +51,34 @@ export default function ContactPage() {
             </p>
           </div>
 
-          <div className="mt-10 rounded-[2rem] border border-orange-300/20 bg-black/35 p-5 shadow-[0_30px_100px_rgba(0,0,0,.5)] md:p-8">
+          <div className="mt-8 grid gap-3 sm:grid-cols-2">
+            <a
+              href="tel:+14154841799"
+              className="flex items-center justify-center rounded-full border border-orange-300/25 bg-orange-400/10 px-6 py-4 font-semibold text-orange-100 transition hover:bg-orange-400/15"
+            >
+              Call Justice
+            </a>
+
+            <a
+              href="sms:+14154841799"
+              className="flex items-center justify-center rounded-full bg-gradient-to-r from-orange-600 to-amber-500 px-6 py-4 font-semibold text-black transition hover:brightness-110"
+            >
+              Text Justice
+            </a>
+          </div>
+
+          <p className="mt-3 text-center text-xs text-white/30">
+            Your phone may show the business number after you tap.
+          </p>
+
+          <div className="mt-8 rounded-[2rem] border border-orange-300/20 bg-black/35 p-5 shadow-[0_30px_100px_rgba(0,0,0,.5)] md:p-8">
             {!submitted ? (
               <form onSubmit={handleSubmit} className="space-y-5">
                 <div>
                   <label className="mb-2 block text-sm text-white/70">
                     Your name
                   </label>
+
                   <input
                     required
                     name="name"
@@ -70,6 +92,7 @@ export default function ContactPage() {
                   <label className="mb-2 block text-sm text-white/70">
                     Email
                   </label>
+
                   <input
                     required
                     name="email"
@@ -83,6 +106,7 @@ export default function ContactPage() {
                   <label className="mb-2 block text-sm text-white/70">
                     Service
                   </label>
+
                   <select
                     name="service"
                     className="w-full rounded-2xl border border-white/10 bg-[#120c08] px-4 py-3 text-white outline-none focus:border-orange-300/40"
@@ -101,6 +125,7 @@ export default function ContactPage() {
                   <label className="mb-2 block text-sm text-white/70">
                     Project details
                   </label>
+
                   <textarea
                     required
                     name="message"
@@ -112,14 +137,14 @@ export default function ContactPage() {
 
                 <button
                   type="submit"
-                  className="w-full rounded-full bg-gradient-to-r from-orange-600 to-amber-500 px-6 py-4 font-semibold text-black"
+                  className="w-full rounded-full bg-gradient-to-r from-orange-600 to-amber-500 px-6 py-4 font-semibold text-black transition hover:brightness-110"
                 >
                   Prepare inquiry
                 </button>
 
                 <p className="text-center text-xs leading-5 text-white/35">
-                  This version prepares the contact flow. We can connect it to
-                  your Formspree endpoint next.
+                  This form does not send yet. Call and text are working now.
+                  We can connect the written form to Formspree next.
                 </p>
               </form>
             ) : (
@@ -133,16 +158,17 @@ export default function ContactPage() {
                 </h2>
 
                 <p className="mx-auto mt-3 max-w-md text-sm leading-6 text-white/50">
-                  The contact page is working. The next step is connecting the
-                  form so the message actually reaches you.
+                  The form is working visually, but it is not connected to send
+                  messages yet. Use the call or text buttons to reach Justice
+                  directly.
                 </p>
 
                 <button
                   type="button"
                   onClick={() => setSubmitted(false)}
-                  className="mt-7 rounded-full border border-white/15 bg-white/5 px-5 py-3 text-sm text-white/70"
+                  className="mt-7 rounded-full border border-white/15 bg-white/5 px-5 py-3 text-sm text-white/70 transition hover:bg-white/10 hover:text-white"
                 >
-                  Send another inquiry
+                  Start another inquiry
                 </button>
               </div>
             )}
