@@ -23,7 +23,7 @@ export default function HomePage() {
       <div
         className="absolute inset-0 scale-110 bg-cover bg-center opacity-50 blur-2xl"
         style={{
-          backgroundImage: "url('/images/crucible-studio.jpg')",
+          backgroundImage: "url('/crucible-studio.jpg.PNG')",
         }}
       />
 
@@ -37,7 +37,7 @@ export default function HomePage() {
           }`}
         >
           <img
-            src="/images/crucible-studio.jpg"
+            src="/crucible-studio.jpg.PNG"
             alt="Crucible Forge recording studio surrounded by redwoods"
             className="h-full w-full object-contain"
           />
@@ -50,6 +50,7 @@ export default function HomePage() {
             <p className="text-sm font-semibold tracking-[0.22em] text-orange-200">
               CRUCIBLE FORGE
             </p>
+
             <p className="mt-1 text-xs text-white/55">
               Music forged without compromise
             </p>
@@ -60,7 +61,8 @@ export default function HomePage() {
             type="button"
             aria-label="Enter the Crucible studio"
             onClick={enterStudio}
-            className="group absolute left-[35.4%] top-[41.7%] z-30 h-[13.4%] w-[13.8%] cursor-pointer rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-400"
+            disabled={isEntering}
+            className="group absolute left-[35.4%] top-[41.7%] z-30 h-[13.4%] w-[13.8%] cursor-pointer rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-400 disabled:cursor-wait"
           >
             <span
               className={`absolute inset-0 rounded-sm border transition duration-500 ${
@@ -70,7 +72,7 @@ export default function HomePage() {
               }`}
             />
 
-            <span className="absolute inset-x-[-40%] top-1/2 -translate-y-1/2 opacity-100 transition group-hover:scale-105">
+            <span className="absolute inset-x-[-40%] top-1/2 -translate-y-1/2 transition group-hover:scale-105">
               <span className="inline-flex rounded-full border border-orange-300/30 bg-black/70 px-4 py-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-orange-100 shadow-2xl backdrop-blur-md sm:text-xs md:px-5 md:py-3">
                 {isEntering ? "Entering…" : "Tap screen to enter"}
               </span>
