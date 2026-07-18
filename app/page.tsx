@@ -1,80 +1,97 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import { useState } from "react";
 
-const tools = [
-  {
-    title: "Crucible Mastering",
-    description: "Upload and prepare your music for professional mastering.",
-  },
-  {
-    title: "AI Video Lab",
-    description: "Build cinematic visuals and music-video concepts.",
-  },
-  {
-    title: "Song Starter",
-    description: "Create concepts, structures, rhyme patterns, and direction.",
-  },
-  {
-    title: "Wordplay Training",
-    description: "Practice cadence, syllable stacks, multis, and delivery.",
-  },
-  {
-    title: "Artwork Forge",
-    description: "Create covers, posters, merchandise, and promotional art.",
-  },
-  {
-    title: "Book Justice",
-    description: "Contact Justice for custom production and creative services.",
-  },
-];
-
-export default function StudioPage() {
+export default function HomePage() {
   const router = useRouter();
+  const [isEntering, setIsEntering] = useState(false);
+
+  function enterStudio() {
+    if (isEntering) return;
+
+    setIsEntering(true);
+
+    window.setTimeout(() => {
+      router.push("/studio");
+    }, 1100);
+  }
 
   return (
-    <main className="min-h-screen bg-[#080604] px-5 py-8 text-white md:px-10">
-      <div className="mx-auto max-w-7xl">
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.25em] text-orange-300">
-              Crucible Operating System
-            </p>
+    <main className="relative min-h-screen overflow-hidden bg-black text-white">
+      {/* Blurred background fills wide screens */}
+      <div
+        className="absolute inset-0 scale-110 bg-cover bg-center opacity-50 blur-2xl"
+        style={{
+          backgroundImage: "url('/images/crucible-studio.jpg')",
+        }}
+      />
 
-            <h1 className="mt-2 text-3xl font-semibold tracking-tight md:text-5xl">
-              The Studio
-            </h1>
+      <div className="absolute inset-0 bg-black/40" />
+
+      {/* Main studio image */}
+      <div className="relative flex min-h-screen items-center justify-center">
+        <div
+          className={`relative h-screen w-full max-w-[1536px] overflow-hidden transition duration-[1100ms] ease-in-out ${
+            isEntering ? "scale-[1.35] opacity-0" : "scale-100 opacity-100"
+          }`}
+        >
+          <img
+            src="/images/crucible-studio.jpg"
+            alt="Crucible Forge recording studio surrounded by redwoods"
+            className="h-full w-full object-contain"
+          />
+
+          {/* Dark cinematic shading */}
+          <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/20 via-transparent to-black/50" />
+
+          {/* Small branding */}
+          <div className="absolute left-5 top-5 z-20 rounded-2xl border border-white/15 bg-black/50 px-4 py-3 backdrop-blur-md md:left-8 md:top-8">
+            <p className="text-sm font-semibold tracking-[0.22em] text-orange-200">
+              CRUCIBLE FORGE
+            </p>
+            <p className="mt-1 text-xs text-white/55">
+              Music forged without compromise
+            </p>
           </div>
 
+          {/* Clickable monitor hotspot */}
           <button
             type="button"
-            onClick={() => router.push("/")}
-            className="rounded-full border border-white/15 bg-white/5 px-5 py-2.5 text-sm text-white/70 transition hover:bg-white/10 hover:text-white"
+            aria-label="Enter the Crucible studio"
+            onClick={enterStudio}
+            className="group absolute left-[35.4%] top-[41.7%] z-30 h-[13.4%] w-[13.8%] cursor-pointer rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-400"
           >
-            Leave studio
+            <span
+              className={`absolute inset-0 rounded-sm border transition duration-500 ${
+                isEntering
+                  ? "border-orange-200 bg-orange-500/50 shadow-[0_0_100px_rgba(249,115,22,1)]"
+                  : "border-orange-300/0 bg-orange-500/0 group-hover:border-orange-300/60 group-hover:bg-orange-500/15 group-hover:shadow-[0_0_70px_rgba(249,115,22,.75)]"
+              }`}
+            />
+
+            <span className="absolute inset-x-[-40%] top-1/2 -translate-y-1/2 opacity-100 transition group-hover:scale-105">
+              <span className="inline-flex rounded-full border border-orange-300/30 bg-black/70 px-4 py-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-orange-100 shadow-2xl backdrop-blur-md sm:text-xs md:px-5 md:py-3">
+                {isEntering ? "Entering…" : "Tap screen to enter"}
+              </span>
+            </span>
           </button>
-        </div>
 
-        <div className="mt-12 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-          {tools.map((tool) => (
-            <button
-              key={tool.title}
-              type="button"
-              className="group min-h-56 rounded-[2rem] border border-orange-300/15 bg-gradient-to-b from-orange-500/[0.08] to-white/[0.025] p-7 text-left shadow-[0_25px_70px_rgba(0,0,0,.4)] transition hover:-translate-y-1 hover:border-orange-300/40 hover:bg-orange-500/[0.12]"
-            >
-              <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-orange-300/20 bg-orange-400/10 text-2xl">
-                ✦
-              </div>
-
-              <h2 className="mt-7 text-xl font-semibold">{tool.title}</h2>
-
-              <p className="mt-3 text-sm leading-6 text-white/50">
-                {tool.description}
-              </p>
-            </button>
-          ))}
+          {/* Mobile instruction */}
+          <div className="absolute inset-x-0 bottom-7 z-20 flex justify-center px-5 md:bottom-10">
+            <div className="rounded-full border border-white/15 bg-black/55 px-5 py-3 text-center text-xs uppercase tracking-[0.18em] text-white/70 backdrop-blur-md">
+              Enter the studio through the monitor
+            </div>
+          </div>
         </div>
       </div>
+
+      {/* Transition flash */}
+      <div
+        className={`pointer-events-none fixed inset-0 z-50 bg-orange-100 transition duration-700 ${
+          isEntering ? "opacity-100" : "opacity-0"
+        }`}
+      />
     </main>
   );
 }
