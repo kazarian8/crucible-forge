@@ -1,17 +1,19 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
-export async function proxy(request: NextRequest) {
+export async function middleware(request: NextRequest) {
   let response = NextResponse.next({
     request,
   });
 
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+
   const supabaseKey =
     process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ??
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
   if (!supabaseUrl || !supabaseKey) {
+    console.error("Supabase environment variables are missing.");
     return response;
   }
 
@@ -37,6 +39,7 @@ export async function proxy(request: NextRequest) {
     },
   });
 
+  // Refreshes the authenticated user's session when necessary.
   await supabase.auth.getUser();
 
   return response;
@@ -44,6 +47,9 @@ export async function proxy(request: NextRequest) {
 
 export const config = {
   matcher: [
+    /*
+     * Run on all routes except Next.js assets and common image files.
+     */
     "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
   ],
 };
