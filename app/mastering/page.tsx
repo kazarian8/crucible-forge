@@ -9,10 +9,9 @@ import {
   useState,
 } from "react";
 import { useRouter } from "next/navigation";
-import { createClient } from "@/lib/supabase/client";
+import { createClient } from "../../lib/supabase/client";
 
 const MAX_FILE_SIZE = 100 * 1024 * 1024;
-
 const ALLOWED_EXTENSIONS = ["wav", "mp3", "m4a", "aac", "flac"];
 
 function formatFileSize(bytes: number) {
@@ -47,7 +46,6 @@ function cleanFileName(fileName: string) {
 export default function MasteringPage() {
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-
   const supabase = useMemo(() => createClient(), []);
 
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -304,7 +302,6 @@ export default function MasteringPage() {
             </p>
 
             <p className="mt-2 font-semibold text-white">{songTitle}</p>
-
             <p className="mt-1 text-sm text-white/45">{artistName}</p>
 
             {masteringNotes.trim() && (
