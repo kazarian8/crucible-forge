@@ -2,7 +2,7 @@
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { createClient } from "@/lib/supabase/client";
+import { createClient } from "../../lib/supabase/client";
 
 type AuthMode = "login" | "signup";
 
@@ -60,7 +60,7 @@ export default function LoginPage() {
           return;
         }
       } catch {
-        // The login form will remain available if session checking fails.
+        // Keep the login form available if session checking fails.
       } finally {
         if (active) {
           setCheckingSession(false);
