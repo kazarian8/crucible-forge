@@ -1,13 +1,13 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, Suspense, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 
-export default function LoginPage() {
+function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const supabase = createClient();
+  const supabase = useMemo(() => createClient(), []);
 
   const [mode, setMode] = useState<"login" | "signup">("login");
   const [email, setEmail] = useState("");
@@ -16,6 +16,7 @@ export default function LoginPage() {
   const [message, setMessage] = useState("");
 
   const requestedNext = searchParams.get("next");
+
   const nextRoute =
     requestedNext?.startsWith("/") && !requestedNext.startsWith("//")
       ? requestedNext
@@ -23,17 +24,18 @@ export default function LoginPage() {
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+
     setLoading(true);
     setMessage("");
 
     try {
       if (mode === "signup") {
         const { data, error } = await supabase.auth.signUp({
-          email,
+          email: email.trim(),
           password,
           options: {
             emailRedirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(
-              nextRoute
+              nextRoute,
             )}`,
           },
         });
@@ -50,13 +52,13 @@ export default function LoginPage() {
         }
 
         setMessage(
-          "Account created. Check your email and tap the confirmation link."
+          "Account created. Check your email and tap the confirmation link.",
         );
         return;
       }
 
       const { error } = await supabase.auth.signInWithPassword({
-        email,
+        email: email.trim(),
         password,
       });
 
@@ -72,6 +74,11 @@ export default function LoginPage() {
     } finally {
       setLoading(false);
     }
+  }
+
+  function changeMode(nextMode: "login" | "signup") {
+    setMode(nextMode);
+    setMessage("");
   }
 
   return (
@@ -94,17 +101,14 @@ export default function LoginPage() {
 
         <p className="mt-3 text-sm leading-6 text-white/50">
           {mode === "login"
-            ? "Log in to continue your mastering project."
-            : "Create an account to save projects, orders, and mastered tracks."}
+            ? "Log in to continue your free quick-remaster submission."
+            : "Create an account to claim your free quick-remaster sample and enter the giveaway."}
         </p>
 
         <div className="mt-7 grid grid-cols-2 rounded-2xl border border-white/10 bg-white/[0.03] p-1">
           <button
             type="button"
-            onClick={() => {
-              setMode("login");
-              setMessage("");
-            }}
+            onClick={() => changeMode("login")}
             className={`rounded-xl px-4 py-3 text-sm font-semibold transition ${
               mode === "login"
                 ? "bg-orange-400 text-black"
@@ -116,10 +120,7 @@ export default function LoginPage() {
 
           <button
             type="button"
-            onClick={() => {
-              setMode("signup");
-              setMessage("");
-            }}
+            onClick={() => changeMode("signup")}
             className={`rounded-xl px-4 py-3 text-sm font-semibold transition ${
               mode === "signup"
                 ? "bg-orange-400 text-black"
@@ -189,15 +190,37 @@ export default function LoginPage() {
               ? "Working..."
               : mode === "login"
                 ? "Log In and Continue"
-                : "Create Account"}
+                : "Create Account and Continue"}
           </button>
         </form>
 
         <p className="mt-6 text-center text-xs leading-5 text-white/35">
-          Your account keeps your Crucible projects, orders, and downloads
-          connected to you.
+          After signup or login, you will continue directly to the free
+          quick-remaster upload.
         </p>
       </section>
     </main>
+  );
+}
+
+function LoginLoading() {
+  return (
+    <main className="flex min-h-screen items-center justify-center bg-[#080604] text-white">
+      <div className="text-center">
+        <div className="mx-auto h-11 w-11 animate-spin rounded-full border-2 border-orange-300/20 border-t-orange-400" />
+
+        <p className="mt-4 text-sm text-white/45">
+          Opening your Crucible account...
+        </p>
+      </div>
+    </main>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={<LoginLoading />}>
+      <LoginForm />
+    </Suspense>
   );
 }
