@@ -1,6 +1,20 @@
 "use client";
 
-import { ChangeEvent, useState } from "react";
+import { ChangeEvent, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { createClient } from "@supabase/supabase-js";
+
+
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+if (!supabaseUrl || !supabaseAnonKey) {
+  throw new Error(
+    "Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY."
+  );
+}
+
+const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 type Scene = {
   scene_number: number;
@@ -189,6 +203,9 @@ function ResultCard({
 }
 
 export default function PromptReforgePage() {
+  const router = useRouter();
+  const [checkingAuth, setCheckingAuth] = useState(true);
+  const [isSignedIn, setIsSignedIn] = useState(false);
   const [videoFile, setVideoFile] = useState<File | null>(null);
   const [notes, setNotes] = useState("");
   const [analysis, setAnalysis] =
@@ -197,6 +214,52 @@ export default function PromptReforgePage() {
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    let mounted = true;
+
+    async function checkSession() {
+      const { data, error: sessionError } =
+        await supabase.auth.getSession();
+
+      if (!mounted) {
+        return;
+      }
+
+      if (sessionError || !data.session) {
+        setIsSignedIn(false);
+        setCheckingAuth(false);
+        router.replace("/login");
+        return;
+      }
+
+      setIsSignedIn(true);
+      setCheckingAuth(false);
+    }
+
+    checkSession();
+
+    const { data: authListener } =
+      supabase.auth.onAuthStateChange((_event, session) => {
+        if (!mounted) {
+          return;
+        }
+
+        if (!session) {
+          setIsSignedIn(false);
+          router.replace("/login");
+          return;
+        }
+
+        setIsSignedIn(true);
+        setCheckingAuth(false);
+      });
+
+    return () => {
+      mounted = false;
+      authListener.subscription.unsubscribe();
+    };
+  }, [router]);
 
   function handleVideoChange(
     event: ChangeEvent<HTMLInputElement>
@@ -210,6 +273,11 @@ export default function PromptReforgePage() {
   }
 
   async function handleReforge() {
+    if (!isSignedIn) {
+      router.replace("/login");
+      return;
+    }
+
     if (!videoFile) {
       setError("Choose a video first.");
       return;
@@ -266,6 +334,21 @@ export default function PromptReforgePage() {
     } finally {
       setLoading(false);
     }
+  }
+
+  if (checkingAuth || !isSignedIn) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-zinc-950 px-4 text-white">
+        <div className="text-center">
+          <p className="text-sm font-semibold uppercase tracking-[0.3em] text-orange-400">
+            Crucible
+          </p>
+          <p className="mt-4 text-zinc-300">
+            Checking your account...
+          </p>
+        </div>
+      </main>
+    );
   }
 
   return (
