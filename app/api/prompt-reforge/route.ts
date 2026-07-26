@@ -5,10 +5,6 @@ import { promptReforgeSchema } from "../../../lib/promptReforgeSchema";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
-
 const REFORGE_INSTRUCTIONS = `
 You are Prompt Reforge, a professional video reverse-engineering system.
 
@@ -49,6 +45,10 @@ export async function POST(request: NextRequest) {
         { status: 500 }
       );
     }
+
+    const openai = new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY,
+    });
 
     const body = (await request.json()) as ReforgeRequest;
 
