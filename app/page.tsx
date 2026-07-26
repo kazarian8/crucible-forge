@@ -427,6 +427,7 @@ export default function HomePage() {
               Private One-on-One Guidance
             </p>
 
+            
             <h3 className="mt-3 text-3xl font-black sm:text-4xl">
               Build Your Release With Justice
             </h3>
