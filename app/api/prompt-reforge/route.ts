@@ -1,9 +1,13 @@
 import OpenAI from "openai";
 import { NextRequest, NextResponse } from "next/server";
-import { promptReforgeSchema } from "@/lib/promptReforgeSchema";
+import { promptReforgeSchema } from "../../../lib/promptReforgeSchema";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
+
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+});
 
 const REFORGE_INSTRUCTIONS = `
 You are Prompt Reforge, a professional video reverse-engineering system.
@@ -39,18 +43,12 @@ type ReforgeRequest = {
 
 export async function POST(request: NextRequest) {
   try {
-    const apiKey = process.env.OPENAI_API_KEY;
-
-    if (!apiKey) {
+    if (!process.env.OPENAI_API_KEY) {
       return NextResponse.json(
         { error: "OPENAI_API_KEY is not configured." },
         { status: 500 }
       );
     }
-
-    const openai = new OpenAI({
-      apiKey,
-    });
 
     const body = (await request.json()) as ReforgeRequest;
 
@@ -64,17 +62,6 @@ export async function POST(request: NextRequest) {
     if (body.frames.length > 16) {
       return NextResponse.json(
         { error: "A maximum of sixteen frames is allowed." },
-        { status: 400 }
-      );
-    }
-
-    const invalidFrame = body.frames.some(
-      (frame) => typeof frame !== "string" || frame.trim().length === 0
-    );
-
-    if (invalidFrame) {
-      return NextResponse.json(
-        { error: "Every frame must be a valid image URL or data URL." },
         { status: 400 }
       );
     }
