@@ -88,6 +88,7 @@ function formatDuration(seconds: number) {
 export default function SoundFurnacePage() {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const forgeAudioContextRef = useRef<AudioContext | null>(null);
 
   const [stage, setStage] = useState<ForgeStage>("upload");
   const [file, setFile] = useState<File | null>(null);
@@ -122,9 +123,11 @@ export default function SoundFurnacePage() {
 
     setProgress(0);
     setForgeMessage(forgeMessages[0]);
+    playForgeTone(96, 520, 0.1, "sawtooth");
 
     const startedAt = Date.now();
     const totalDuration = 7600;
+    let lastMessageIndex = 0;
 
     const timer = window.setInterval(() => {
       const elapsed = Date.now() - startedAt;
@@ -137,14 +140,70 @@ export default function SoundFurnacePage() {
       );
       setForgeMessage(forgeMessages[messageIndex]);
 
+      if (messageIndex !== lastMessageIndex) {
+        lastMessageIndex = messageIndex;
+        playForgeTone(150 + messageIndex * 24, 150, 0.045, "triangle");
+      }
+
       if (nextProgress >= 100) {
         window.clearInterval(timer);
-        window.setTimeout(() => setStage("complete"), 450);
+        playForgeTone(440, 180, 0.06, "triangle");
+        window.setTimeout(() => {
+          playForgeTone(660, 360, 0.07, "sine");
+          setStage("complete");
+        }, 450);
       }
     }, 90);
 
     return () => window.clearInterval(timer);
   }, [stage]);
+
+  function playForgeTone(
+    frequency: number,
+    durationMs: number,
+    volume = 0.08,
+    type: OscillatorType = "sine",
+  ) {
+    if (!soundEnabled || typeof window === "undefined") return;
+
+    const AudioContextClass =
+      window.AudioContext ||
+      (window as typeof window & { webkitAudioContext?: typeof AudioContext })
+        .webkitAudioContext;
+
+    if (!AudioContextClass) return;
+
+    const context =
+      forgeAudioContextRef.current ?? new AudioContextClass();
+    forgeAudioContextRef.current = context;
+
+    if (context.state === "suspended") {
+      void context.resume();
+    }
+
+    const oscillator = context.createOscillator();
+    const gain = context.createGain();
+    const now = context.currentTime;
+
+    oscillator.type = type;
+    oscillator.frequency.setValueAtTime(frequency, now);
+    oscillator.frequency.exponentialRampToValueAtTime(
+      Math.max(45, frequency * 0.72),
+      now + durationMs / 1000,
+    );
+
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(volume, now + 0.015);
+    gain.gain.exponentialRampToValueAtTime(
+      0.0001,
+      now + durationMs / 1000,
+    );
+
+    oscillator.connect(gain);
+    gain.connect(context.destination);
+    oscillator.start(now);
+    oscillator.stop(now + durationMs / 1000);
+  }
 
   function validateAndLoad(candidate: File | null) {
     setError("");
@@ -470,7 +529,10 @@ export default function SoundFurnacePage() {
                 <button
                   type="button"
                   className="forge-button"
-                  onClick={() => setStage("forging")}
+                  onClick={() => {
+                    playForgeTone(120, 120, 0.035, "square");
+                    setStage("forging");
+                  }}
                 >
                   ⚒ Reforge My Track
                 </button>
@@ -584,7 +646,7 @@ export default function SoundFurnacePage() {
       </section>
 
       <footer>
-        <p>CRUCIBLE SOUND FURNACE • DAY ONE SHELL</p>
+        <p>CRUCIBLE SOUND FURNACE • FIRST FORGE</p>
         <span>Real mastering engine connects in Milestone 2.</span>
       </footer>
 
