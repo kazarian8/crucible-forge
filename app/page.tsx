@@ -290,7 +290,7 @@ export default function HomePage() {
             <span className="font-bold tracking-[0.18em] text-white/55">CRUCIBLE</span>
           </div>
           <p>Everything enters raw. Everything leaves reforged.</p>
-          <div className="flex gap-5"><Link href="/contact" className="hover:text-white">Contact</Link><Link href="/login" className="hover:text-white">Log in</Link></div>
+          <div className="flex flex-wrap gap-x-5 gap-y-2"><Link href="/contact" className="hover:text-white">Contact</Link><Link href="/terms" className="hover:text-white">Terms</Link><Link href="/privacy" className="hover:text-white">Privacy</Link><Link href="/disclaimer" className="hover:text-white">Disclaimer</Link><Link href="/login" className="hover:text-white">Log in</Link></div>
         </div>
       </footer>
     </main>

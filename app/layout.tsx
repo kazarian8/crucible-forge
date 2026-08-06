@@ -18,16 +18,16 @@ export const metadata: Metadata = {
     template: "%s | Crucible Forge",
   },
   description:
-    "Connect every AI. Unify every dataset. Power every intelligent application.",
+    "Private browser-based audio analysis and quick remastering for independent creators.",
   keywords: [
     "AI",
     "Artificial Intelligence",
-    "Developer Platform",
-    "Infrastructure",
-    "API",
-    "LLM",
+    "Audio Mastering",
+    "Music Production",
+    "Quick Remaster",
     "Crucible Forge",
   ],
+  manifest: "/manifest.webmanifest",
 };
 
 export default function RootLayout({

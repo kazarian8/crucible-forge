@@ -9,7 +9,17 @@ export default function ContactPage() {
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const body = [
+      "Crucible Forge project inquiry",
+      `Name: ${String(form.get("name") ?? "")}`,
+      `Email: ${String(form.get("email") ?? "")}`,
+      `Service: ${String(form.get("service") ?? "")}`,
+      "",
+      String(form.get("message") ?? ""),
+    ].join("\n");
     setSubmitted(true);
+    window.location.href = `sms:+14154841799?&body=${encodeURIComponent(body)}`;
   }
 
   return (
@@ -139,12 +149,12 @@ export default function ContactPage() {
                   type="submit"
                   className="w-full rounded-full bg-gradient-to-r from-orange-600 to-amber-500 px-6 py-4 font-semibold text-black transition hover:brightness-110"
                 >
-                  Prepare inquiry
+                  Prepare text inquiry
                 </button>
 
                 <p className="text-center text-xs leading-5 text-white/35">
-                  This form does not send yet. Call and text are working now.
-                  We can connect the written form to Formspree next.
+                  Submitting opens a prefilled text to Justice. Review it in
+                  your messaging app, then tap Send.
                 </p>
               </form>
             ) : (
@@ -154,13 +164,12 @@ export default function ContactPage() {
                 </div>
 
                 <h2 className="mt-6 text-3xl font-semibold">
-                  Inquiry prepared
+                  Text inquiry prepared
                 </h2>
 
                 <p className="mx-auto mt-3 max-w-md text-sm leading-6 text-white/50">
-                  The form is working visually, but it is not connected to send
-                  messages yet. Use the call or text buttons to reach Justice
-                  directly.
+                  Your messaging app should have opened with the project details.
+                  Review the message and tap Send to deliver it to Justice.
                 </p>
 
                 <button
