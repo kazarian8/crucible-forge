@@ -1,16 +1,21 @@
 "use client";
 
 import { useState } from "react";
-import { createClient } from "../../lib/supabase/client";
+import { createClient, isSupabaseConfigured } from "../../lib/supabase/client";
 
 export default function LoginPage() {
-  const supabase = createClient();
+  const configured = isSupabaseConfigured();
+  const supabase = configured ? createClient() : null;
 
   const [email, setEmail] = useState("");
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
 
   async function handleSignIn() {
+    if (!supabase) {
+      setMessage("Sign-in is temporarily unavailable while service configuration is restored.");
+      return;
+    }
     setLoading(true);
     setMessage("");
 
@@ -51,7 +56,7 @@ export default function LoginPage() {
 
         <button
           onClick={handleSignIn}
-          disabled={loading || !email}
+          disabled={!configured || loading || !email}
           className="w-full rounded-lg bg-orange-600 hover:bg-orange-500 disabled:opacity-50 py-3 font-bold"
         >
           {loading ? "Sending..." : "Sign In"}
@@ -60,6 +65,12 @@ export default function LoginPage() {
         {message && (
           <p className="text-sm text-center text-zinc-300 mt-4">
             {message}
+          </p>
+        )}
+
+        {!configured && (
+          <p role="alert" className="mt-4 rounded-lg border border-amber-400/25 bg-amber-500/10 p-3 text-center text-sm text-amber-100">
+            Sign-in is temporarily unavailable. No account information was submitted.
           </p>
         )}
       </div>
