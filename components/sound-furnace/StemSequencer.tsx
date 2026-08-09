@@ -51,6 +51,17 @@ type StemSequencerProps = {
   onMixReady: (buffer: AudioBuffer, name: string) => void;
 };
 
+type CadenceProfile = {
+  bpm: number;
+  confidence: number;
+  onsets: number[];
+};
+
+type CadenceSuggestion = {
+  nudgeSeconds: number;
+  confidence: number;
+};
+
 function dbToGain(value: number) {
   return Math.pow(10, value / 20);
 }
@@ -88,6 +99,149 @@ function detectAudibleRange(buffer: AudioBuffer) {
     start: Math.max(0, first / buffer.sampleRate - TRIM_PADDING_SECONDS),
     end: Math.min(buffer.duration, (last + 1) / buffer.sampleRate + TRIM_PADDING_SECONDS),
   };
+}
+
+function median(values: number[]) {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((left, right) => left - right);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0
+    ? (sorted[middle - 1] + sorted[middle]) / 2
+    : sorted[middle];
+}
+
+function analyzeCadence(buffer: AudioBuffer): CadenceProfile {
+  const frameSize = 1024;
+  const hopSize = 512;
+  const envelope: number[] = [];
+  let previousEnergy = 0;
+
+  for (let start = 0; start < buffer.length; start += hopSize) {
+    let sum = 0;
+    let count = 0;
+    const end = Math.min(buffer.length, start + frameSize);
+    for (let channel = 0; channel < buffer.numberOfChannels; channel += 1) {
+      const data = buffer.getChannelData(channel);
+      for (let index = start; index < end; index += 1) {
+        sum += data[index] * data[index];
+        count += 1;
+      }
+    }
+    const energy = Math.sqrt(sum / Math.max(1, count));
+    envelope.push(Math.max(0, energy - previousEnergy * 0.82));
+    previousEnergy = energy;
+  }
+
+  const mean = envelope.reduce((sum, value) => sum + value, 0) / Math.max(1, envelope.length);
+  const variance =
+    envelope.reduce((sum, value) => sum + Math.pow(value - mean, 2), 0) /
+    Math.max(1, envelope.length);
+  const threshold = mean + Math.sqrt(variance) * 1.15;
+  const minimumFrames = Math.max(1, Math.round((0.075 * buffer.sampleRate) / hopSize));
+  const onsets: number[] = [];
+  let lastFrame = -minimumFrames;
+
+  for (let frame = 1; frame < envelope.length - 1; frame += 1) {
+    const value = envelope[frame];
+    if (
+      value >= threshold &&
+      value >= envelope[frame - 1] &&
+      value > envelope[frame + 1] &&
+      frame - lastFrame >= minimumFrames
+    ) {
+      onsets.push((frame * hopSize) / buffer.sampleRate);
+      lastFrame = frame;
+    }
+  }
+
+  const tempoVotes = new Map<number, number>();
+  for (let index = 1; index < onsets.length; index += 1) {
+    for (let back = Math.max(0, index - 4); back < index; back += 1) {
+      const interval = onsets[index] - onsets[back];
+      if (interval <= 0) continue;
+      let bpm = 60 / interval;
+      while (bpm < 70) bpm *= 2;
+      while (bpm > 180) bpm /= 2;
+      const bucket = Math.round(bpm);
+      tempoVotes.set(bucket, (tempoVotes.get(bucket) ?? 0) + 1 / (index - back));
+    }
+  }
+
+  let bpm = 120;
+  let winningVotes = 0;
+  let totalVotes = 0;
+  for (const [candidate, votes] of tempoVotes) {
+    totalVotes += votes;
+    if (votes > winningVotes) {
+      bpm = candidate;
+      winningVotes = votes;
+    }
+  }
+
+  return {
+    bpm,
+    confidence: totalVotes > 0 ? Math.min(1, winningVotes / totalVotes * 3) : 0,
+    onsets,
+  };
+}
+
+function learnCadenceSuggestions(
+  tracks: StemTrack[],
+  profiles: Record<string, CadenceProfile>,
+  referenceId: string,
+) {
+  const reference = tracks.find((track) => track.id === referenceId);
+  const referenceProfile = profiles[referenceId];
+  if (!reference || !referenceProfile) return {};
+
+  const referenceOnsets = referenceProfile.onsets
+    .filter((time) => time >= reference.trimStartSeconds && time <= reference.trimEndSeconds)
+    .map((time) => reference.startSeconds + time - reference.trimStartSeconds);
+  const gridSeconds = 60 / Math.max(1, referenceProfile.bpm) / 4;
+  const matchWindow = Math.max(0.08, Math.min(0.2, gridSeconds * 0.85));
+  const suggestions: Record<string, CadenceSuggestion> = {};
+
+  for (const track of tracks) {
+    if (track.id === referenceId) {
+      suggestions[track.id] = { nudgeSeconds: 0, confidence: 1 };
+      continue;
+    }
+    const profile = profiles[track.id];
+    if (!profile) continue;
+    const corrections: number[] = [];
+    const trackOnsets = profile.onsets
+      .filter((time) => time >= track.trimStartSeconds && time <= track.trimEndSeconds)
+      .map((time) => track.startSeconds + time - track.trimStartSeconds);
+
+    for (const onset of trackOnsets) {
+      let nearestCorrection = Number.POSITIVE_INFINITY;
+      for (const referenceOnset of referenceOnsets) {
+        const correction = referenceOnset - onset;
+        if (Math.abs(correction) < Math.abs(nearestCorrection)) {
+          nearestCorrection = correction;
+        }
+      }
+      if (Math.abs(nearestCorrection) <= matchWindow) corrections.push(nearestCorrection);
+    }
+
+    if (corrections.length === 0 && referenceOnsets.length > 0 && trackOnsets.length > 0) {
+      const origin = referenceOnsets[0];
+      for (const onset of trackOnsets) {
+        const target = origin + Math.round((onset - origin) / gridSeconds) * gridSeconds;
+        const correction = target - onset;
+        if (Math.abs(correction) <= matchWindow) corrections.push(correction);
+      }
+    }
+
+    suggestions[track.id] = {
+      nudgeSeconds: median(corrections),
+      confidence: trackOnsets.length > 0
+        ? Math.min(1, corrections.length / Math.min(12, trackOnsets.length))
+        : 0,
+    };
+  }
+
+  return suggestions;
 }
 
 function trackDuration(track: StemTrack) {
@@ -338,6 +492,10 @@ export default function StemSequencer({ onMixReady }: StemSequencerProps) {
   const [playing, setPlaying] = useState(false);
   const [previewUrl, setPreviewUrl] = useState("");
   const [compareIds, setCompareIds] = useState<string[]>([]);
+  const [cadenceReferenceId, setCadenceReferenceId] = useState("");
+  const [cadenceStrength, setCadenceStrength] = useState(65);
+  const [cadenceProfiles, setCadenceProfiles] = useState<Record<string, CadenceProfile>>({});
+  const [cadenceSuggestions, setCadenceSuggestions] = useState<Record<string, CadenceSuggestion>>({});
   const [error, setError] = useState("");
   const [status, setStatus] = useState("Add stems to build a clean master-ready mix.");
 
@@ -427,6 +585,9 @@ export default function StemSequencer({ onMixReady }: StemSequencerProps) {
 
       await context.close();
       setTracks((current) => [...current, ...additions]);
+      setCadenceReferenceId((current) => current || additions[0]?.id || "");
+      setCadenceProfiles({});
+      setCadenceSuggestions({});
       setStatus(
         `Loaded ${additions.length} stem${additions.length === 1 ? "" : "s"}. Dead space was trimmed with a safe 25 ms edge.`,
       );
@@ -451,6 +612,54 @@ export default function StemSequencer({ onMixReady }: StemSequencerProps) {
       })),
     );
     setStatus("All stems aligned to the same zero point.");
+  }
+
+  function scanCadence() {
+    if (tracks.length === 0) return;
+    setBusy(true);
+    setError("");
+    setStatus("Scanning transients, tempo, phrase spacing, and human timing pocket…");
+    window.setTimeout(() => {
+      try {
+        const profiles: Record<string, CadenceProfile> = {};
+        for (const track of tracks) {
+          profiles[track.id] = analyzeCadence(track.buffer);
+        }
+        const referenceId = cadenceReferenceId || tracks[0].id;
+        setCadenceReferenceId(referenceId);
+        setCadenceProfiles(profiles);
+        setCadenceSuggestions(
+          learnCadenceSuggestions(tracks, profiles, referenceId),
+        );
+        const reference = profiles[referenceId];
+        setStatus(
+          `Cadence learned from the reference stem: about ${reference.bpm} BPM with ${reference.onsets.length} detected timing events. Review the visual nudges before applying.`,
+        );
+      } catch {
+        setError("Cadence analysis could not finish on this device.");
+        setStatus("The original stem timing remains unchanged.");
+      } finally {
+        setBusy(false);
+      }
+    }, 20);
+  }
+
+  function applyCadenceSuggestions() {
+    setTracks((current) =>
+      current.map((track) => {
+        const suggestion = cadenceSuggestions[track.id];
+        if (!suggestion || track.id === cadenceReferenceId) return track;
+        const applied = suggestion.nudgeSeconds * (cadenceStrength / 100);
+        return {
+          ...track,
+          startSeconds: Math.max(0, track.startSeconds + applied),
+        };
+      }),
+    );
+    setStatus(
+      `Applied Smart Cadence at ${cadenceStrength}% strength. Internal vocal timing was preserved; only phase-safe stem placement moved.`,
+    );
+    setCadenceSuggestions({});
   }
 
   async function buildMix(sendToForge: boolean) {
@@ -547,6 +756,82 @@ export default function StemSequencer({ onMixReady }: StemSequencerProps) {
         ))}
       </div>
 
+      {tracks.length > 0 ? (
+        <section className="mt-5 rounded-2xl border border-violet-300/20 bg-violet-400/[0.045] p-4">
+          <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-end">
+            <div className="max-w-xl">
+              <p className="text-[10px] font-black uppercase tracking-[0.2em] text-violet-200/75">
+                Smart Cadence Quantize
+              </p>
+              <h3 className="mt-1 text-lg font-black text-white/90">Learn the pocket—don’t erase it.</h3>
+              <p className="mt-1 text-xs leading-5 text-white/42">
+                The reference stem teaches Crucible the tempo, transient pattern, and human timing. Suggested stem nudges remain visible and require approval.
+              </p>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-[minmax(150px,1fr)_minmax(180px,1fr)_auto_auto]">
+              <label className="text-[9px] font-bold uppercase tracking-wider text-white/35">
+                Learn from
+                <select
+                  value={cadenceReferenceId}
+                  onChange={(event) => {
+                    setCadenceReferenceId(event.target.value);
+                    setCadenceSuggestions({});
+                  }}
+                  className="mt-1 w-full rounded-lg border border-white/10 bg-black/55 px-3 py-2.5 text-xs text-white"
+                >
+                  {tracks.map((track) => (
+                    <option key={track.id} value={track.id}>{track.name}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="text-[9px] font-bold uppercase tracking-wider text-white/35">
+                Strength {cadenceStrength}%
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  step="5"
+                  value={cadenceStrength}
+                  onChange={(event) => setCadenceStrength(event.target.valueAsNumber)}
+                  className="mt-3 w-full accent-violet-400"
+                />
+              </label>
+              <button
+                type="button"
+                onClick={scanCadence}
+                disabled={busy}
+                className="self-end rounded-xl border border-violet-300/25 px-4 py-2.5 text-xs font-black text-violet-100 disabled:opacity-40"
+              >
+                Scan cadence
+              </button>
+              <button
+                type="button"
+                onClick={applyCadenceSuggestions}
+                disabled={busy || Object.keys(cadenceSuggestions).length === 0}
+                className="self-end rounded-xl bg-violet-300 px-4 py-2.5 text-xs font-black text-violet-950 disabled:opacity-35"
+              >
+                Apply nudges
+              </button>
+            </div>
+          </div>
+
+          {cadenceProfiles[cadenceReferenceId] ? (
+            <div className="mt-3 flex flex-wrap gap-2 text-[10px] font-bold uppercase tracking-wider">
+              <span className="rounded-full bg-black/30 px-3 py-1.5 text-violet-100/70">
+                Estimated {cadenceProfiles[cadenceReferenceId].bpm} BPM
+              </span>
+              <span className="rounded-full bg-black/30 px-3 py-1.5 text-violet-100/70">
+                {cadenceProfiles[cadenceReferenceId].onsets.length} timing events
+              </span>
+              <span className="rounded-full bg-black/30 px-3 py-1.5 text-violet-100/70">
+                {Math.round(cadenceProfiles[cadenceReferenceId].confidence * 100)}% tempo confidence
+              </span>
+            </div>
+          ) : null}
+        </section>
+      ) : null}
+
       {tracks.length === 0 ? (
         <button
           type="button"
@@ -574,6 +859,13 @@ export default function StemSequencer({ onMixReady }: StemSequencerProps) {
                     <p className="mt-1 text-[10px] text-white/35">
                       {formatTime(clipDuration)} after trim
                     </p>
+                    {cadenceSuggestions[track.id] ? (
+                      <p className="mt-1 text-[10px] font-black text-violet-200/75">
+                        {track.id === cadenceReferenceId
+                          ? "Cadence reference"
+                          : `Suggested ${cadenceSuggestions[track.id].nudgeSeconds >= 0 ? "+" : ""}${Math.round(cadenceSuggestions[track.id].nudgeSeconds * 1000)} ms · ${Math.round(cadenceSuggestions[track.id].confidence * 100)}% match`}
+                      </p>
+                    ) : null}
                   </div>
 
                   <div className="grid flex-1 grid-cols-2 gap-2 sm:grid-cols-4 xl:grid-cols-7">
