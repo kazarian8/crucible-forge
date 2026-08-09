@@ -551,7 +551,7 @@ export default function SoundFurnacePage() {
                       {playing === "result" ? <Square size={13} fill="currentColor" /> : <Play size={13} fill="currentColor" />} {playing === "result" ? "Stop forge" : "Play forge"}
                     </button>
                     <a href={result.url} download={result.name} className="flex items-center justify-center gap-2 rounded-lg bg-orange-500 px-4 py-2 text-xs font-black text-black"><Download size={14} /> Download 24-bit WAV</a>
-                    <button type="button" onClick={openEngineerMode} className="flex items-center justify-center gap-2 rounded-lg bg-violet-300 px-4 py-2 text-xs font-black text-violet-950"><Hammer size={14} /> {engineerOpen ? "Return to Engineer Mode" : "Enable Engineer Mode"}</button>
+                    <button type="button" onClick={openEngineerMode} className="flex items-center justify-center gap-2 rounded-lg bg-violet-300 px-4 py-2 text-xs font-black text-violet-950"><Hammer size={14} /> {engineerOpen ? "Return to Engineer Mode" : "Enter Crucible Engineer Mode"}</button>
                   </div>
                   <div className="mt-4 flex flex-wrap gap-3 text-[10px] font-bold uppercase tracking-wider text-orange-100/55"><span>Peak {formatDb(result.stats.peakDb)}</span><span>Average {formatDb(result.stats.rmsDb)}</span><span>Dynamics {formatDb(result.stats.crestDb)}</span></div>
                 </div>

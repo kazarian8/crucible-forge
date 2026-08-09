@@ -2,6 +2,9 @@ import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
 const LOGIN_ROUTE = "/login";
+const SIGNUP_ROUTE = "/signup";
+const VERIFY_ROUTE = "/verify-email";
+const SUBSCRIBE_ROUTE = "/subscribe";
 const DEFAULT_AFTER_LOGIN = "/sound-furnace";
 
 function getSafeNextRoute(value: string | null) {
@@ -12,25 +15,47 @@ function getSafeNextRoute(value: string | null) {
   return DEFAULT_AFTER_LOGIN;
 }
 
+function redirectWithNext(
+  request: NextRequest,
+  pathname: string,
+  nextRoute: string,
+  error?: string,
+) {
+  const redirectUrl = request.nextUrl.clone();
+  redirectUrl.pathname = pathname;
+  redirectUrl.search = "";
+  redirectUrl.searchParams.set("next", nextRoute);
+  if (error) redirectUrl.searchParams.set("error", error);
+  return NextResponse.redirect(redirectUrl);
+}
+
 export async function middleware(request: NextRequest) {
   const { pathname, searchParams } = request.nextUrl;
-  const isSequencerPreview = process.env.VERCEL_ENV === "preview";
+  const protectedRoute =
+    pathname.startsWith("/sound-furnace") ||
+    pathname.startsWith("/account");
+  const accountRoute =
+    protectedRoute ||
+    pathname === SUBSCRIBE_ROUTE ||
+    pathname.startsWith("/billing/success");
+  const authRoute = pathname === LOGIN_ROUTE || pathname === SIGNUP_ROUTE;
 
-  let response = NextResponse.next({
-    request,
-  });
+  let response = NextResponse.next({ request });
 
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-
   const supabaseKey =
     process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ??
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
   if (!supabaseUrl || !supabaseKey) {
-    console.error(
-      "Missing NEXT_PUBLIC_SUPABASE_URL and Supabase public key.",
-    );
-
+    if (accountRoute || protectedRoute) {
+      return redirectWithNext(
+        request,
+        LOGIN_ROUTE,
+        `${pathname}${request.nextUrl.search}`,
+        "service-unavailable",
+      );
+    }
     return response;
   }
 
@@ -39,16 +64,11 @@ export async function middleware(request: NextRequest) {
       getAll() {
         return request.cookies.getAll();
       },
-
       setAll(cookiesToSet) {
         cookiesToSet.forEach(({ name, value }) => {
           request.cookies.set(name, value);
         });
-
-        response = NextResponse.next({
-          request,
-        });
-
+        response = NextResponse.next({ request });
         cookiesToSet.forEach(({ name, value, options }) => {
           response.cookies.set(name, value, options);
         });
@@ -60,26 +80,55 @@ export async function middleware(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser();
 
-  if (pathname.startsWith("/sound-furnace") && !user && !isSequencerPreview) {
+  const requestedRoute = `${pathname}${request.nextUrl.search}`;
+
+  if (accountRoute && !user) {
+    return redirectWithNext(request, LOGIN_ROUTE, requestedRoute);
+  }
+
+  if (accountRoute && user && !user.email_confirmed_at) {
+    return redirectWithNext(request, VERIFY_ROUTE, requestedRoute);
+  }
+
+  let entitled = false;
+
+  if (user && (accountRoute || authRoute)) {
+    const { data: subscription } = await supabase
+      .from("pro_subscriptions")
+      .select("status,current_period_end,trial_end")
+      .eq("user_id", user.id)
+      .maybeSingle();
+
+    const now = Date.now();
+    const trialValid =
+      subscription?.status === "trialing" &&
+      Boolean(subscription.trial_end) &&
+      new Date(subscription!.trial_end as string).getTime() > now;
+    const activeValid =
+      subscription?.status === "active" &&
+      Boolean(subscription.current_period_end) &&
+      new Date(subscription!.current_period_end as string).getTime() > now;
+
+    entitled = trialValid || activeValid;
+  }
+
+  if (protectedRoute && !entitled) {
+    return redirectWithNext(request, SUBSCRIBE_ROUTE, requestedRoute);
+  }
+
+  if (pathname === SUBSCRIBE_ROUTE && entitled) {
     const redirectUrl = request.nextUrl.clone();
-
-    redirectUrl.pathname = LOGIN_ROUTE;
+    redirectUrl.pathname = DEFAULT_AFTER_LOGIN;
     redirectUrl.search = "";
-    redirectUrl.searchParams.set(
-      "next",
-      `${pathname}${request.nextUrl.search}`,
-    );
-
     return NextResponse.redirect(redirectUrl);
   }
 
-  if (pathname === LOGIN_ROUTE && user) {
+  if (authRoute && user) {
     const redirectUrl = request.nextUrl.clone();
-    const nextRoute = getSafeNextRoute(searchParams.get("next"));
-
-    redirectUrl.pathname = nextRoute;
+    redirectUrl.pathname = entitled
+      ? getSafeNextRoute(searchParams.get("next"))
+      : SUBSCRIBE_ROUTE;
     redirectUrl.search = "";
-
     return NextResponse.redirect(redirectUrl);
   }
 
