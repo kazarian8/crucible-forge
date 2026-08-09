@@ -2,7 +2,7 @@
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { createClient } from "../../lib/supabase/client";
+import { createClient, isSupabaseConfigured } from "../../lib/supabase/client";
 
 type AuthMode = "login" | "signup";
 
@@ -27,7 +27,8 @@ function getSafeNextRoute() {
 
 export default function LoginPage() {
   const router = useRouter();
-  const supabase = useMemo(() => createClient(), []);
+  const configured = isSupabaseConfigured();
+  const supabase = useMemo(() => configured ? createClient() : null, [configured]);
 
   const [mode, setMode] = useState<AuthMode>("login");
   const [nextRoute, setNextRoute] = useState("/sound-furnace");
@@ -44,13 +45,19 @@ export default function LoginPage() {
   useEffect(() => {
     setNextRoute(getSafeNextRoute());
 
+    if (!supabase) {
+      setCheckingSession(false);
+      return;
+    }
+    const client = supabase;
+
     let active = true;
 
     async function checkExistingSession() {
       try {
         const {
           data: { user },
-        } = await supabase.auth.getUser();
+        } = await client.auth.getUser();
 
         if (!active) return;
 
@@ -83,6 +90,12 @@ export default function LoginPage() {
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+
+    if (!supabase) {
+      setMessage("Account access is temporarily unavailable while service configuration is restored.");
+      setIsError(true);
+      return;
+    }
 
     const cleanEmail = email.trim().toLowerCase();
 
@@ -294,7 +307,7 @@ export default function LoginPage() {
 
           <button
             type="submit"
-            disabled={loading}
+            disabled={!configured || loading}
             className="w-full rounded-2xl bg-gradient-to-r from-orange-600 to-amber-500 px-5 py-4 text-sm font-bold text-black transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {loading
@@ -303,6 +316,12 @@ export default function LoginPage() {
                 ? "Log In and Continue"
                 : "Create Account and Enter"}
           </button>
+
+          {!configured && (
+            <div role="alert" className="rounded-2xl border border-amber-300/20 bg-amber-400/10 px-4 py-3 text-sm leading-6 text-amber-100">
+              Account access is temporarily unavailable. No information was submitted.
+            </div>
+          )}
         </form>
 
         <div className="mt-6 rounded-2xl border border-white/10 bg-white/[0.025] p-4">
