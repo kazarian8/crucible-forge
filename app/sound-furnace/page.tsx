@@ -1,5 +1,6 @@
 "use client";
 
+import StemSequencer from "../../components/sound-furnace/StemSequencer";
 import Link from "next/link";
 import {
   ChangeEvent,
@@ -340,6 +341,29 @@ export default function SoundFurnacePage() {
     }
   }
 
+  function acceptStemMix(mixed: AudioBuffer, name: string) {
+    setError("");
+    setResult(null);
+    if (sourceUrl) URL.revokeObjectURL(sourceUrl);
+    if (result?.url) URL.revokeObjectURL(result.url);
+
+    const blob = encodeWav24(mixed);
+    const url = URL.createObjectURL(blob);
+    const mixedFile = new File([blob], name, { type: "audio/wav" });
+    setFile(mixedFile);
+    setBuffer(mixed);
+    setSourceUrl(url);
+    setSourceStats(analyzeBuffer(mixed));
+    setSourceSamples(waveformSamples(mixed));
+    setStatus("Visual stem mix ready. Choose Auto Forge or guide the final master.");
+    window.setTimeout(() => {
+      document.getElementById("mastering-forge")?.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+      });
+    }, 50);
+  }
+
   function handleFile(event: ChangeEvent<HTMLInputElement>) {
     const candidate = event.target.files?.[0];
     if (candidate) void acceptFile(candidate);
@@ -432,7 +456,7 @@ export default function SoundFurnacePage() {
             </div>
           </div>
 
-          <form onSubmit={handleForge} className="rounded-[28px] border border-orange-300/20 bg-[#0d0a08] p-5 shadow-[0_30px_100px_rgba(0,0,0,.55)] sm:p-7">
+          <form id="mastering-forge" onSubmit={handleForge} className="rounded-[28px] border border-orange-300/20 bg-[#0d0a08] p-5 shadow-[0_30px_100px_rgba(0,0,0,.55)] sm:p-7">
             <div
               onDragOver={(event) => event.preventDefault()}
               onDrop={handleDrop}
@@ -469,6 +493,8 @@ export default function SoundFurnacePage() {
             {error && <p role="alert" className="mt-3 rounded-xl border border-red-400/25 bg-red-500/10 p-3 text-center text-xs text-red-200">{error}</p>}
           </form>
         </div>
+
+        <StemSequencer onMixReady={acceptStemMix} />
 
         {sourceSamples && (
           <section className="mt-10 rounded-[28px] border border-white/10 bg-white/[0.025] p-5 sm:p-7">
