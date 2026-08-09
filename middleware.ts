@@ -14,6 +14,9 @@ function getSafeNextRoute(value: string | null) {
 
 export async function middleware(request: NextRequest) {
   const { pathname, searchParams } = request.nextUrl;
+  const isSequencerPreview =
+    process.env.VERCEL_ENV === "preview" &&
+    process.env.VERCEL_GIT_COMMIT_REF === "agent/16-track-stem-sequencer";
 
   let response = NextResponse.next({
     request,
@@ -59,7 +62,7 @@ export async function middleware(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser();
 
-  if (pathname.startsWith("/sound-furnace") && !user) {
+  if (pathname.startsWith("/sound-furnace") && !user && !isSequencerPreview) {
     const redirectUrl = request.nextUrl.clone();
 
     redirectUrl.pathname = LOGIN_ROUTE;
