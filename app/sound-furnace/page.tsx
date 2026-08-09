@@ -293,6 +293,7 @@ export default function SoundFurnacePage() {
   const [error, setError] = useState("");
   const [result, setResult] = useState<ForgeResult | null>(null);
   const [playing, setPlaying] = useState<"source" | "result" | null>(null);
+  const [engineerOpen, setEngineerOpen] = useState(false);
 
   useEffect(() => () => {
     if (sourceUrl) URL.revokeObjectURL(sourceUrl);
@@ -407,6 +408,16 @@ export default function SoundFurnacePage() {
     }
   }
 
+  function openEngineerMode() {
+    setEngineerOpen(true);
+    window.setTimeout(() => {
+      document.getElementById("engineer-crucible")?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    }, 50);
+  }
+
   function togglePlayback(kind: "source" | "result") {
     const current = kind === "source" ? sourceAudioRef.current : resultAudioRef.current;
     const other = kind === "source" ? resultAudioRef.current : sourceAudioRef.current;
@@ -494,7 +505,26 @@ export default function SoundFurnacePage() {
           </form>
         </div>
 
-        <StemSequencer onMixReady={acceptStemMix} />
+        <section id="engineer-crucible" className="scroll-mt-24 mt-10 rounded-[28px] border border-violet-300/20 bg-gradient-to-br from-violet-500/[0.08] to-orange-500/[0.05] p-5 sm:p-7">
+          <div className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <p className="text-xs font-black uppercase tracking-[0.2em] text-violet-200">Crucible Engineer Mode</p>
+              <h2 className="mt-2 text-3xl font-black">Take the forge into the full 16-track workstation.</h2>
+              <p className="mt-3 max-w-2xl text-sm leading-6 text-white/50">Import stems, trim dead space, align starts, preserve cadence, balance levels, audition A/B, and send the finished mix back through the Forge.</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => engineerOpen ? setEngineerOpen(false) : openEngineerMode()}
+              className="shrink-0 rounded-xl bg-gradient-to-r from-violet-300 to-orange-400 px-5 py-3 text-sm font-black text-black"
+            >
+              {engineerOpen ? "Close Engineer Mode" : "Enable Crucible Engineer Mode"}
+            </button>
+          </div>
+          <div className="mt-4 rounded-xl border border-amber-300/20 bg-amber-300/[0.06] p-4 text-xs leading-5 text-amber-100/70">
+            Advanced workspace: designed for hands-on creators and audio engineers. Every edit remains browser-local and your original files stay untouched.
+          </div>
+          {engineerOpen ? <StemSequencer onMixReady={acceptStemMix} /> : null}
+        </section>
 
         {sourceSamples && (
           <section className="mt-10 rounded-[28px] border border-white/10 bg-white/[0.025] p-5 sm:p-7">
@@ -521,6 +551,7 @@ export default function SoundFurnacePage() {
                       {playing === "result" ? <Square size={13} fill="currentColor" /> : <Play size={13} fill="currentColor" />} {playing === "result" ? "Stop forge" : "Play forge"}
                     </button>
                     <a href={result.url} download={result.name} className="flex items-center justify-center gap-2 rounded-lg bg-orange-500 px-4 py-2 text-xs font-black text-black"><Download size={14} /> Download 24-bit WAV</a>
+                    <button type="button" onClick={openEngineerMode} className="flex items-center justify-center gap-2 rounded-lg bg-violet-300 px-4 py-2 text-xs font-black text-violet-950"><Hammer size={14} /> {engineerOpen ? "Return to Engineer Mode" : "Enable Engineer Mode"}</button>
                   </div>
                   <div className="mt-4 flex flex-wrap gap-3 text-[10px] font-bold uppercase tracking-wider text-orange-100/55"><span>Peak {formatDb(result.stats.peakDb)}</span><span>Average {formatDb(result.stats.rmsDb)}</span><span>Dynamics {formatDb(result.stats.crestDb)}</span></div>
                 </div>
