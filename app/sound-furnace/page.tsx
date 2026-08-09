@@ -107,6 +107,13 @@ function formatDb(value: number) {
   return `${value.toFixed(1)} dB`;
 }
 
+function formatForgeTime(totalSeconds: number) {
+  const safeSeconds = Math.max(0, Math.ceil(totalSeconds));
+  const minutes = Math.floor(safeSeconds / 60);
+  const seconds = safeSeconds % 60;
+  return `${minutes}:${seconds.toString().padStart(2, "0")}`;
+}
+
 function analyzeBuffer(buffer: AudioBuffer): AudioStats {
   let peak = 0;
   let sumSquares = 0;
@@ -347,11 +354,30 @@ export default function SoundFurnacePage() {
   const [playing, setPlaying] = useState<"source" | "result" | null>(null);
   const [engineerOpen, setEngineerOpen] = useState(false);
   const [stemFiles, setStemFiles] = useState<File[]>([]);
+  const [separatingStems, setSeparatingStems] = useState(false);
+  const [stemElapsed, setStemElapsed] = useState(0);
+  const [stemEstimate, setStemEstimate] = useState(120);
 
   useEffect(() => () => {
     if (sourceUrl) URL.revokeObjectURL(sourceUrl);
     if (result?.url) URL.revokeObjectURL(result.url);
   }, [result, sourceUrl]);
+
+  useEffect(() => {
+    if (!separatingStems) return;
+    const timer = window.setInterval(() => setStemElapsed((elapsed) => elapsed + 1), 1000);
+    return () => window.clearInterval(timer);
+  }, [separatingStems]);
+
+  const stemRemaining = Math.max(0, stemEstimate - stemElapsed);
+  const stemProgress = Math.min(96, Math.round((stemElapsed / Math.max(1, stemEstimate)) * 100));
+  const stemStage = stemProgress < 25
+    ? "Reading the sonic blueprint"
+    : stemProgress < 55
+      ? "Pulling vocals and rhythm apart"
+      : stemProgress < 82
+        ? "Forging the instrument layers"
+        : "Packaging six studio stems";
 
   const statCards = useMemo(() => sourceStats ? [
     ["Peak", formatDb(sourceStats.peakDb)],
@@ -469,20 +495,26 @@ export default function SoundFurnacePage() {
   }
 
   async function separateIntoStems(candidate: File) {
+    const durationBasedEstimate = Math.round(45 + (sourceStats?.duration ?? 120) * 0.55);
+    setStemEstimate(Math.min(360, Math.max(75, durationBasedEstimate)));
+    setStemElapsed(0);
+    setSeparatingStems(true);
     setStatus("Forge complete. ElevenLabs is separating six stems…");
-    const form = new FormData();
-    form.append("file", candidate, candidate.name);
-    const response = await fetch("/api/stem-separation", {
-      method: "POST",
-      body: form,
-    });
 
-    if (!response.ok) {
-      const payload = await response.json().catch(() => null) as { error?: string } | null;
-      throw new Error(payload?.error ?? `Stem separation failed (${response.status}).`);
-    }
+    try {
+      const form = new FormData();
+      form.append("file", candidate, candidate.name);
+      const response = await fetch("/api/stem-separation", {
+        method: "POST",
+        body: form,
+      });
 
-    const archive = await unzipArchive(await response.arrayBuffer());
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null) as { error?: string } | null;
+        throw new Error(payload?.error ?? `Stem separation failed (${response.status}).`);
+      }
+
+      const archive = await unzipArchive(await response.arrayBuffer());
     const order = ["vocals", "drums", "bass", "guitar", "piano", "other"];
     const separated = archive
       .filter(({ name, bytes }) => bytes.length > 0 && /\.(wav|mp3|flac|m4a|aac)$/i.test(name))
@@ -498,16 +530,19 @@ export default function SoundFurnacePage() {
         return (leftIndex < 0 ? order.length : leftIndex) - (rightIndex < 0 ? order.length : rightIndex);
       });
 
-    if (separated.length === 0) throw new Error("ElevenLabs returned an empty stem archive.");
-    setStemFiles(separated);
-    setEngineerOpen(true);
-    setStatus(`${separated.length} stems separated and loaded into Engineer Mode.`);
-    window.setTimeout(() => {
-      document.getElementById("engineer-crucible")?.scrollIntoView({
-        behavior: "smooth",
-        block: "start",
-      });
-    }, 50);
+      if (separated.length === 0) throw new Error("ElevenLabs returned an empty stem archive.");
+      setStemFiles(separated);
+      setEngineerOpen(true);
+      setStatus(`${separated.length} stems separated and loaded into Engineer Mode.`);
+      window.setTimeout(() => {
+        document.getElementById("engineer-crucible")?.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        });
+      }, 50);
+    } finally {
+      setSeparatingStems(false);
+    }
   }
 
   async function openEngineerMode() {
@@ -616,6 +651,39 @@ export default function SoundFurnacePage() {
             </button>
 
             <p className="mt-4 text-center text-xs text-white/40" aria-live="polite">{status}</p>
+
+            {separatingStems && (
+              <div className="mt-4 overflow-hidden rounded-2xl border border-orange-300/25 bg-gradient-to-br from-orange-500/[0.12] via-black/35 to-violet-500/[0.12] p-4 shadow-[inset_0_0_30px_rgba(251,146,60,.06)]" role="status" aria-live="polite">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <p className="text-[9px] font-black uppercase tracking-[0.24em] text-orange-300">The Forge Clock</p>
+                    <p className="mt-1 text-sm font-black text-white">{stemStage}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-[9px] font-bold uppercase tracking-wider text-white/35">
+                      {stemRemaining > 0 ? "Estimated delivery" : "Final hammer strike"}
+                    </p>
+                    <p className="mt-0.5 font-mono text-2xl font-black tabular-nums text-orange-200">
+                      {stemRemaining > 0 ? formatForgeTime(stemRemaining) : "ALMOST"}
+                    </p>
+                  </div>
+                </div>
+                <div className="mt-4 h-2 overflow-hidden rounded-full bg-black/60">
+                  <div
+                    className="h-full rounded-full bg-gradient-to-r from-orange-600 via-amber-300 to-violet-300 transition-[width] duration-1000 ease-linear"
+                    style={{ width: `${stemProgress}%` }}
+                  />
+                </div>
+                <div className="mt-2 flex justify-between text-[9px] font-bold uppercase tracking-wider text-white/30">
+                  <span>{stemProgress}% forged</span>
+                  <span>Six stems · original timing preserved</span>
+                </div>
+                <p className="mt-3 text-[10px] leading-4 text-white/35">
+                  Your 24-bit master is already safe. This estimate adjusts to track length; complex songs can need one final pass.
+                </p>
+              </div>
+            )}
+
             {error && <p role="alert" className="mt-3 rounded-xl border border-red-400/25 bg-red-500/10 p-3 text-center text-xs text-red-200">{error}</p>}
           </form>
         </div>
