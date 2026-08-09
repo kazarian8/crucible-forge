@@ -6,7 +6,7 @@ const MAX_FILE_BYTES = 250 * 1024 * 1024;
 export async function POST(request: Request) {
   const apiKey = process.env.ELEVENLABS_API_KEY ?? process.env.ELEVEN_LABS_API_KEY;
   if (!apiKey) {
-    return Response.json({ error: "ElevenLabs is not configured on this deployment." }, { status: 503 });
+    return Response.json({ error: "Stem separation is temporarily unavailable on this deployment." }, { status: 503 });
   }
 
   const incoming = await request.formData();
@@ -36,10 +36,10 @@ export async function POST(request: Request) {
     const detail = await upstream.text();
     console.error("ElevenLabs stem separation failed", upstream.status, detail.slice(0, 1000));
     const message = upstream.status === 401 || upstream.status === 403
-      ? "The ElevenLabs key does not have Music Stem Separation access."
+      ? "Stem separation is temporarily unavailable."
       : upstream.status === 429
-        ? "ElevenLabs is rate-limited or out of credits. Try again shortly."
-        : "ElevenLabs could not separate this track.";
+        ? "The stem forge is at capacity. Try again shortly."
+        : "Crucible could not separate this track.";
     return Response.json({ error: message }, { status: upstream.status });
   }
 
