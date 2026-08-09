@@ -47,6 +47,58 @@ type ForgeResult = {
   samples: Float32Array;
 };
 
+type ZipEntry = { name: string; bytes: Uint8Array };
+
+async function unzipArchive(archive: ArrayBuffer): Promise<ZipEntry[]> {
+  const bytes = new Uint8Array(archive);
+  const view = new DataView(archive);
+  const decoder = new TextDecoder();
+  let directoryEnd = -1;
+  const minimumOffset = Math.max(0, bytes.length - 65_557);
+
+  for (let offset = bytes.length - 22; offset >= minimumOffset; offset -= 1) {
+    if (view.getUint32(offset, true) === 0x06054b50) {
+      directoryEnd = offset;
+      break;
+    }
+  }
+  if (directoryEnd < 0) throw new Error("ElevenLabs returned an unreadable stem archive.");
+
+  const entryCount = view.getUint16(directoryEnd + 10, true);
+  let cursor = view.getUint32(directoryEnd + 16, true);
+  const entries: ZipEntry[] = [];
+
+  for (let index = 0; index < entryCount; index += 1) {
+    if (view.getUint32(cursor, true) !== 0x02014b50) throw new Error("The stem archive directory is damaged.");
+    const method = view.getUint16(cursor + 10, true);
+    const compressedSize = view.getUint32(cursor + 20, true);
+    const nameLength = view.getUint16(cursor + 28, true);
+    const extraLength = view.getUint16(cursor + 30, true);
+    const commentLength = view.getUint16(cursor + 32, true);
+    const localOffset = view.getUint32(cursor + 42, true);
+    const name = decoder.decode(bytes.subarray(cursor + 46, cursor + 46 + nameLength));
+    const localNameLength = view.getUint16(localOffset + 26, true);
+    const localExtraLength = view.getUint16(localOffset + 28, true);
+    const dataStart = localOffset + 30 + localNameLength + localExtraLength;
+    const compressed = bytes.slice(dataStart, dataStart + compressedSize);
+    let output: Uint8Array;
+
+    if (method === 0) {
+      output = compressed;
+    } else if (method === 8) {
+      const stream = new Blob([compressed]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
+      output = new Uint8Array(await new Response(stream).arrayBuffer());
+    } else {
+      throw new Error(`The stem archive uses unsupported ZIP compression ${method}.`);
+    }
+
+    entries.push({ name, bytes: output });
+    cursor += 46 + nameLength + extraLength + commentLength;
+  }
+
+  return entries;
+}
+
 function db(value: number) {
   return value > 0 ? 20 * Math.log10(value) : -96;
 }
@@ -294,6 +346,7 @@ export default function SoundFurnacePage() {
   const [result, setResult] = useState<ForgeResult | null>(null);
   const [playing, setPlaying] = useState<"source" | "result" | null>(null);
   const [engineerOpen, setEngineerOpen] = useState(false);
+  const [stemFiles, setStemFiles] = useState<File[]>([]);
 
   useEffect(() => () => {
     if (sourceUrl) URL.revokeObjectURL(sourceUrl);
@@ -310,6 +363,8 @@ export default function SoundFurnacePage() {
   async function acceptFile(candidate: File) {
     setError("");
     setResult(null);
+    setStemFiles([]);
+    setEngineerOpen(false);
     const extension = candidate.name.split(".").pop()?.toLowerCase() ?? "";
     if (!ACCEPTED_EXTENSIONS.includes(extension)) {
       setError("Use a WAV, MP3, FLAC, AIFF, M4A, or AAC audio file.");
@@ -398,8 +453,13 @@ export default function SoundFurnacePage() {
         stats: analyzeBuffer(forged),
         samples: waveformSamples(forged),
       });
-      setStatus("Forge complete. Compare the waveforms and audition one version at a time.");
       playForgeFinish();
+      try {
+        await separateIntoStems(file);
+      } catch (caught) {
+        setError(caught instanceof Error ? caught.message : "Stem separation could not finish.");
+        setStatus("Forge complete and downloadable. Stem separation can be retried.");
+      }
     } catch {
       setError("The forge could not finish this track in your browser. Try closing other tabs or using a smaller file.");
       setStatus("Forge stopped safely. Your original file was not changed.");
@@ -408,7 +468,62 @@ export default function SoundFurnacePage() {
     }
   }
 
-  function openEngineerMode() {
+  async function separateIntoStems(candidate: File) {
+    setStatus("Forge complete. ElevenLabs is separating six stems…");
+    const form = new FormData();
+    form.append("file", candidate, candidate.name);
+    const response = await fetch("/api/stem-separation", {
+      method: "POST",
+      body: form,
+    });
+
+    if (!response.ok) {
+      const payload = await response.json().catch(() => null) as { error?: string } | null;
+      throw new Error(payload?.error ?? `Stem separation failed (${response.status}).`);
+    }
+
+    const archive = await unzipArchive(await response.arrayBuffer());
+    const order = ["vocals", "drums", "bass", "guitar", "piano", "other"];
+    const separated = archive
+      .filter(({ name, bytes }) => bytes.length > 0 && /\.(wav|mp3|flac|m4a|aac)$/i.test(name))
+      .map(({ name, bytes }) => {
+        const cleanName = name.split("/").pop() ?? name;
+        const extension = cleanName.split(".").pop()?.toLowerCase() ?? "mp3";
+        const type = extension === "wav" ? "audio/wav" : extension === "flac" ? "audio/flac" : "audio/mpeg";
+        return new File([new Uint8Array(bytes)], cleanName, { type });
+      })
+      .sort((left, right) => {
+        const leftIndex = order.findIndex((stem) => left.name.toLowerCase().includes(stem));
+        const rightIndex = order.findIndex((stem) => right.name.toLowerCase().includes(stem));
+        return (leftIndex < 0 ? order.length : leftIndex) - (rightIndex < 0 ? order.length : rightIndex);
+      });
+
+    if (separated.length === 0) throw new Error("ElevenLabs returned an empty stem archive.");
+    setStemFiles(separated);
+    setEngineerOpen(true);
+    setStatus(`${separated.length} stems separated and loaded into Engineer Mode.`);
+    window.setTimeout(() => {
+      document.getElementById("engineer-crucible")?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    }, 50);
+  }
+
+  async function openEngineerMode() {
+    if (stemFiles.length === 0 && file) {
+      setBusy(true);
+      setError("");
+      try {
+        await separateIntoStems(file);
+      } catch (caught) {
+        setError(caught instanceof Error ? caught.message : "Stem separation could not finish.");
+        setStatus("The master is safe. Stem separation can be retried.");
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
     setEngineerOpen(true);
     window.setTimeout(() => {
       document.getElementById("engineer-crucible")?.scrollIntoView({
@@ -514,7 +629,7 @@ export default function SoundFurnacePage() {
             </div>
             <button
               type="button"
-              onClick={() => engineerOpen ? setEngineerOpen(false) : openEngineerMode()}
+              onClick={() => engineerOpen ? setEngineerOpen(false) : void openEngineerMode()}
               className="shrink-0 rounded-xl bg-gradient-to-r from-violet-300 to-orange-400 px-5 py-3 text-sm font-black text-black"
             >
               {engineerOpen ? "Close Engineer Mode" : "Enable Crucible Engineer Mode"}
@@ -523,7 +638,7 @@ export default function SoundFurnacePage() {
           <div className="mt-4 rounded-xl border border-amber-300/20 bg-amber-300/[0.06] p-4 text-xs leading-5 text-amber-100/70">
             Advanced workspace: designed for hands-on creators and audio engineers. Every edit remains browser-local and your original files stay untouched.
           </div>
-          {engineerOpen ? <StemSequencer onMixReady={acceptStemMix} /> : null}
+          {engineerOpen ? <StemSequencer onMixReady={acceptStemMix} initialFiles={stemFiles} /> : null}
         </section>
 
         {sourceSamples && (
@@ -551,7 +666,7 @@ export default function SoundFurnacePage() {
                       {playing === "result" ? <Square size={13} fill="currentColor" /> : <Play size={13} fill="currentColor" />} {playing === "result" ? "Stop forge" : "Play forge"}
                     </button>
                     <a href={result.url} download={result.name} className="flex items-center justify-center gap-2 rounded-lg bg-orange-500 px-4 py-2 text-xs font-black text-black"><Download size={14} /> Download 24-bit WAV</a>
-                    <button type="button" onClick={openEngineerMode} className="flex items-center justify-center gap-2 rounded-lg bg-violet-300 px-4 py-2 text-xs font-black text-violet-950"><Hammer size={14} /> {engineerOpen ? "Return to Engineer Mode" : "Enable Engineer Mode"}</button>
+                    <button type="button" onClick={() => void openEngineerMode()} disabled={busy} className="flex items-center justify-center gap-2 rounded-lg bg-violet-300 px-4 py-2 text-xs font-black text-violet-950 disabled:opacity-40"><Hammer size={14} /> {busy ? "Separating stems…" : engineerOpen ? "Return to Engineer Mode" : stemFiles.length > 0 ? "Enter Engineer Mode" : "Separate stems + Engineer Mode"}</button>
                   </div>
                   <div className="mt-4 flex flex-wrap gap-3 text-[10px] font-bold uppercase tracking-wider text-orange-100/55"><span>Peak {formatDb(result.stats.peakDb)}</span><span>Average {formatDb(result.stats.rmsDb)}</span><span>Dynamics {formatDb(result.stats.crestDb)}</span></div>
                 </div>
