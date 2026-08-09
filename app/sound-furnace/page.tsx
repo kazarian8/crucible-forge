@@ -62,7 +62,7 @@ async function unzipArchive(archive: ArrayBuffer): Promise<ZipEntry[]> {
       break;
     }
   }
-  if (directoryEnd < 0) throw new Error("ElevenLabs returned an unreadable stem archive.");
+  if (directoryEnd < 0) throw new Error("Crucible received an unreadable stem package.");
 
   const entryCount = view.getUint16(directoryEnd + 10, true);
   let cursor = view.getUint32(directoryEnd + 16, true);
@@ -499,7 +499,7 @@ export default function SoundFurnacePage() {
     setStemEstimate(Math.min(360, Math.max(75, durationBasedEstimate)));
     setStemElapsed(0);
     setSeparatingStems(true);
-    setStatus("Forge complete. ElevenLabs is separating six stems…");
+    setStatus("Forge complete. Crucible is forging six synchronized stems…");
 
     try {
       const form = new FormData();
@@ -530,7 +530,7 @@ export default function SoundFurnacePage() {
         return (leftIndex < 0 ? order.length : leftIndex) - (rightIndex < 0 ? order.length : rightIndex);
       });
 
-      if (separated.length === 0) throw new Error("ElevenLabs returned an empty stem archive.");
+      if (separated.length === 0) throw new Error("Crucible received an empty stem package.");
       setStemFiles(separated);
       setEngineerOpen(true);
       setStatus(`${separated.length} stems separated and loaded into Engineer Mode.`);
