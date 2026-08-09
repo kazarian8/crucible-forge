@@ -706,7 +706,11 @@ export default function SoundFurnacePage() {
           <div className="mt-4 rounded-xl border border-amber-300/20 bg-amber-300/[0.06] p-4 text-xs leading-5 text-amber-100/70">
             Advanced workspace: designed for hands-on creators and audio engineers. Every edit remains browser-local and your original files stay untouched.
           </div>
-          {engineerOpen ? <StemSequencer onMixReady={acceptStemMix} initialFiles={stemFiles} /> : null}
+          {engineerOpen && stemFiles.length === 0 ? (
+            <div className="mt-5 rounded-2xl border border-violet-300/15 bg-black/25 p-5 text-center text-sm text-white/45">
+              Stem separation is still forging the workstation session. Engineer Mode will open automatically when Track 01 is ready.
+            </div>
+          ) : null}
         </section>
 
         {sourceSamples && (
@@ -747,6 +751,38 @@ export default function SoundFurnacePage() {
           </section>
         )}
       </section>
+
+      {engineerOpen && stemFiles.length > 0 ? (
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-[#070605] text-white">
+          <header className="sticky top-0 z-20 border-b border-violet-300/15 bg-[#090708]/95 backdrop-blur-xl">
+            <div className="mx-auto flex max-w-[1600px] flex-col gap-4 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-7">
+              <div className="flex items-center gap-4">
+                <button
+                  type="button"
+                  onClick={() => setEngineerOpen(false)}
+                  className="flex shrink-0 items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2.5 text-xs font-black text-white/70 hover:text-white"
+                >
+                  <ArrowLeft size={16} /> Back to Sound Furnace
+                </button>
+                <div>
+                  <p className="text-[10px] font-black uppercase tracking-[0.24em] text-violet-200">Crucible Engineer Mode</p>
+                  <h1 className="mt-1 text-xl font-black sm:text-2xl">16-Track Sequencing Workstation</h1>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 self-start rounded-full border border-emerald-300/15 bg-emerald-400/[0.06] px-3 py-2 text-[10px] font-black uppercase tracking-wider text-emerald-200/70 sm:self-auto">
+                <CheckCircle2 size={13} /> {stemFiles.length} stems secured · original timing preserved
+              </div>
+            </div>
+          </header>
+
+          <div className="mx-auto max-w-[1600px] px-3 pb-16 pt-2 sm:px-6">
+            <div className="rounded-2xl border border-violet-300/15 bg-gradient-to-r from-violet-500/[0.07] to-orange-500/[0.05] px-4 py-3 text-xs leading-5 text-white/45 sm:px-5">
+              Full engineering workspace: trim dead space, restore source timing, balance each layer, compare stems, learn the cadence pocket, and send the finished mix back through the Forge.
+            </div>
+            <StemSequencer onMixReady={acceptStemMix} initialFiles={stemFiles} />
+          </div>
+        </div>
+      ) : null}
     </main>
   );
 }
