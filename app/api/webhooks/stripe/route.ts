@@ -106,6 +106,26 @@ async function syncSubscription(subscription: StripeSubscription) {
   return userId;
 }
 
+function invoiceSubscriptionId(invoice: Record<string, unknown>) {
+  const direct = invoice.subscription;
+  if (typeof direct === "string") return direct;
+
+  const parent = invoice.parent;
+  if (!parent || typeof parent !== "object") return null;
+
+  const details = (parent as Record<string, unknown>).subscription_details;
+  if (!details || typeof details !== "object") return null;
+
+  const subscription = (details as Record<string, unknown>).subscription;
+  if (typeof subscription === "string") return subscription;
+  if (subscription && typeof subscription === "object") {
+    const id = (subscription as Record<string, unknown>).id;
+    return typeof id === "string" ? id : null;
+  }
+
+  return null;
+}
+
 async function retrieveSubscription(
   subscriptionId: string,
   secretKey: string,
@@ -188,10 +208,7 @@ export async function POST(request: Request) {
       event.type === "invoice.paid" ||
       event.type === "invoice.payment_failed"
     ) {
-      const subscriptionId =
-        typeof event.data.object.subscription === "string"
-          ? event.data.object.subscription
-          : null;
+      const subscriptionId = invoiceSubscriptionId(event.data.object);
 
       if (subscriptionId) {
         const subscription = await retrieveSubscription(
