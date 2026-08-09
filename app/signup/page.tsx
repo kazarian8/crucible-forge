@@ -1,112 +1,28 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { FormEvent, useState } from "react";
 import { createClient, isSupabaseConfigured } from "../../lib/supabase/client";
 
-type AuthMode = "login" | "signup";
-
-function getSafeNextRoute() {
-  if (typeof window === "undefined") {
-    return "/sound-furnace";
-  }
-
-  const searchParams = new URLSearchParams(window.location.search);
-  const requestedNext = searchParams.get("next");
-
-  if (
-    requestedNext &&
-    requestedNext.startsWith("/") &&
-    !requestedNext.startsWith("//")
-  ) {
-    return requestedNext;
-  }
-
-  return "/sound-furnace";
+function safeNext() {
+  const value = new URLSearchParams(window.location.search).get("next");
+  return value?.startsWith("/") && !value.startsWith("//")
+    ? value
+    : "/subscribe";
 }
 
-export default function LoginPage() {
-  const router = useRouter();
+export default function SignupPage() {
   const configured = isSupabaseConfigured();
-  const supabase = useMemo(() => configured ? createClient() : null, [configured]);
-
-  const [mode, setMode] = useState<AuthMode>("login");
-  const [nextRoute, setNextRoute] = useState("/sound-furnace");
-
+  const supabase = configured ? createClient() : null;
   const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-
   const [loading, setLoading] = useState(false);
-  const [checkingSession, setCheckingSession] = useState(true);
-
   const [message, setMessage] = useState("");
   const [isError, setIsError] = useState(false);
-
-  useEffect(() => {
-    setNextRoute(getSafeNextRoute());
-
-    if (!supabase) {
-      setCheckingSession(false);
-      return;
-    }
-    const client = supabase;
-
-    let active = true;
-
-    async function checkExistingSession() {
-      try {
-        const {
-          data: { user },
-        } = await client.auth.getUser();
-
-        if (!active) return;
-
-        if (user) {
-          router.replace(getSafeNextRoute());
-          router.refresh();
-          return;
-        }
-      } catch {
-        // Keep the login form available if session checking fails.
-      } finally {
-        if (active) {
-          setCheckingSession(false);
-        }
-      }
-    }
-
-    void checkExistingSession();
-
-    return () => {
-      active = false;
-    };
-  }, [router, supabase]);
-
-  function changeMode(nextMode: AuthMode) {
-    setMode(nextMode);
-    setMessage("");
-    setIsError(false);
-  }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
     if (!supabase) {
-      setMessage("Account access is temporarily unavailable while service configuration is restored.");
-      setIsError(true);
-      return;
-    }
-
-    const cleanEmail = email.trim().toLowerCase();
-
-    if (!cleanEmail) {
-      setMessage("Enter your email address.");
-      setIsError(true);
-      return;
-    }
-
-    if (password.length < 6) {
-      setMessage("Your password must contain at least 6 characters.");
+      setMessage("Account creation is temporarily unavailable.");
       setIsError(true);
       return;
     }
@@ -115,226 +31,73 @@ export default function LoginPage() {
     setMessage("");
     setIsError(false);
 
-    try {
-      if (mode === "signup") {
-        const callbackUrl = new URL(
-          "/auth/callback",
-          window.location.origin,
-        );
+    const callback = new URL("/auth/callback", window.location.origin);
+    callback.searchParams.set("next", safeNext());
 
-        callbackUrl.searchParams.set("next", nextRoute);
+    const { error } = await supabase.auth.signInWithOtp({
+      email: email.trim().toLowerCase(),
+      options: {
+        emailRedirectTo: callback.toString(),
+        shouldCreateUser: true,
+      },
+    });
 
-        const { data, error } = await supabase.auth.signUp({
-          email: cleanEmail,
-          password,
-          options: {
-            emailRedirectTo: callbackUrl.toString(),
-          },
-        });
+    setLoading(false);
 
-        if (error) {
-          setMessage(error.message);
-          setIsError(true);
-          return;
-        }
-
-        if (data.session) {
-          router.replace(nextRoute);
-          router.refresh();
-          return;
-        }
-
-        setMessage(
-          "Account created. Check your email and tap the confirmation link to continue to your free quick-remaster upload.",
-        );
-        setIsError(false);
-        return;
-      }
-
-      const { error } = await supabase.auth.signInWithPassword({
-        email: cleanEmail,
-        password,
-      });
-
-      if (error) {
-        setMessage(error.message);
-        setIsError(true);
-        return;
-      }
-
-      router.replace(nextRoute);
-      router.refresh();
-    } catch (error) {
-      setMessage(
-        error instanceof Error
-          ? error.message
-          : "Something went wrong. Please try again.",
-      );
+    if (error) {
+      setMessage(error.message);
       setIsError(true);
-    } finally {
-      setLoading(false);
+      return;
     }
-  }
 
-  if (checkingSession) {
-    return (
-      <main className="flex min-h-screen items-center justify-center bg-[#080604] px-5 text-white">
-        <div className="text-center">
-          <div className="mx-auto h-12 w-12 animate-spin rounded-full border-2 border-orange-300/20 border-t-orange-400" />
-
-          <p className="mt-5 text-sm text-white/45">
-            Opening your Crucible account...
-          </p>
-        </div>
-      </main>
+    setMessage(
+      "Check your inbox. Tap the secure confirmation link before Crucible will offer the 30-day trial.",
     );
   }
 
   return (
-    <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[#080604] px-5 py-12 text-white">
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_10%,rgba(249,115,22,.2),transparent_36%),linear-gradient(to_bottom,#120905,#080604_55%,#020202)]" />
-
-      <section className="relative z-10 w-full max-w-md rounded-3xl border border-orange-300/20 bg-black/65 p-6 shadow-[0_25px_80px_rgba(0,0,0,.7)] backdrop-blur-xl sm:p-8">
-        <a
-          href="/"
-          className="text-xs font-semibold uppercase tracking-[0.22em] text-orange-300 transition hover:text-orange-200"
-        >
-          ← Crucible Forge
-        </a>
-
-        <div className="mt-8 inline-flex rounded-full border border-orange-300/20 bg-orange-400/10 px-3 py-2 text-[10px] font-bold uppercase tracking-[0.18em] text-orange-200">
-          Free quick-remaster access
-        </div>
-
-        <h1 className="mt-5 text-3xl font-semibold tracking-tight">
-          {mode === "login"
-            ? "Welcome back to the Forge."
-            : "Enter the Crucible giveaway."}
-        </h1>
-
-        <p className="mt-3 text-sm leading-6 text-white/55">
-          {mode === "login"
-            ? "Log in to continue directly to your free quick-remaster submission."
-            : "Create your account to claim a free quick-remaster sample and enter for a chance to win a complete Justice Full Forge remaster and distribution."}
+    <main className="flex min-h-screen items-center justify-center bg-[#080604] px-5 py-12 text-white">
+      <section className="w-full max-w-md rounded-3xl border border-orange-300/20 bg-black/70 p-7">
+        <p className="text-xs font-black uppercase tracking-[0.2em] text-orange-300">
+          Verified access only
         </p>
-
-        <div className="mt-7 grid grid-cols-2 rounded-2xl border border-white/10 bg-white/[0.03] p-1">
-          <button
-            type="button"
-            onClick={() => changeMode("login")}
-            className={`rounded-xl px-4 py-3 text-sm font-semibold transition ${
-              mode === "login"
-                ? "bg-orange-400 text-black"
-                : "text-white/55 hover:text-white"
-            }`}
-          >
-            Log In
-          </button>
-
-          <button
-            type="button"
-            onClick={() => changeMode("signup")}
-            className={`rounded-xl px-4 py-3 text-sm font-semibold transition ${
-              mode === "signup"
-                ? "bg-orange-400 text-black"
-                : "text-white/55 hover:text-white"
-            }`}
-          >
-            Sign Up
-          </button>
-        </div>
-
-        <form onSubmit={handleSubmit} className="mt-7 space-y-5">
-          <div>
-            <label
-              htmlFor="email"
-              className="text-xs font-semibold uppercase tracking-[0.16em] text-white/55"
-            >
-              Email
-            </label>
-
-            <input
-              id="email"
-              type="email"
-              inputMode="email"
-              autoCapitalize="none"
-              autoComplete="email"
-              required
-              disabled={loading}
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
-              placeholder="artist@email.com"
-              className="mt-2 w-full rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-4 text-sm text-white outline-none transition placeholder:text-white/25 focus:border-orange-300/50 disabled:opacity-50"
-            />
-          </div>
-
-          <div>
-            <label
-              htmlFor="password"
-              className="text-xs font-semibold uppercase tracking-[0.16em] text-white/55"
-            >
-              Password
-            </label>
-
-            <input
-              id="password"
-              type="password"
-              autoComplete={
-                mode === "login" ? "current-password" : "new-password"
-              }
-              required
-              minLength={6}
-              disabled={loading}
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              placeholder="At least 6 characters"
-              className="mt-2 w-full rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-4 text-sm text-white outline-none transition placeholder:text-white/25 focus:border-orange-300/50 disabled:opacity-50"
-            />
-          </div>
-
-          {message && (
-            <div
-              role={isError ? "alert" : "status"}
-              className={`rounded-2xl border px-4 py-3 text-sm leading-6 ${
-                isError
-                  ? "border-red-300/20 bg-red-400/10 text-red-100"
-                  : "border-green-300/20 bg-green-400/10 text-green-100"
-              }`}
-            >
-              {message}
-            </div>
-          )}
-
+        <h1 className="mt-4 text-3xl font-black">Create your Crucible account.</h1>
+        <p className="mt-3 text-sm leading-6 text-white/55">
+          Confirm your email first. Then Stripe securely collects a card for the
+          30-day free trial. You are not charged today.
+        </p>
+        <form onSubmit={handleSubmit} className="mt-7">
+          <label htmlFor="email" className="text-xs font-bold uppercase tracking-wider text-white/50">
+            Email
+          </label>
+          <input
+            id="email"
+            type="email"
+            required
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
+            placeholder="artist@email.com"
+            className="mt-2 w-full rounded-xl border border-white/10 bg-white/[0.04] px-4 py-4 outline-none focus:border-orange-300/50"
+          />
           <button
             type="submit"
             disabled={!configured || loading}
-            className="w-full rounded-2xl bg-gradient-to-r from-orange-600 to-amber-500 px-5 py-4 text-sm font-bold text-black transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
+            className="mt-5 w-full rounded-xl bg-gradient-to-r from-orange-600 to-amber-400 px-5 py-4 font-black text-black disabled:opacity-50"
           >
-            {loading
-              ? "Working..."
-              : mode === "login"
-                ? "Log In and Continue"
-                : "Create Account and Enter"}
+            {loading ? "Sending..." : "Send verification link"}
           </button>
-
-          {!configured && (
-            <div role="alert" className="rounded-2xl border border-amber-300/20 bg-amber-400/10 px-4 py-3 text-sm leading-6 text-amber-100">
-              Account access is temporarily unavailable. No information was submitted.
-            </div>
-          )}
         </form>
-
-        <div className="mt-6 rounded-2xl border border-white/10 bg-white/[0.025] p-4">
-          <p className="text-xs leading-5 text-white/40">
-            After signup or login, you will continue directly to the secure
-            track-upload page for your free quick-remaster sample.
+        {message ? (
+          <p
+            role={isError ? "alert" : "status"}
+            className={`mt-4 rounded-xl border p-3 text-sm ${isError ? "border-red-300/20 text-red-100" : "border-emerald-300/20 text-emerald-100"}`}
+          >
+            {message}
           </p>
-        </div>
-
-        <p className="mt-5 text-center text-[10px] leading-5 text-white/30">
-          You retain ownership of your music. Giveaway entry does not guarantee
-          selection as the full-remaster and distribution winner.
-        </p>
+        ) : null}
+        <a href="/login" className="mt-6 block text-center text-sm text-white/45">
+          Already registered? Sign in
+        </a>
       </section>
     </main>
   );
