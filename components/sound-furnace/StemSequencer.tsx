@@ -572,16 +572,17 @@ export default function StemSequencer({ onMixReady, initialFiles = [] }: StemSeq
       const context = new AudioContext();
       const additions: StemTrack[] = [];
 
-      for (const file of candidates) {
+      for (const [index, file] of candidates.entries()) {
         const extension = file.name.split(".").pop()?.toLowerCase() ?? "";
         if (!ACCEPTED_EXTENSIONS.has(extension) || file.size > MAX_FILE_BYTES) {
           throw new Error(`${file.name} is unsupported or larger than 250 MB.`);
         }
 
+        setStatus(`Opening stem ${index + 1} of ${candidates.length}: ${file.name}…`);
         const bytes = await file.arrayBuffer();
         const buffer = await context.decodeAudioData(bytes.slice(0));
         const audible = detectAudibleRange(buffer);
-        additions.push({
+        const addition: StemTrack = {
           id: crypto.randomUUID(),
           name: file.name,
           buffer,
@@ -594,12 +595,17 @@ export default function StemSequencer({ onMixReady, initialFiles = [] }: StemSeq
           gainDb: 0,
           muted: false,
           solo: false,
-        });
+        };
+        additions.push(addition);
+
+        // Reveal each decoded stem immediately so mobile users see the
+        // sequencer filling instead of waiting for the entire batch.
+        setTracks((current) => current.length >= MAX_TRACKS ? current : [...current, addition]);
+        setCadenceReferenceId((current) => current || addition.id);
+        await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
       }
 
       await context.close();
-      setTracks((current) => [...current, ...additions]);
-      setCadenceReferenceId((current) => current || additions[0]?.id || "");
       setCadenceProfiles({});
       setCadenceSuggestions({});
       setStatus(
