@@ -38,6 +38,7 @@ type StemTrack = {
   name: string;
   buffer: AudioBuffer;
   startSeconds: number;
+  originalStartSeconds: number;
   trimStartSeconds: number;
   trimEndSeconds: number;
   fadeInSeconds: number;
@@ -49,6 +50,7 @@ type StemTrack = {
 
 type StemSequencerProps = {
   onMixReady: (buffer: AudioBuffer, name: string) => void;
+  initialFiles?: File[];
 };
 
 type CadenceProfile = {
@@ -483,10 +485,11 @@ function StemWaveform({ track }: { track: StemTrack }) {
   );
 }
 
-export default function StemSequencer({ onMixReady }: StemSequencerProps) {
+export default function StemSequencer({ onMixReady, initialFiles = [] }: StemSequencerProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const previewRef = useRef<HTMLAudioElement>(null);
   const previewUrlRef = useRef("");
+  const importedBatchRef = useRef("");
   const [tracks, setTracks] = useState<StemTrack[]>([]);
   const [busy, setBusy] = useState(false);
   const [playing, setPlaying] = useState(false);
@@ -509,6 +512,16 @@ export default function StemSequencer({ onMixReady }: StemSequencerProps) {
     },
     [],
   );
+
+  useEffect(() => {
+    if (initialFiles.length === 0) return;
+    const batch = initialFiles
+      .map((file) => `${file.name}:${file.size}:${file.lastModified}`)
+      .join("|");
+    if (batch === importedBatchRef.current) return;
+    importedBatchRef.current = batch;
+    void addFiles(initialFiles);
+  }, [initialFiles]);
 
   const duration = useMemo(() => projectDuration(tracks), [tracks]);
   const hasSolo = tracks.some((track) => track.solo);
@@ -572,7 +585,8 @@ export default function StemSequencer({ onMixReady }: StemSequencerProps) {
           id: crypto.randomUUID(),
           name: file.name,
           buffer,
-          startSeconds: 0,
+          startSeconds: audible.start,
+          originalStartSeconds: audible.start,
           trimStartSeconds: audible.start,
           trimEndSeconds: audible.end,
           fadeInSeconds: Math.min(0.02, (audible.end - audible.start) / 2),
@@ -589,7 +603,7 @@ export default function StemSequencer({ onMixReady }: StemSequencerProps) {
       setCadenceProfiles({});
       setCadenceSuggestions({});
       setStatus(
-        `Loaded ${additions.length} stem${additions.length === 1 ? "" : "s"}. Dead space was trimmed with a safe 25 ms edge.`,
+        `Loaded ${additions.length} stem${additions.length === 1 ? "" : "s"}. Dead space was clipped with a safe 25 ms edge and every original timestamp was preserved.`,
       );
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "The stems could not be decoded.");
@@ -604,14 +618,14 @@ export default function StemSequencer({ onMixReady }: StemSequencerProps) {
     if (event.target.files) void addFiles(event.target.files);
   }
 
-  function autoAlign() {
+  function restoreOriginalTiming() {
     setTracks((current) =>
       current.map((track) => ({
         ...track,
-        startSeconds: 0,
+        startSeconds: track.originalStartSeconds,
       })),
     );
-    setStatus("All stems aligned to the same zero point.");
+    setStatus("Every stem was restored to its original source timestamp.");
   }
 
   function scanCadence() {
@@ -733,11 +747,11 @@ export default function StemSequencer({ onMixReady }: StemSequencerProps) {
           </button>
           <button
             type="button"
-            onClick={autoAlign}
+            onClick={restoreOriginalTiming}
             disabled={busy || tracks.length === 0}
             className="rounded-xl border border-white/10 px-4 py-2.5 text-xs font-bold text-white/65 disabled:opacity-40"
           >
-            Align starts
+            Restore timestamps
           </button>
         </div>
       </div>
@@ -857,7 +871,7 @@ export default function StemSequencer({ onMixReady }: StemSequencerProps) {
                     </p>
                     <p className="truncate text-sm font-bold text-white/85" title={track.name}>{track.name}</p>
                     <p className="mt-1 text-[10px] text-white/35">
-                      {formatTime(clipDuration)} after trim
+                      {formatTime(clipDuration)} after trim · source {formatTime(track.originalStartSeconds)}
                     </p>
                     {cadenceSuggestions[track.id] ? (
                       <p className="mt-1 text-[10px] font-black text-violet-200/75">
