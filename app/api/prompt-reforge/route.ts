@@ -39,6 +39,13 @@ type ReforgeRequest = {
 
 export async function POST(request: NextRequest) {
   try {
+    if (process.env.PAID_PROVIDER_ROUTES_ENABLED !== "true") {
+      return NextResponse.json(
+        { error: "Prompt Reforge is temporarily unavailable while Crucible completes access-control verification." },
+        { status: 503, headers: { "Cache-Control": "private, no-store" } },
+      );
+    }
+
     if (!process.env.OPENAI_API_KEY) {
       return NextResponse.json(
         { error: "OPENAI_API_KEY is not configured." },
