@@ -4,6 +4,13 @@ export const maxDuration = 300;
 const MAX_FILE_BYTES = 250 * 1024 * 1024;
 
 export async function POST(request: Request) {
+  if (process.env.PAID_PROVIDER_ROUTES_ENABLED !== "true") {
+    return Response.json(
+      { error: "Stem separation is temporarily unavailable while Crucible completes access-control verification." },
+      { status: 503, headers: { "Cache-Control": "private, no-store" } },
+    );
+  }
+
   const apiKey = process.env.ELEVENLABS_API_KEY ?? process.env.ELEVEN_LABS_API_KEY;
   if (!apiKey) {
     return Response.json({ error: "Stem separation is temporarily unavailable on this deployment." }, { status: 503 });
