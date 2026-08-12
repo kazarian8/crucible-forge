@@ -2,6 +2,20 @@ export const runtime = "nodejs";
 export const maxDuration = 300;
 
 const MAX_FILE_BYTES = 250 * 1024 * 1024;
+const ALLOWED_AUDIO_TYPES = new Set([
+  "audio/wav",
+  "audio/x-wav",
+  "audio/mpeg",
+  "audio/mp3",
+  "audio/flac",
+  "audio/x-flac",
+  "audio/aiff",
+  "audio/x-aiff",
+  "audio/mp4",
+  "audio/x-m4a",
+  "audio/aac",
+  "audio/ogg",
+]);
 
 export async function POST(request: Request) {
   if (process.env.PAID_PROVIDER_ROUTES_ENABLED !== "true") {
@@ -23,6 +37,12 @@ export async function POST(request: Request) {
   }
   if (file.size === 0 || file.size > MAX_FILE_BYTES) {
     return Response.json({ error: "The audio file is empty or larger than 250 MB." }, { status: 413 });
+  }
+  if (!ALLOWED_AUDIO_TYPES.has(file.type.toLowerCase())) {
+    return Response.json(
+      { error: "Upload a supported WAV, MP3, FLAC, AIFF, M4A, AAC, or OGG audio file." },
+      { status: 415 },
+    );
   }
 
   const upstreamBody = new FormData();
