@@ -2,19 +2,10 @@
 
 import { ChangeEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { createClient } from "@supabase/supabase-js";
-
-
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-
-if (!supabaseUrl || !supabaseAnonKey) {
-  throw new Error(
-    "Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY."
-  );
-}
-
-const supabase = createClient(supabaseUrl, supabaseAnonKey);
+import {
+  createClient,
+  isSupabaseConfigured,
+} from "../../lib/supabase/client";
 
 type Scene = {
   scene_number: number;
@@ -217,6 +208,15 @@ export default function PromptReforgePage() {
 
   useEffect(() => {
     let mounted = true;
+
+    if (!isSupabaseConfigured()) {
+      setIsSignedIn(false);
+      setCheckingAuth(false);
+      router.replace("/login?error=service-unavailable");
+      return;
+    }
+
+    const supabase = createClient();
 
     async function checkSession() {
       const { data, error: sessionError } =

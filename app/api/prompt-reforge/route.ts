@@ -1,6 +1,7 @@
 import OpenAI from "openai";
 import { NextRequest, NextResponse } from "next/server";
 import { promptReforgeSchema } from "../../../lib/promptReforgeSchema";
+import { authorizePaidProvider } from "../../../lib/auth/provider-access";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -46,6 +47,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const access = await authorizePaidProvider("prompt-reforge", 4);
+    if (access.response) return access.response;
+
     if (!process.env.OPENAI_API_KEY) {
       return NextResponse.json(
         { error: "OPENAI_API_KEY is not configured." },
@@ -70,6 +74,26 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         { error: "A maximum of sixteen frames is allowed." },
         { status: 400 }
+      );
+    }
+
+    const framePattern = /^data:image\/(?:jpeg|png|webp);base64,/;
+    const totalFrameBytes = body.frames.reduce(
+      (total, frame) => total + (typeof frame === "string" ? frame.length : 0),
+      0,
+    );
+    if (
+      body.frames.some(
+        (frame) =>
+          typeof frame !== "string" ||
+          !framePattern.test(frame) ||
+          frame.length > 1_500_000,
+      ) ||
+      totalFrameBytes > 8_000_000
+    ) {
+      return NextResponse.json(
+        { error: "Video frames must be supported images within the upload limit." },
+        { status: 413, headers: { "Cache-Control": "private, no-store" } },
       );
     }
 

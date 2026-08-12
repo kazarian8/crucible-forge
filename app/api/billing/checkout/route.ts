@@ -4,6 +4,7 @@ import {
   getBillingConfig,
   getStripeClient,
 } from "../../../../lib/billing/stripe";
+import { hasPaidAccess } from "../../../../lib/auth/provider-access";
 
 export const runtime = "nodejs";
 
@@ -27,14 +28,11 @@ export async function POST(request: Request) {
 
   const { data: subscription } = await supabase
     .from("pro_subscriptions")
-    .select("status")
+    .select("status,current_period_end,trial_end")
     .eq("user_id", user.id)
     .maybeSingle();
 
-  if (
-    subscription?.status === "trialing" ||
-    subscription?.status === "active"
-  ) {
+  if (hasPaidAccess(subscription)) {
     return NextResponse.json({ url: "/sound-furnace" });
   }
 

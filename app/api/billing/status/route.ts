@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "../../../../lib/supabase/server";
+import { hasPaidAccess } from "../../../../lib/auth/provider-access";
 
 export const dynamic = "force-dynamic";
 
@@ -19,9 +20,7 @@ export async function GET() {
     .eq("user_id", user.id)
     .maybeSingle();
 
-  const entitled =
-    subscription?.status === "trialing" ||
-    subscription?.status === "active";
+  const entitled = hasPaidAccess(subscription);
 
   return NextResponse.json({
     authenticated: true,

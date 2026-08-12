@@ -1,3 +1,5 @@
+import { authorizePaidProvider } from "../../../lib/auth/provider-access";
+
 export const runtime = "nodejs";
 export const maxDuration = 300;
 
@@ -17,6 +19,31 @@ const ALLOWED_AUDIO_TYPES = new Set([
   "audio/ogg",
 ]);
 
+function matchesAudioSignature(bytes: Uint8Array) {
+  const text = (start: number, end: number) =>
+    String.fromCharCode(...bytes.slice(start, end));
+
+  const wav = text(0, 4) === "RIFF" && text(8, 12) === "WAVE";
+  const aiff =
+    text(0, 4) === "FORM" &&
+    (text(8, 12) === "AIFF" || text(8, 12) === "AIFC");
+  const mp3 =
+    text(0, 3) === "ID3" ||
+    (bytes[0] === 0xff && (bytes[1] & 0xe0) === 0xe0);
+  const aac = bytes[0] === 0xff && (bytes[1] & 0xf6) === 0xf0;
+  const mp4 = text(4, 8) === "ftyp";
+
+  return (
+    wav ||
+    aiff ||
+    mp3 ||
+    aac ||
+    mp4 ||
+    text(0, 4) === "fLaC" ||
+    text(0, 4) === "OggS"
+  );
+}
+
 export async function POST(request: Request) {
   if (process.env.PAID_PROVIDER_ROUTES_ENABLED !== "true") {
     return Response.json(
@@ -24,6 +51,9 @@ export async function POST(request: Request) {
       { status: 503, headers: { "Cache-Control": "private, no-store" } },
     );
   }
+
+  const access = await authorizePaidProvider("stem-separation", 2);
+  if (access.response) return access.response;
 
   const apiKey = process.env.ELEVENLABS_API_KEY ?? process.env.ELEVEN_LABS_API_KEY;
   if (!apiKey) {
@@ -42,6 +72,14 @@ export async function POST(request: Request) {
     return Response.json(
       { error: "Upload a supported WAV, MP3, FLAC, AIFF, M4A, AAC, or OGG audio file." },
       { status: 415 },
+    );
+  }
+
+  const signature = new Uint8Array(await file.slice(0, 16).arrayBuffer());
+  if (!matchesAudioSignature(signature)) {
+    return Response.json(
+      { error: "The uploaded file does not contain a supported audio format." },
+      { status: 415, headers: { "Cache-Control": "private, no-store" } },
     );
   }
 
