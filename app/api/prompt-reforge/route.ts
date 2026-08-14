@@ -2,6 +2,13 @@ import OpenAI from "openai";
 import { NextRequest, NextResponse } from "next/server";
 import { promptReforgeSchema } from "../../../lib/promptReforgeSchema";
 import { authorizePaidProvider } from "../../../lib/auth/provider-access";
+import { CREDIT_PRICES } from "../../../lib/credits/pricing";
+import {
+  completeServiceCredits,
+  CreditReservationError,
+  refundServiceCredits,
+  reserveServiceCredits,
+} from "../../../lib/credits/server";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -49,6 +56,9 @@ export async function POST(request: NextRequest) {
 
     const access = await authorizePaidProvider("prompt-reforge", 4);
     if (access.response) return access.response;
+    if (!access.user) {
+      return NextResponse.json({ error: "Sign in is required." }, { status: 401 });
+    }
 
     if (!process.env.OPENAI_API_KEY) {
       return NextResponse.json(
@@ -111,41 +121,83 @@ Creator notes: ${body.userNotes?.trim() || "None supplied"}
 The images are chronological frames extracted at evenly spaced intervals.
 `;
 
-    const response = await openai.responses.create({
-      model: "gpt-5",
-      instructions: REFORGE_INSTRUCTIONS,
-      input: [
-        {
-          role: "user",
-          content: [
-            {
-              type: "input_text",
-              text: videoInformation,
-            },
-            ...imageInputs,
-          ],
-        },
-      ],
-      text: {
-        format: {
-          type: "json_schema",
-          name: "prompt_reforge_analysis",
-          strict: true,
-          schema: promptReforgeSchema,
-        },
-      },
-    });
-
-    if (!response.output_text) {
-      throw new Error("The analysis returned no output.");
+    let reservation;
+    try {
+      reservation = await reserveServiceCredits({
+        userId: access.user.id,
+        serviceId: "prompt-reforge",
+        fileName: "video-frame-analysis",
+        cost: CREDIT_PRICES.promptReforge,
+      });
+    } catch (error) {
+      if (
+        error instanceof CreditReservationError &&
+        error.code === "INSUFFICIENT_CREDITS"
+      ) {
+        return NextResponse.json(
+          {
+            error: `Prompt Reforge costs ${CREDIT_PRICES.promptReforge} coins. Add credits or wait for your monthly refresh.`,
+          },
+          { status: 402, headers: { "Cache-Control": "private, no-store" } },
+        );
+      }
+      return NextResponse.json(
+        { error: "The Crucible credit service is temporarily unavailable." },
+        { status: 503, headers: { "Cache-Control": "private, no-store" } },
+      );
     }
 
-    const analysis = JSON.parse(response.output_text);
+    try {
+      const response = await openai.responses.create({
+        model: "gpt-5",
+        instructions: REFORGE_INSTRUCTIONS,
+        input: [
+          {
+            role: "user",
+            content: [
+              {
+                type: "input_text",
+                text: videoInformation,
+              },
+              ...imageInputs,
+            ],
+          },
+        ],
+        text: {
+          format: {
+            type: "json_schema",
+            name: "prompt_reforge_analysis",
+            strict: true,
+            schema: promptReforgeSchema,
+          },
+        },
+      });
 
-    return NextResponse.json({
-      success: true,
-      analysis,
-    });
+      if (!response.output_text) {
+        throw new Error("The analysis returned no output.");
+      }
+
+      const analysis = JSON.parse(response.output_text);
+      const balance = await completeServiceCredits(
+        access.user.id,
+        reservation.jobId,
+        { model: "gpt-5", frameCount: body.frames.length },
+      );
+
+      return NextResponse.json({
+        success: true,
+        analysis,
+        credits: {
+          cost: CREDIT_PRICES.promptReforge,
+          balance: balance ?? reservation.balance,
+        },
+      });
+    } catch (error) {
+      await refundServiceCredits(access.user.id, reservation.jobId).catch(
+        (refundError) => console.error("Prompt credit refund failed", refundError),
+      );
+      throw error;
+    }
   } catch (error) {
     console.error("Prompt Reforge error:", error);
 

@@ -1,4 +1,5 @@
 import "./globals.css";
+import CreditBalance from "../components/CreditBalance";
 import type { Metadata } from "next";
 import { JetBrains_Mono, Space_Grotesk } from "next/font/google";
 
@@ -40,7 +41,10 @@ export default function RootLayout({
       lang="en"
       className={`${spaceGrotesk.variable} ${jetBrainsMono.variable}`}
     >
-      <body>{children}</body>
+      <body>
+        {children}
+        <CreditBalance />
+      </body>
     </html>
   );
 }

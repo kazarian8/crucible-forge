@@ -1,4 +1,11 @@
 import { authorizePaidProvider } from "../../../lib/auth/provider-access";
+import { CREDIT_PRICES } from "../../../lib/credits/pricing";
+import {
+  completeServiceCredits,
+  CreditReservationError,
+  refundServiceCredits,
+  reserveServiceCredits,
+} from "../../../lib/credits/server";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -54,6 +61,9 @@ export async function POST(request: Request) {
 
   const access = await authorizePaidProvider("stem-separation", 2);
   if (access.response) return access.response;
+  if (!access.user) {
+    return Response.json({ error: "Sign in is required." }, { status: 401 });
+  }
 
   const apiKey = process.env.ELEVENLABS_API_KEY ?? process.env.ELEVEN_LABS_API_KEY;
   if (!apiKey) {
@@ -87,18 +97,59 @@ export async function POST(request: Request) {
   upstreamBody.append("file", file, file.name);
   upstreamBody.append("stem_variation_id", "six_stems_v1");
 
-  const upstream = await fetch(
-    "https://api.elevenlabs.io/v1/music/stem-separation?output_format=mp3_44100_128",
-    {
-      method: "POST",
-      headers: { "xi-api-key": apiKey },
-      body: upstreamBody,
-      cache: "no-store",
-    },
-  );
+  let reservation;
+  try {
+    reservation = await reserveServiceCredits({
+      userId: access.user.id,
+      serviceId: "stem-separation",
+      fileName: file.name,
+      cost: CREDIT_PRICES.stemSeparation,
+    });
+  } catch (error) {
+    if (
+      error instanceof CreditReservationError &&
+      error.code === "INSUFFICIENT_CREDITS"
+    ) {
+      return Response.json(
+        {
+          error: `Stem separation costs ${CREDIT_PRICES.stemSeparation} coins. Add credits or wait for your monthly refresh.`,
+        },
+        { status: 402, headers: { "Cache-Control": "private, no-store" } },
+      );
+    }
+    return Response.json(
+      { error: "The Crucible credit service is temporarily unavailable." },
+      { status: 503, headers: { "Cache-Control": "private, no-store" } },
+    );
+  }
+
+  let upstream: Response;
+  try {
+    upstream = await fetch(
+      "https://api.elevenlabs.io/v1/music/stem-separation?output_format=mp3_44100_128",
+      {
+        method: "POST",
+        headers: { "xi-api-key": apiKey },
+        body: upstreamBody,
+        cache: "no-store",
+      },
+    );
+  } catch (error) {
+    await refundServiceCredits(access.user.id, reservation.jobId).catch(
+      (refundError) => console.error("Stem credit refund failed", refundError),
+    );
+    console.error("Stem separation request failed", error);
+    return Response.json(
+      { error: "Crucible could not reach the stem forge." },
+      { status: 502, headers: { "Cache-Control": "private, no-store" } },
+    );
+  }
 
   if (!upstream.ok) {
     const detail = await upstream.text();
+    await refundServiceCredits(access.user.id, reservation.jobId).catch(
+      (refundError) => console.error("Stem credit refund failed", refundError),
+    );
     console.error("ElevenLabs stem separation failed", upstream.status, detail.slice(0, 1000));
     const message = upstream.status === 401 || upstream.status === 403
       ? "Stem separation is temporarily unavailable."
@@ -108,12 +159,20 @@ export async function POST(request: Request) {
     return Response.json({ error: message }, { status: upstream.status });
   }
 
+  const balance = await completeServiceCredits(
+    access.user.id,
+    reservation.jobId,
+    { providerStatus: upstream.status },
+  );
+
   return new Response(upstream.body, {
     status: 200,
     headers: {
       "Content-Type": upstream.headers.get("content-type") ?? "application/zip",
       "Content-Disposition": upstream.headers.get("content-disposition") ?? 'attachment; filename="crucible-stems.zip"',
       "Cache-Control": "private, no-store",
+      "X-Crucible-Credit-Cost": String(CREDIT_PRICES.stemSeparation),
+      "X-Crucible-Credit-Balance": String(balance ?? reservation.balance),
     },
   });
 }

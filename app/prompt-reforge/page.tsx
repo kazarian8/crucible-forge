@@ -6,6 +6,8 @@ import {
   createClient,
   isSupabaseConfigured,
 } from "../../lib/supabase/client";
+import { CREDITS_UPDATED_EVENT } from "../../components/CreditBalance";
+import { CREDIT_PRICES } from "../../lib/credits/pricing";
 
 type Scene = {
   scene_number: number;
@@ -322,6 +324,7 @@ export default function PromptReforgePage() {
       }
 
       setAnalysis(result.analysis);
+      window.dispatchEvent(new Event(CREDITS_UPDATED_EVENT));
       setStatus("Reforge complete.");
     } catch (caughtError) {
       const message =
@@ -413,7 +416,7 @@ export default function PromptReforgePage() {
           >
             {loading
               ? "Reforging Video..."
-              : "Reforge This Video"}
+              : `Reforge This Video · ${CREDIT_PRICES.promptReforge} coins`}
           </button>
 
           {status && (

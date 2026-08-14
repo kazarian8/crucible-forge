@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { CREDIT_PRICES } from "../../lib/credits/pricing";
 
 export default function SubscribePage() {
   const [loading, setLoading] = useState(false);
@@ -47,6 +48,9 @@ export default function SubscribePage() {
           <ul className="space-y-3 text-sm text-white/70">
             <li>• Sound Furnace and Crucible Engineer Mode</li>
             <li>• 5,000 credits each active billing month</li>
+            <li>• Prompt Reforge: {CREDIT_PRICES.promptReforge} coins</li>
+            <li>• Six-stem separation: {CREDIT_PRICES.stemSeparation} coins</li>
+            <li>• Quick Master, Engineer Mode and 24-bit export: included</li>
             <li>• Browser-local audio processing and 24-bit WAV export</li>
             <li>• Cancel anytime through the secure billing portal</li>
           </ul>
