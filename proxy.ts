@@ -3,9 +3,15 @@ import { NextResponse, type NextRequest } from "next/server";
 
 const LOGIN_ROUTE = "/login";
 const SIGNUP_ROUTE = "/signup";
-const VERIFY_ROUTE = "/verify-email";
 const SUBSCRIBE_ROUTE = "/subscribe";
 const DEFAULT_AFTER_LOGIN = "/sound-furnace";
+
+const PAID_PREFIXES = [
+  "/furnace",
+  "/prompt-reforge",
+  "/sound-furnace",
+  "/studio",
+];
 
 function getSafeNextRoute(value: string | null) {
   if (value?.startsWith("/") && !value.startsWith("//")) {
@@ -31,11 +37,12 @@ function redirectWithNext(
 
 export async function proxy(request: NextRequest) {
   const { pathname, searchParams } = request.nextUrl;
-  const protectedRoute =
-    pathname.startsWith("/sound-furnace") ||
-    pathname.startsWith("/account");
-  const accountRoute =
-    protectedRoute ||
+  const paidRoute = PAID_PREFIXES.some(
+    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
+  );
+  const authenticatedRoute =
+    paidRoute ||
+    pathname === "/account" ||
     pathname === SUBSCRIBE_ROUTE ||
     pathname.startsWith("/billing/success");
   const authRoute = pathname === LOGIN_ROUTE || pathname === SIGNUP_ROUTE;
@@ -48,7 +55,7 @@ export async function proxy(request: NextRequest) {
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
   if (!supabaseUrl || !supabaseKey) {
-    if (accountRoute || protectedRoute) {
+    if (authenticatedRoute) {
       return redirectWithNext(
         request,
         LOGIN_ROUTE,
@@ -76,27 +83,24 @@ export async function proxy(request: NextRequest) {
     },
   });
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  // getClaims verifies the JWT signature. Never trust getSession() for a
+  // server-side authorization decision.
+  const { data: claimsData } = await supabase.auth.getClaims();
+  const userId = claimsData?.claims?.sub;
 
   const requestedRoute = `${pathname}${request.nextUrl.search}`;
 
-  if (accountRoute && !user) {
+  if (authenticatedRoute && !userId) {
     return redirectWithNext(request, LOGIN_ROUTE, requestedRoute);
-  }
-
-  if (accountRoute && user && !user.email_confirmed_at) {
-    return redirectWithNext(request, VERIFY_ROUTE, requestedRoute);
   }
 
   let entitled = false;
 
-  if (user && (accountRoute || authRoute)) {
+  if (userId && (authenticatedRoute || authRoute)) {
     const { data: subscription } = await supabase
       .from("pro_subscriptions")
       .select("status,current_period_end,trial_end")
-      .eq("user_id", user.id)
+      .eq("user_id", userId)
       .maybeSingle();
 
     const now = Date.now();
@@ -112,7 +116,7 @@ export async function proxy(request: NextRequest) {
     entitled = trialValid || activeValid;
   }
 
-  if (protectedRoute && !entitled) {
+  if (paidRoute && !entitled) {
     return redirectWithNext(request, SUBSCRIBE_ROUTE, requestedRoute);
   }
 
@@ -123,7 +127,7 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(redirectUrl);
   }
 
-  if (authRoute && user) {
+  if (authRoute && userId) {
     const redirectUrl = request.nextUrl.clone();
     redirectUrl.pathname = entitled
       ? getSafeNextRoute(searchParams.get("next"))
