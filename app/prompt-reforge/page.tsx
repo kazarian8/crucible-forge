@@ -2,19 +2,12 @@
 
 import { ChangeEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { createClient } from "@supabase/supabase-js";
-
-
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-
-if (!supabaseUrl || !supabaseAnonKey) {
-  throw new Error(
-    "Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY."
-  );
-}
-
-const supabase = createClient(supabaseUrl, supabaseAnonKey);
+import {
+  createClient,
+  isSupabaseConfigured,
+} from "../../lib/supabase/client";
+import { CREDITS_UPDATED_EVENT } from "../../components/CreditBalance";
+import { CREDIT_PRICES } from "../../lib/credits/pricing";
 
 type Scene = {
   scene_number: number;
@@ -218,6 +211,15 @@ export default function PromptReforgePage() {
   useEffect(() => {
     let mounted = true;
 
+    if (!isSupabaseConfigured()) {
+      setIsSignedIn(false);
+      setCheckingAuth(false);
+      router.replace("/login?error=service-unavailable");
+      return;
+    }
+
+    const supabase = createClient();
+
     async function checkSession() {
       const { data, error: sessionError } =
         await supabase.auth.getSession();
@@ -322,6 +324,7 @@ export default function PromptReforgePage() {
       }
 
       setAnalysis(result.analysis);
+      window.dispatchEvent(new Event(CREDITS_UPDATED_EVENT));
       setStatus("Reforge complete.");
     } catch (caughtError) {
       const message =
@@ -413,7 +416,7 @@ export default function PromptReforgePage() {
           >
             {loading
               ? "Reforging Video..."
-              : "Reforge This Video"}
+              : `Reforge This Video · ${CREDIT_PRICES.promptReforge} coins`}
           </button>
 
           {status && (

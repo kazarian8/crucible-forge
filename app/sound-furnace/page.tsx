@@ -1,6 +1,8 @@
 "use client";
 
 import StemSequencer from "../../components/sound-furnace/StemSequencer";
+import { CREDITS_UPDATED_EVENT } from "../../components/CreditBalance";
+import { CREDIT_PRICES } from "../../lib/credits/pricing";
 import Link from "next/link";
 import {
   ChangeEvent,
@@ -514,6 +516,8 @@ export default function SoundFurnacePage() {
         throw new Error(payload?.error ?? `Stem separation failed (${response.status}).`);
       }
 
+      window.dispatchEvent(new Event(CREDITS_UPDATED_EVENT));
+
       const archive = await unzipArchive(await response.arrayBuffer());
     const order = ["vocals", "drums", "bass", "guitar", "piano", "other"];
     const separated = archive
@@ -647,7 +651,9 @@ export default function SoundFurnacePage() {
 
             <button type="submit" disabled={!buffer || busy} className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-orange-600 to-amber-400 px-5 py-4 font-black text-black disabled:cursor-not-allowed disabled:opacity-40">
               {busy ? <LoaderCircle className="animate-spin" size={19} /> : <Flame size={19} />}
-              {busy ? "Working locally…" : "Forge 24-bit master"}
+              {busy
+                ? "Working locally…"
+                : `Forge master + 6 stems · ${CREDIT_PRICES.stemSeparation} coins`}
             </button>
 
             <p className="mt-4 text-center text-xs text-white/40" aria-live="polite">{status}</p>
@@ -693,7 +699,7 @@ export default function SoundFurnacePage() {
             <div>
               <p className="text-xs font-black uppercase tracking-[0.2em] text-violet-200">Crucible Engineer Mode</p>
               <h2 className="mt-2 text-3xl font-black">Take the forge into the full 16-track workstation.</h2>
-              <p className="mt-3 max-w-2xl text-sm leading-6 text-white/50">Import stems, trim dead space, align starts, preserve cadence, balance levels, audition A/B, and send the finished mix back through the Forge.</p>
+              <p className="mt-3 max-w-2xl text-sm leading-6 text-white/50">Import stems, trim dead space, align starts, preserve cadence, balance levels, audition A/B, and send the finished mix back through the Forge. Engineer Mode and 24-bit export are included; six-stem separation costs {CREDIT_PRICES.stemSeparation} coins.</p>
             </div>
             <button
               type="button"
