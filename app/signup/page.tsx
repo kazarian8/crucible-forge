@@ -10,10 +10,26 @@ function safeNext() {
     : "/subscribe";
 }
 
+function friendlySignupError(message: string) {
+  const normalized = message.toLowerCase();
+
+  if (normalized.includes("rate limit") || normalized.includes("email rate")) {
+    return "The confirmation email service is temporarily at its limit. Do not keep retrying; your details are safe. Try again after the email window resets.";
+  }
+
+  if (normalized.includes("password")) {
+    return "Use a password with at least 12 characters.";
+  }
+
+  return message;
+}
+
 export default function SignupPage() {
   const configured = isSupabaseConfigured();
   const supabase = configured ? createClient() : null;
   const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmation, setConfirmation] = useState("");
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
   const [isError, setIsError] = useState(false);
@@ -27,6 +43,18 @@ export default function SignupPage() {
       return;
     }
 
+    if (password.length < 12) {
+      setMessage("Use a password with at least 12 characters.");
+      setIsError(true);
+      return;
+    }
+
+    if (password !== confirmation) {
+      setMessage("The passwords do not match.");
+      setIsError(true);
+      return;
+    }
+
     setLoading(true);
     setMessage("");
     setIsError(false);
@@ -34,24 +62,29 @@ export default function SignupPage() {
     const callback = new URL("/auth/callback", window.location.origin);
     callback.searchParams.set("next", safeNext());
 
-    const { error } = await supabase.auth.signInWithOtp({
+    const { data, error } = await supabase.auth.signUp({
       email: email.trim().toLowerCase(),
+      password,
       options: {
         emailRedirectTo: callback.toString(),
-        shouldCreateUser: true,
       },
     });
 
     setLoading(false);
 
     if (error) {
-      setMessage(error.message);
+      setMessage(friendlySignupError(error.message));
       setIsError(true);
       return;
     }
 
+    if (data.session) {
+      window.location.assign(safeNext());
+      return;
+    }
+
     setMessage(
-      "Check your inbox. Tap the secure confirmation link before Crucible will offer the 30-day trial.",
+      "Account created. Check your inbox once to confirm your email, then sign in with this password. Routine sign-ins will not send another email.",
     );
   }
 
@@ -63,28 +96,61 @@ export default function SignupPage() {
         </p>
         <h1 className="mt-4 text-3xl font-black">Create your Crucible account.</h1>
         <p className="mt-3 text-sm leading-6 text-white/55">
-          Confirm your email first. Then Stripe securely collects a card for the
-          30-day free trial. You are not charged today.
+          Confirm your email once, then use your password for everyday sign-in.
+          Stripe securely collects a card for the 30-day free trial. You are not
+          charged today.
         </p>
-        <form onSubmit={handleSubmit} className="mt-7">
-          <label htmlFor="email" className="text-xs font-bold uppercase tracking-wider text-white/50">
-            Email
+        <form onSubmit={handleSubmit} className="mt-7 space-y-4">
+          <label className="block">
+            <span className="text-xs font-bold uppercase tracking-wider text-white/50">
+              Email
+            </span>
+            <input
+              type="email"
+              required
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+              placeholder="artist@email.com"
+              autoComplete="email"
+              className="mt-2 w-full rounded-xl border border-white/10 bg-white/[0.04] px-4 py-4 outline-none focus:border-orange-300/50"
+            />
           </label>
-          <input
-            id="email"
-            type="email"
-            required
-            value={email}
-            onChange={(event) => setEmail(event.target.value)}
-            placeholder="artist@email.com"
-            className="mt-2 w-full rounded-xl border border-white/10 bg-white/[0.04] px-4 py-4 outline-none focus:border-orange-300/50"
-          />
+          <label className="block">
+            <span className="text-xs font-bold uppercase tracking-wider text-white/50">
+              Password
+            </span>
+            <input
+              type="password"
+              required
+              minLength={12}
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              placeholder="At least 12 characters"
+              autoComplete="new-password"
+              className="mt-2 w-full rounded-xl border border-white/10 bg-white/[0.04] px-4 py-4 outline-none focus:border-orange-300/50"
+            />
+          </label>
+          <label className="block">
+            <span className="text-xs font-bold uppercase tracking-wider text-white/50">
+              Confirm password
+            </span>
+            <input
+              type="password"
+              required
+              minLength={12}
+              value={confirmation}
+              onChange={(event) => setConfirmation(event.target.value)}
+              placeholder="Repeat your password"
+              autoComplete="new-password"
+              className="mt-2 w-full rounded-xl border border-white/10 bg-white/[0.04] px-4 py-4 outline-none focus:border-orange-300/50"
+            />
+          </label>
           <button
             type="submit"
-            disabled={!configured || loading}
-            className="mt-5 w-full rounded-xl bg-gradient-to-r from-orange-600 to-amber-400 px-5 py-4 font-black text-black disabled:opacity-50"
+            disabled={!configured || loading || !email || !password || !confirmation}
+            className="w-full rounded-xl bg-gradient-to-r from-orange-600 to-amber-400 px-5 py-4 font-black text-black disabled:opacity-50"
           >
-            {loading ? "Sending..." : "Send verification link"}
+            {loading ? "Creating account..." : "Create account"}
           </button>
         </form>
         {message ? (
