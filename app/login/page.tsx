@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { FormEvent, useState } from "react";
 import { createClient, isSupabaseConfigured } from "../../lib/supabase/client";
 
 function safeNext() {
@@ -14,10 +14,13 @@ export default function LoginPage() {
   const configured = isSupabaseConfigured();
   const supabase = configured ? createClient() : null;
   const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
 
-  async function handleSignIn() {
+  async function handleSignIn(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
     if (!supabase) {
       setMessage("Sign-in is temporarily unavailable.");
       return;
@@ -26,23 +29,22 @@ export default function LoginPage() {
     setLoading(true);
     setMessage("");
 
-    const callback = new URL("/auth/callback", window.location.origin);
-    callback.searchParams.set("next", safeNext());
-
-    const { error } = await supabase.auth.signInWithOtp({
+    const { error } = await supabase.auth.signInWithPassword({
       email: email.trim().toLowerCase(),
-      options: {
-        emailRedirectTo: callback.toString(),
-        shouldCreateUser: false,
-      },
+      password,
     });
 
-    setMessage(
-      error
-        ? error.message
-        : "Check your inbox and tap the secure sign-in link. Access is not granted until the link is opened.",
-    );
-    setLoading(false);
+    if (error) {
+      setMessage(
+        error.message.toLowerCase().includes("email not confirmed")
+          ? "Confirm your email before signing in."
+          : "That email and password combination was not accepted.",
+      );
+      setLoading(false);
+      return;
+    }
+
+    window.location.assign(safeNext());
   }
 
   return (
@@ -50,27 +52,49 @@ export default function LoginPage() {
       <section className="w-full max-w-md rounded-2xl border border-orange-500/40 bg-zinc-950 p-8">
         <h1 className="text-center text-3xl font-bold">Enter the Crucible</h1>
         <p className="mt-3 text-center text-sm leading-6 text-zinc-400">
-          We send a one-time link to your verified inbox. A password alone never
-          opens the Forge.
+          Sign in with your verified email and password. Your active trial or
+          subscription is checked before the Forge opens.
         </p>
-        <input
-          type="email"
-          value={email}
-          onChange={(event) => setEmail(event.target.value)}
-          placeholder="Email address"
-          autoComplete="email"
-          className="mt-7 w-full rounded-lg border border-zinc-700 bg-zinc-900 px-4 py-3 outline-none focus:border-orange-500"
-        />
-        <button
-          type="button"
-          onClick={handleSignIn}
-          disabled={!configured || loading || !email}
-          className="mt-4 w-full rounded-lg bg-orange-600 py-3 font-bold hover:bg-orange-500 disabled:opacity-50"
-        >
-          {loading ? "Sending..." : "Email secure sign-in link"}
-        </button>
+        <form onSubmit={handleSignIn} className="mt-7 space-y-4">
+          <label className="block">
+            <span className="text-xs font-bold uppercase tracking-wider text-zinc-400">
+              Email
+            </span>
+            <input
+              type="email"
+              required
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+              placeholder="Email address"
+              autoComplete="email"
+              className="mt-2 w-full rounded-lg border border-zinc-700 bg-zinc-900 px-4 py-3 outline-none focus:border-orange-500"
+            />
+          </label>
+          <label className="block">
+            <span className="text-xs font-bold uppercase tracking-wider text-zinc-400">
+              Password
+            </span>
+            <input
+              type="password"
+              required
+              minLength={12}
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              placeholder="Your password"
+              autoComplete="current-password"
+              className="mt-2 w-full rounded-lg border border-zinc-700 bg-zinc-900 px-4 py-3 outline-none focus:border-orange-500"
+            />
+          </label>
+          <button
+            type="submit"
+            disabled={!configured || loading || !email || !password}
+            className="w-full rounded-lg bg-orange-600 py-3 font-bold hover:bg-orange-500 disabled:opacity-50"
+          >
+            {loading ? "Signing in..." : "Sign in"}
+          </button>
+        </form>
         {message ? (
-          <p role="status" className="mt-4 text-center text-sm text-zinc-300">
+          <p role="alert" className="mt-4 text-center text-sm text-red-200">
             {message}
           </p>
         ) : null}
