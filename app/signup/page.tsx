@@ -17,6 +17,14 @@ function friendlySignupError(message: string) {
     return "The confirmation email service is temporarily at its limit. Do not keep retrying; your details are safe. Try again after the email window resets.";
   }
 
+  if (
+    normalized.includes("already registered") ||
+    normalized.includes("already exists") ||
+    normalized.includes("already in use")
+  ) {
+    return "Email already in use. Sign in instead.";
+  }
+
   if (normalized.includes("password")) {
     return "Use a password with at least 12 characters.";
   }
@@ -74,6 +82,15 @@ export default function SignupPage() {
 
     if (error) {
       setMessage(friendlySignupError(error.message));
+      setIsError(true);
+      return;
+    }
+
+    // Supabase deliberately returns an obfuscated user with no identities when
+    // a confirmed email already exists. Turn that response into a clear action
+    // instead of claiming another account was created.
+    if (data.user && data.user.identities?.length === 0) {
+      setMessage("Email already in use. Sign in instead.");
       setIsError(true);
       return;
     }
