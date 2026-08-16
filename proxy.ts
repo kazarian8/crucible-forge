@@ -29,11 +29,6 @@ function preserveSupabaseState(
     target.cookies.set(cookie);
   });
 
-  for (const header of ["cache-control", "expires", "pragma"]) {
-    const value = source.headers.get(header);
-    if (value) target.headers.set(header, value);
-  }
-
   return target;
 }
 
@@ -107,16 +102,13 @@ export async function proxy(request: NextRequest) {
       getAll() {
         return request.cookies.getAll();
       },
-      setAll(cookiesToSet, headers) {
+      setAll(cookiesToSet) {
         cookiesToSet.forEach(({ name, value }) => {
           request.cookies.set(name, value);
         });
         response = NextResponse.next({ request });
         cookiesToSet.forEach(({ name, value, options }) => {
           response.cookies.set(name, value, options);
-        });
-        Object.entries(headers ?? {}).forEach(([key, value]) => {
-          response.headers.set(key, value);
         });
       },
     },
