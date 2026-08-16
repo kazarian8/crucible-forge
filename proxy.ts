@@ -21,18 +21,54 @@ function getSafeNextRoute(value: string | null) {
   return DEFAULT_AFTER_LOGIN;
 }
 
+function preserveSupabaseState(
+  source: NextResponse,
+  target: NextResponse,
+) {
+  source.cookies.getAll().forEach((cookie) => {
+    target.cookies.set(cookie);
+  });
+
+  for (const header of ["cache-control", "expires", "pragma"]) {
+    const value = source.headers.get(header);
+    if (value) target.headers.set(header, value);
+  }
+
+  return target;
+}
+
 function redirectWithNext(
   request: NextRequest,
   pathname: string,
   nextRoute: string,
   error?: string,
+  sourceResponse?: NextResponse,
 ) {
   const redirectUrl = request.nextUrl.clone();
   redirectUrl.pathname = pathname;
   redirectUrl.search = "";
   redirectUrl.searchParams.set("next", nextRoute);
   if (error) redirectUrl.searchParams.set("error", error);
-  return NextResponse.redirect(redirectUrl);
+
+  const redirectResponse = NextResponse.redirect(redirectUrl);
+  return sourceResponse
+    ? preserveSupabaseState(sourceResponse, redirectResponse)
+    : redirectResponse;
+}
+
+function redirectPreservingSession(
+  request: NextRequest,
+  response: NextResponse,
+  pathname: string,
+) {
+  const redirectUrl = request.nextUrl.clone();
+  redirectUrl.pathname = pathname;
+  redirectUrl.search = "";
+
+  return preserveSupabaseState(
+    response,
+    NextResponse.redirect(redirectUrl),
+  );
 }
 
 export async function proxy(request: NextRequest) {
@@ -71,7 +107,7 @@ export async function proxy(request: NextRequest) {
       getAll() {
         return request.cookies.getAll();
       },
-      setAll(cookiesToSet) {
+      setAll(cookiesToSet, headers) {
         cookiesToSet.forEach(({ name, value }) => {
           request.cookies.set(name, value);
         });
@@ -79,19 +115,28 @@ export async function proxy(request: NextRequest) {
         cookiesToSet.forEach(({ name, value, options }) => {
           response.cookies.set(name, value, options);
         });
+        Object.entries(headers ?? {}).forEach(([key, value]) => {
+          response.headers.set(key, value);
+        });
       },
     },
   });
 
-  // getClaims verifies the JWT signature. Never trust getSession() for a
-  // server-side authorization decision.
+  // getClaims verifies the JWT signature and refreshes cookie-backed auth when
+  // needed. Any response returned after this point must preserve those cookies.
   const { data: claimsData } = await supabase.auth.getClaims();
   const userId = claimsData?.claims?.sub;
 
   const requestedRoute = `${pathname}${request.nextUrl.search}`;
 
   if (authenticatedRoute && !userId) {
-    return redirectWithNext(request, LOGIN_ROUTE, requestedRoute);
+    return redirectWithNext(
+      request,
+      LOGIN_ROUTE,
+      requestedRoute,
+      undefined,
+      response,
+    );
   }
 
   let entitled = false;
@@ -117,23 +162,31 @@ export async function proxy(request: NextRequest) {
   }
 
   if (paidRoute && !entitled) {
-    return redirectWithNext(request, SUBSCRIBE_ROUTE, requestedRoute);
+    return redirectWithNext(
+      request,
+      SUBSCRIBE_ROUTE,
+      requestedRoute,
+      undefined,
+      response,
+    );
   }
 
   if (pathname === SUBSCRIBE_ROUTE && entitled) {
-    const redirectUrl = request.nextUrl.clone();
-    redirectUrl.pathname = DEFAULT_AFTER_LOGIN;
-    redirectUrl.search = "";
-    return NextResponse.redirect(redirectUrl);
+    return redirectPreservingSession(
+      request,
+      response,
+      DEFAULT_AFTER_LOGIN,
+    );
   }
 
   if (authRoute && userId) {
-    const redirectUrl = request.nextUrl.clone();
-    redirectUrl.pathname = entitled
-      ? getSafeNextRoute(searchParams.get("next"))
-      : SUBSCRIBE_ROUTE;
-    redirectUrl.search = "";
-    return NextResponse.redirect(redirectUrl);
+    return redirectPreservingSession(
+      request,
+      response,
+      entitled
+        ? getSafeNextRoute(searchParams.get("next"))
+        : SUBSCRIBE_ROUTE,
+    );
   }
 
   return response;
