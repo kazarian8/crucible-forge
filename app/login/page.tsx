@@ -1,7 +1,6 @@
 "use client";
 
 import { FormEvent, useState } from "react";
-import { createClient, isSupabaseConfigured } from "../../lib/supabase/client";
 
 function safeNext() {
   const value = new URLSearchParams(window.location.search).get("next");
@@ -11,8 +10,6 @@ function safeNext() {
 }
 
 export default function LoginPage() {
-  const configured = isSupabaseConfigured();
-  const supabase = configured ? createClient() : null;
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [message, setMessage] = useState("");
@@ -20,31 +17,35 @@ export default function LoginPage() {
 
   async function handleSignIn(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-
-    if (!supabase) {
-      setMessage("Sign-in is temporarily unavailable.");
-      return;
-    }
-
     setLoading(true);
     setMessage("");
 
-    const { error } = await supabase.auth.signInWithPassword({
-      email: email.trim().toLowerCase(),
-      password,
-    });
+    try {
+      const response = await fetch("/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        cache: "no-store",
+        body: JSON.stringify({
+          email: email.trim().toLowerCase(),
+          password,
+        }),
+      });
 
-    if (error) {
-      setMessage(
-        error.message.toLowerCase().includes("email not confirmed")
-          ? "Confirm your email before signing in."
-          : "That email and password combination was not accepted.",
-      );
+      if (!response.ok) {
+        setMessage(
+          response.status === 401
+            ? "That email and password combination was not accepted."
+            : "Sign-in is temporarily unavailable.",
+        );
+        setLoading(false);
+        return;
+      }
+
+      window.location.replace(safeNext());
+    } catch {
+      setMessage("Sign-in is temporarily unavailable.");
       setLoading(false);
-      return;
     }
-
-    window.location.assign(safeNext());
   }
 
   return (
@@ -87,7 +88,7 @@ export default function LoginPage() {
           </label>
           <button
             type="submit"
-            disabled={!configured || loading || !email || !password}
+            disabled={loading || !email || !password}
             className="w-full rounded-lg bg-orange-600 py-3 font-bold hover:bg-orange-500 disabled:opacity-50"
           >
             {loading ? "Signing in..." : "Sign in"}
