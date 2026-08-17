@@ -1,0 +1,155 @@
+name: Fix sequencer double-tap hold drag
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/fix-sequencer-double-tap-drag.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  fix-gesture:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Require double-tap and hold before clip movement
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("components/sound-furnace/StemSequencer.tsx")
+          text = path.read_text()
+
+          def replace_once(old, new, label):
+              global text
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{label}: expected 1 match, found {count}")
+              text = text.replace(old, new, 1)
+
+          replace_once(
+              '  const clipDragRef = useRef<ClipDrag | null>(null);\n',
+              '  const clipDragRef = useRef<ClipDrag | null>(null);\n'
+              '  const clipLastTapRef = useRef<{ trackId: string; at: number } | null>(null);\n'
+              '  const clipArmedPointerRef = useRef<number | null>(null);\n',
+              'clip gesture refs',
+          )
+
+          old = '''  function beginClipDrag(event: ReactPointerEvent<HTMLElement>, track: StemTrack) {
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    const timeline = event.currentTarget.parentElement;
+    clipDragRef.current = {
+      trackId: track.id,
+      startX: event.clientX,
+      startSeconds: track.startSeconds,
+      timelineWidth: Math.max(1, timeline?.clientWidth ?? event.currentTarget.clientWidth),
+    };
+    setSelectedTrackId(track.id);
+  }
+
+  function moveClip(event: ReactPointerEvent<HTMLElement>) {
+    const drag = clipDragRef.current;
+    if (!drag) return;
+    const raw = Math.max(0, drag.startSeconds + ((event.clientX - drag.startX) / drag.timelineWidth) * rulerDuration);
+    const snapMultipliers: Record<string, number> = { "1/4": 1, "1/8": 0.5, "1/16": 0.25, "1/32": 0.125 };
+    const snapSeconds = (60 / projectBpm) * (snapMultipliers[snapDivision] ?? 0.25);
+    const next = snapEnabled ? Math.round(raw / snapSeconds) * snapSeconds : Math.round(raw * 100) / 100;
+    replaceTrack(drag.trackId, { startSeconds: next });
+  }
+
+  function endClipDrag(event: ReactPointerEvent<HTMLElement>) {
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    clipDragRef.current = null;
+  }
+'''
+
+          new = '''  function beginClipDrag(event: ReactPointerEvent<HTMLElement>, track: StemTrack) {
+    setSelectedTrackId(track.id);
+
+    const now = performance.now();
+    const previousTap = clipLastTapRef.current;
+    const isSecondTap = Boolean(
+      previousTap &&
+      previousTap.trackId === track.id &&
+      now - previousTap.at <= 380
+    );
+
+    if (!isSecondTap) {
+      clipLastTapRef.current = { trackId: track.id, at: now };
+      clipDragRef.current = null;
+      clipArmedPointerRef.current = null;
+      return;
+    }
+
+    event.preventDefault();
+    clipLastTapRef.current = null;
+    clipArmedPointerRef.current = event.pointerId;
+    try { event.currentTarget.setPointerCapture(event.pointerId); } catch {}
+    const timeline = event.currentTarget.parentElement;
+    clipDragRef.current = {
+      trackId: track.id,
+      startX: event.clientX,
+      startSeconds: track.startSeconds,
+      timelineWidth: Math.max(1, timeline?.clientWidth ?? event.currentTarget.clientWidth),
+    };
+    setStatus("Track unlocked — keep this second tap held and drag left or right.");
+  }
+
+  function moveClip(event: ReactPointerEvent<HTMLElement>) {
+    if (clipArmedPointerRef.current !== event.pointerId) return;
+    const drag = clipDragRef.current;
+    if (!drag) return;
+    event.preventDefault();
+    const raw = Math.max(0, drag.startSeconds + ((event.clientX - drag.startX) / drag.timelineWidth) * rulerDuration);
+    const snapMultipliers: Record<string, number> = { "1/4": 1, "1/8": 0.5, "1/16": 0.25, "1/32": 0.125 };
+    const snapSeconds = (60 / projectBpm) * (snapMultipliers[snapDivision] ?? 0.25);
+    const next = snapEnabled ? Math.round(raw / snapSeconds) * snapSeconds : Math.round(raw * 100) / 100;
+    replaceTrack(drag.trackId, { startSeconds: next });
+  }
+
+  function endClipDrag(event: ReactPointerEvent<HTMLElement>) {
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    if (clipArmedPointerRef.current === event.pointerId) {
+      clipArmedPointerRef.current = null;
+      clipDragRef.current = null;
+    }
+  }
+'''
+
+          replace_once(old, new, 'clip drag handlers')
+          path.write_text(text)
+          PY
+
+      - name: Validate
+        run: |
+          npm ci
+          npm run build
+
+      - name: Commit fixed sequencer gesture
+        shell: bash
+        run: |
+          if git diff --quiet -- components/sound-furnace/StemSequencer.tsx; then
+            echo "No gesture changes needed"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add components/sound-furnace/StemSequencer.tsx
+          git commit -m "require double-tap hold to move sequencer clips"
+          git push
