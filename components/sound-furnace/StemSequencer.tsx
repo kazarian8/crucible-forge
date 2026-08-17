@@ -807,6 +807,8 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
   const recorderRef = useRef<MediaRecorder | null>(null);
   const recordingStreamRef = useRef<MediaStream | null>(null);
   const recordingChunksRef = useRef<Blob[]>([]);
+  const recordingTargetIdRef = useRef("");
+  const recordingStartSecondsRef = useRef(0);
   const clipDragRef = useRef<ClipDrag | null>(null);
   const pinchPointersRef = useRef(new Map<number, { x: number; y: number }>());
   const pinchStartRef = useRef<PinchStart | null>(null);
@@ -1155,22 +1157,44 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
     if (event.target.files) void addFiles(event.target.files);
   }
 
-  async function startVocalRecording() {
+  async function addVocalLane() {
     if (tracks.length >= MAX_TRACKS) return;
     setError("");
+    const context = new AudioContext();
+    const buffer = context.createBuffer(1, Math.max(1, Math.floor(context.sampleRate * 0.05)), context.sampleRate);
+    await context.close();
+    const laneNumber = tracks.filter((track) => VOCAL_TRACK_PATTERN.test(track.name)).length + 1;
+    const start = Math.min(playheadSeconds, rulerDuration);
+    const track: StemTrack = {
+      id: crypto.randomUUID(), name: `Vocal ${laneNumber}`, buffer,
+      startSeconds: start, originalStartSeconds: start,
+      trimStartSeconds: 0, trimEndSeconds: buffer.duration,
+      fadeInSeconds: 0, fadeOutSeconds: 0, gainDb: 0, muted: false, solo: false,
+      effects: { enabled: false, preset: "clear", intensity: 50, focusNote: projectKey, octave: 3 },
+    };
+    setTracks((current) => [...current, track]);
+    setSelectedTrackId(track.id);
+    setCadenceReferenceId((current) => current || track.id);
+    setStatus(`${track.name} lane added. It is highlighted and ready to record.`);
+  }
+
+  async function startVocalRecording() {
+    const target = selectedTrack;
+    if (!target) {
+      setError("Highlight a sequencer lane before recording.");
+      setStatus("Choose the lane you want to record onto.");
+      return;
+    }
+    setError("");
+    recordingTargetIdRef.current = target.id;
+    recordingStartSecondsRef.current = playheadSeconds;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: false,
-          noiseSuppression: false,
-          autoGainControl: false,
-        },
+        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
       });
       const preferredType = ["audio/mp4", "audio/webm;codecs=opus", "audio/webm"]
         .find((type) => MediaRecorder.isTypeSupported(type));
-      const recorder = preferredType
-        ? new MediaRecorder(stream, { mimeType: preferredType })
-        : new MediaRecorder(stream);
+      const recorder = preferredType ? new MediaRecorder(stream, { mimeType: preferredType }) : new MediaRecorder(stream);
       recorderRef.current = recorder;
       recordingStreamRef.current = stream;
       recordingChunksRef.current = [];
@@ -1179,22 +1203,46 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
       };
       recorder.onstop = () => {
         const type = recorder.mimeType || preferredType || "audio/webm";
-        const extension = type.includes("mp4") ? "m4a" : type.includes("ogg") ? "ogg" : "webm";
         const blob = new Blob(recordingChunksRef.current, { type });
-        const vocal = new File([blob], `Crucible-Vocal-${Date.now()}.${extension}`, { type });
+        const targetId = recordingTargetIdRef.current;
+        const recordStart = recordingStartSecondsRef.current;
         stream.getTracks().forEach((track) => track.stop());
         recordingStreamRef.current = null;
         recorderRef.current = null;
+        recordingTargetIdRef.current = "";
         setRecording(false);
-        setStatus("Vocal captured. Loading it into a new sequencer lane…");
-        void addFiles([vocal]);
+        setStatus("Recording captured. Loading it onto the highlighted lane…");
+        void (async () => {
+          try {
+            const context = new AudioContext();
+            const buffer = await context.decodeAudioData((await blob.arrayBuffer()).slice(0));
+            await context.close();
+            const audible = detectAudibleRange(buffer);
+            setTracks((current) => current.map((track) => track.id === targetId ? {
+              ...track,
+              name: VOCAL_TRACK_PATTERN.test(track.name) ? track.name : `Vocal · ${track.name}`,
+              buffer, startSeconds: recordStart, originalStartSeconds: recordStart,
+              trimStartSeconds: audible.start, trimEndSeconds: audible.end,
+              fadeInSeconds: Math.min(0.02, Math.max(0, (audible.end - audible.start) / 2)),
+              fadeOutSeconds: Math.min(0.04, Math.max(0, (audible.end - audible.start) / 2)),
+            } : track));
+            setSelectedTrackId(targetId);
+            setCadenceProfiles({});
+            setCadenceSuggestions({});
+            setStatus("Recorded directly onto the highlighted lane. The vocal waveform is shown in red.");
+          } catch {
+            setError("The recording was captured but could not be decoded into the lane.");
+            setStatus("The selected lane was left unchanged.");
+          }
+        })();
       };
       recorder.start(250);
       setRecording(true);
-      setStatus("Recording a new vocal track locally…");
+      setStatus(`Recording onto ${target.name}…`);
     } catch {
-      setError("Microphone access is required to create a vocal track.");
-      setStatus("Vocal recording did not start.");
+      recordingTargetIdRef.current = "";
+      setError("Microphone access is required to record onto the selected lane.");
+      setStatus("Recording did not start.");
     }
   }
 
@@ -1333,12 +1381,11 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
           </button>
           <button
             type="button"
-            onClick={recording ? stopVocalRecording : () => void startVocalRecording()}
-            disabled={busy || tracks.length >= MAX_TRACKS}
-            className={`flex items-center gap-2 rounded-xl border px-4 py-2.5 text-xs font-black disabled:opacity-40 ${recording ? "border-red-400/40 bg-red-500/15 text-red-100" : "border-emerald-300/20 bg-emerald-400/[0.06] text-emerald-100"}`}
+            onClick={() => void addVocalLane()}
+            disabled={busy || tracks.length >= MAX_TRACKS || recording}
+            className="flex items-center gap-2 rounded-xl border border-red-300/20 bg-red-400/[0.06] px-4 py-2.5 text-xs font-black text-red-100 disabled:opacity-40"
           >
-            {recording ? <CircleStop size={15} fill="currentColor" /> : <Mic size={15} />}
-            {recording ? "Stop vocal" : "New vocal track"}
+            <Mic size={15} /> Add vocal lane
           </button>
           <button
             type="button"
@@ -1543,6 +1590,16 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
                 {playing ? <Pause size={16} fill="currentColor" /> : <Play size={16} fill="currentColor" />}
               </button>
               <p className="font-mono text-sm font-black tabular-nums text-orange-100">{formatTime(playheadSeconds)}</p>
+              <button
+                type="button"
+                onClick={recording ? stopVocalRecording : () => void startVocalRecording()}
+                disabled={busy || !selectedTrack}
+                aria-label={recording ? "Stop recording" : `Record onto ${selectedTrack?.name ?? "selected lane"}`}
+                className={`flex items-center gap-1.5 rounded-lg px-3 py-2 text-[9px] font-black uppercase tracking-wider disabled:opacity-35 ${recording ? "bg-red-500 text-white" : "border border-red-300/25 bg-red-400/[0.08] text-red-100"}`}
+              >
+                {recording ? <CircleStop size={13} fill="currentColor" /> : <Mic size={13} />}
+                {recording ? "Stop" : "Record"}
+              </button>
             </div>
             <div className="flex items-center gap-1.5">
               <button
@@ -1568,13 +1625,13 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
           <div className="overflow-x-auto">
             <div
               className="touch-pan-x"
-              style={{ width: `${Math.round(760 * timelineZoom)}px`, minWidth: "760px" }}
+              style={{ width: `${Math.round(980 * timelineZoom)}px`, minWidth: "980px" }}
               onPointerDownCapture={handleTimelinePointerDown}
               onPointerMoveCapture={handleTimelinePointerMove}
               onPointerUpCapture={handleTimelinePointerEnd}
               onPointerCancelCapture={handleTimelinePointerEnd}
             >
-              <div className="grid grid-cols-[150px_1fr] border-b border-white/10 bg-[#0d0b0a]">
+              <div className="grid grid-cols-[170px_1fr] border-b border-white/10 bg-[#0d0b0a]">
                 <div className="border-r border-white/10 px-3 py-2 text-[9px] font-black uppercase tracking-wider text-white/30">Tracks</div>
                 <div className="relative h-9">
                   {rulerMarks.map((mark, index) => (
@@ -1588,7 +1645,7 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
               <div className="relative">
                 <div
                   className="pointer-events-none absolute bottom-0 top-0 z-20 w-px bg-orange-300 shadow-[0_0_10px_rgba(253,186,116,.8)]"
-                  style={{ left: `calc(150px + (100% - 150px) * ${Math.min(1, playheadSeconds / rulerDuration)})` }}
+                  style={{ left: `calc(170px + (100% - 170px) * ${Math.min(1, playheadSeconds / rulerDuration)})` }}
                 />
                 {tracks.map((track, index) => {
                   const waveColor = VOCAL_TRACK_PATTERN.test(track.name)
@@ -1599,7 +1656,7 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
                   const clipLeft = (track.startSeconds / rulerDuration) * 100;
                   const clipWidth = Math.max(1.5, (trackDuration(track) / rulerDuration) * 100);
                   return (
-                    <article key={track.id} className={`grid h-[84px] grid-cols-[150px_1fr] border-b border-white/[0.07] last:border-b-0 ${inactive ? "opacity-45" : ""}`}>
+                    <article key={track.id} className={`grid h-[96px] grid-cols-[170px_1fr] border-b border-white/[0.07] last:border-b-0 ${inactive ? "opacity-45" : ""}`}>
                       <div className={`border-r px-2 py-2 ${selected ? "border-orange-400/50 bg-orange-500/10" : "border-white/10 bg-black/35"}`}>
                         <button type="button" onClick={() => setSelectedTrackId(track.id)} className="block w-full text-left">
                           <span className="text-[9px] font-black uppercase tracking-wider text-orange-300/70">{String(index + 1).padStart(2, "0")}</span>
