@@ -1,5 +1,6 @@
 import "./globals.css";
 import CreditBalance from "../components/CreditBalance";
+import FurnaceSwitcher from "../components/FurnaceSwitcher";
 import SequencerClipGestureGuard from "../components/SequencerClipGestureGuard";
 import SupportDock from "../components/SupportDock";
 import type { Metadata } from "next";
@@ -11,8 +12,8 @@ const gochiHand = Gochi_Hand({ weight: "400", subsets: ["latin"], variable: "--f
 
 export const metadata: Metadata = {
   title: { default: "Crucible Forge", template: "%s | Crucible Forge" },
-  description: "Private browser-based audio analysis and quick remastering for independent creators.",
-  keywords: ["AI", "Artificial Intelligence", "Audio Mastering", "Music Production", "Quick Remaster", "Crucible Forge"],
+  description: "Private browser-based creative tools for independent creators.",
+  keywords: ["AI", "Artificial Intelligence", "Audio Mastering", "Music Production", "Creative Tools", "Crucible Forge"],
   manifest: "/manifest.webmanifest",
 };
 
@@ -20,6 +21,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en" className={`${spaceGrotesk.variable} ${jetBrainsMono.variable} ${gochiHand.variable}`}>
       <body>
+        <FurnaceSwitcher />
         {children}
         <SequencerClipGestureGuard />
         <CreditBalance />
