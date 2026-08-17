@@ -79,6 +79,15 @@ export async function proxy(request: NextRequest) {
   const authRoute = pathname === LOGIN_ROUTE || pathname === SIGNUP_ROUTE;
 
   let response = NextResponse.next({ request });
+  const hostname = (request.headers.get("x-forwarded-host") ?? request.nextUrl.hostname)
+    .split(",")[0]
+    .trim()
+    .split(":")[0]
+    .toLowerCase();
+  const sharedCookieDomain =
+    hostname === "crucibleforge.org" || hostname === "www.crucibleforge.org"
+      ? ".crucibleforge.org"
+      : undefined;
 
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseKey =
@@ -108,7 +117,13 @@ export async function proxy(request: NextRequest) {
         });
         response = NextResponse.next({ request });
         cookiesToSet.forEach(({ name, value, options }) => {
-          response.cookies.set(name, value, options);
+          response.cookies.set(
+            name,
+            value,
+            sharedCookieDomain
+              ? { ...options, domain: sharedCookieDomain }
+              : options,
+          );
         });
       },
     },
