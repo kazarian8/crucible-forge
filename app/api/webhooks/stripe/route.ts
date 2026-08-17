@@ -60,15 +60,15 @@ async function releaseEvent(eventId: string) {
 }
 
 async function findUserId(subscription: StripeSubscription) {
-  if (subscription.metadata?.user_id) {
-    return subscription.metadata.user_id;
-  }
-
   const rows = await adminRequest<Array<{ user_id: string }>>(
     `pro_subscriptions?stripe_subscription_id=eq.${encodeURIComponent(subscription.id)}&select=user_id&limit=1`,
   );
 
-  return rows[0]?.user_id ?? null;
+  if (rows[0]?.user_id) {
+    return rows[0].user_id;
+  }
+
+  return subscription.metadata?.user_id ?? null;
 }
 
 async function syncSubscription(subscription: StripeSubscription) {
