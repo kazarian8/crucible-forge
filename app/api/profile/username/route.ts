@@ -57,8 +57,10 @@ export async function PATCH(request: NextRequest) {
   if (!usernameChanged && !fontChanged) return NextResponse.json({ profile, charged: 0 });
 
   const firstUsername = !profile.username;
-  const cost = (usernameChanged && !firstUsername ? CREDIT_PRICES.usernameChange : 0) +
-    (fontChanged && profile.username_font != null ? CREDIT_PRICES.usernameFontChange : 0);
+  const cost = firstUsername
+    ? 0
+    : (usernameChanged ? CREDIT_PRICES.usernameChange : 0) +
+      (fontChanged ? CREDIT_PRICES.usernameFontChange : 0);
 
   let reservation: Awaited<ReturnType<typeof reserveServiceCredits>> | null = null;
   if (cost > 0) {
