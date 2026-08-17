@@ -1,0 +1,331 @@
+name: Patch DAW transport and hold-to-drag
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/patch-daw-transport-hold-drag.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  patch-daw:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Patch transport and press-hold clip movement
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("components/sound-furnace/StemSequencer.tsx")
+          text = path.read_text()
+
+          def replace_once(old, new, label):
+              global text
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{label}: expected 1 match, found {count}")
+              text = text.replace(old, new, 1)
+
+          replace_once(
+              '  const clipDragRef = useRef<ClipDrag | null>(null);\n',
+              '  const clipDragRef = useRef<ClipDrag | null>(null);\n'
+              '  const clipHoldTimerRef = useRef<number | null>(null);\n'
+              '  const pendingClipPressRef = useRef<{ trackId: string; startX: number; startY: number; pointerId: number; element: HTMLElement; timelineWidth: number; startSeconds: number } | null>(null);\n'
+              '  const lastPlayStartRef = useRef(0);\n'
+              '  const lastRewindTargetRef = useRef<number | null>(null);\n',
+              'transport and hold refs',
+          )
+
+          old_drag = '''  function beginClipDrag(event: ReactPointerEvent<HTMLElement>, track: StemTrack) {
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    const timeline = event.currentTarget.parentElement;
+    clipDragRef.current = {
+      trackId: track.id,
+      startX: event.clientX,
+      startSeconds: track.startSeconds,
+      timelineWidth: Math.max(1, timeline?.clientWidth ?? event.currentTarget.clientWidth),
+    };
+    setSelectedTrackId(track.id);
+  }
+
+  function moveClip(event: ReactPointerEvent<HTMLElement>) {
+    const drag = clipDragRef.current;
+    if (!drag) return;
+    const raw = Math.max(0, drag.startSeconds + ((event.clientX - drag.startX) / drag.timelineWidth) * rulerDuration);
+    const snapMultipliers: Record<string, number> = { "1/4": 1, "1/8": 0.5, "1/16": 0.25, "1/32": 0.125 };
+    const snapSeconds = (60 / projectBpm) * (snapMultipliers[snapDivision] ?? 0.25);
+    const next = snapEnabled ? Math.round(raw / snapSeconds) * snapSeconds : Math.round(raw * 100) / 100;
+    replaceTrack(drag.trackId, { startSeconds: next });
+  }
+
+  function endClipDrag(event: ReactPointerEvent<HTMLElement>) {
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    clipDragRef.current = null;
+  }
+'''
+
+          new_drag = '''  function clearPendingClipHold() {
+    if (clipHoldTimerRef.current !== null) {
+      window.clearTimeout(clipHoldTimerRef.current);
+      clipHoldTimerRef.current = null;
+    }
+    pendingClipPressRef.current = null;
+  }
+
+  function beginClipDrag(event: ReactPointerEvent<HTMLElement>, track: StemTrack) {
+    setSelectedTrackId(track.id);
+    clearPendingClipHold();
+    const element = event.currentTarget;
+    const timeline = element.parentElement;
+    pendingClipPressRef.current = {
+      trackId: track.id,
+      startX: event.clientX,
+      startY: event.clientY,
+      pointerId: event.pointerId,
+      element,
+      timelineWidth: Math.max(1, timeline?.clientWidth ?? element.clientWidth),
+      startSeconds: track.startSeconds,
+    };
+    clipHoldTimerRef.current = window.setTimeout(() => {
+      const pending = pendingClipPressRef.current;
+      if (!pending || pending.pointerId !== event.pointerId) return;
+      try { pending.element.setPointerCapture(pending.pointerId); } catch {}
+      clipDragRef.current = {
+        trackId: pending.trackId,
+        startX: pending.startX,
+        startSeconds: pending.startSeconds,
+        timelineWidth: pending.timelineWidth,
+      };
+      clipHoldTimerRef.current = null;
+      pendingClipPressRef.current = null;
+      setStatus("Track unlocked — drag to reposition it on the timeline.");
+    }, 350);
+  }
+
+  function moveClip(event: ReactPointerEvent<HTMLElement>) {
+    const pending = pendingClipPressRef.current;
+    if (pending && pending.pointerId === event.pointerId) {
+      const moved = Math.hypot(event.clientX - pending.startX, event.clientY - pending.startY);
+      if (moved > 8) clearPendingClipHold();
+      return;
+    }
+    const drag = clipDragRef.current;
+    if (!drag) return;
+    event.preventDefault();
+    const raw = Math.max(0, drag.startSeconds + ((event.clientX - drag.startX) / drag.timelineWidth) * rulerDuration);
+    const snapMultipliers: Record<string, number> = { "1/4": 1, "1/8": 0.5, "1/16": 0.25, "1/32": 0.125 };
+    const snapSeconds = (60 / projectBpm) * (snapMultipliers[snapDivision] ?? 0.25);
+    const next = snapEnabled ? Math.round(raw / snapSeconds) * snapSeconds : Math.round(raw * 100) / 100;
+    replaceTrack(drag.trackId, { startSeconds: next });
+  }
+
+  function endClipDrag(event: ReactPointerEvent<HTMLElement>) {
+    clearPendingClipHold();
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    clipDragRef.current = null;
+  }
+'''
+          replace_once(old_drag, new_drag, 'hold-to-drag functions')
+
+          old_toggle = '''  function togglePreview() {
+    const player = previewRef.current;
+    if (!player) return;
+    if (playing) {
+      player.pause();
+      setPlaying(false);
+    } else {
+      void player.play();
+      setPlaying(true);
+    }
+  }
+'''
+
+          new_toggle = '''  async function ensureTimelinePreview() {
+    if (previewUrl) return previewUrl;
+    const mixed = await renderMix(tracks);
+    const blob = encodeWav24(mixed);
+    const url = URL.createObjectURL(blob);
+    setPreviewUrl(url);
+    return url;
+  }
+
+  async function playPreview() {
+    if (tracks.length === 0) return;
+    setError("");
+    try {
+      if (!previewUrl) {
+        setBusy(true);
+        setStatus("Preparing timeline playback…");
+        await ensureTimelinePreview();
+        await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+      }
+      const player = previewRef.current;
+      if (!player) return;
+      const startAt = Math.min(playheadSeconds, Math.max(0, player.duration || duration));
+      player.currentTime = startAt;
+      lastPlayStartRef.current = startAt;
+      lastRewindTargetRef.current = null;
+      await player.play();
+      setPlaying(true);
+      setStatus("Timeline playing.");
+    } catch {
+      setError("Timeline playback could not start on this device.");
+      setPlaying(false);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function pausePreview() {
+    const player = previewRef.current;
+    if (!player) return;
+    player.pause();
+    setPlaying(false);
+    setPlayheadSeconds(player.currentTime);
+    setStatus("Timeline paused.");
+  }
+
+  function rewindPreview() {
+    const player = previewRef.current;
+    if (!player) return;
+    const lastStart = Math.max(0, lastPlayStartRef.current);
+    const shouldGoHome = lastRewindTargetRef.current !== null && Math.abs(player.currentTime - lastRewindTargetRef.current) < 0.05;
+    const target = shouldGoHome ? 0 : lastStart;
+    player.currentTime = target;
+    setPlayheadSeconds(target);
+    lastRewindTargetRef.current = target;
+    if (target === 0) lastPlayStartRef.current = 0;
+    setStatus(target === 0 ? "Rewound to the beginning." : `Rewound to ${formatTime(target)}. Press rewind again for 0:00.`);
+  }
+'''
+          replace_once(old_toggle, new_toggle, 'transport functions')
+
+          old_transport = '''              <button
+                type="button"
+                onClick={togglePreview}
+                disabled={!previewUrl}
+                aria-label={playing ? "Pause sequence" : "Play sequence"}
+                className="grid size-9 place-items-center rounded-full bg-orange-500 text-black disabled:opacity-30"
+              >
+                {playing ? <Pause size={16} fill="currentColor" /> : <Play size={16} fill="currentColor" />}
+              </button>
+              <p className="font-mono text-sm font-black tabular-nums text-orange-100">{formatTime(playheadSeconds)}</p>
+'''
+
+          new_transport = '''              <button
+                type="button"
+                onClick={() => void playPreview()}
+                disabled={busy || tracks.length === 0 || playing}
+                aria-label="Play sequence"
+                className="grid size-9 place-items-center rounded-full bg-orange-500 text-black disabled:opacity-30"
+              >
+                <Play size={16} fill="currentColor" />
+              </button>
+              <button
+                type="button"
+                onClick={pausePreview}
+                disabled={!playing}
+                aria-label="Pause sequence"
+                className="grid size-9 place-items-center rounded-full border border-white/10 bg-white/8 text-white disabled:opacity-30"
+              >
+                <Pause size={16} fill="currentColor" />
+              </button>
+              <button
+                type="button"
+                onClick={rewindPreview}
+                disabled={!previewUrl}
+                aria-label="Rewind sequence"
+                className="grid size-9 place-items-center rounded-full border border-white/10 bg-white/8 text-white disabled:opacity-30"
+              >
+                <span className="text-base font-black leading-none">↤</span>
+              </button>
+              <p className="font-mono text-sm font-black tabular-nums text-orange-100">{formatTime(playheadSeconds)}</p>
+'''
+          replace_once(old_transport, new_transport, 'top transport UI')
+
+          replace_once(
+              '                          className="absolute inset-y-2 touch-none cursor-grab overflow-hidden rounded-md border border-orange-300/30 shadow-[0_4px_18px_rgba(0,0,0,.35)] active:cursor-grabbing"\n',
+              '                          className="absolute inset-y-2 touch-pan-x cursor-grab overflow-hidden rounded-md border border-orange-300/30 shadow-[0_4px_18px_rgba(0,0,0,.35)] active:cursor-grabbing"\n',
+              'mobile clip touch behavior',
+          )
+
+          old_audio = '''              <audio
+                ref={previewRef}
+                src={previewUrl}
+                onTimeUpdate={(event) => setPlayheadSeconds(event.currentTarget.currentTime)}
+                onEnded={() => {
+                  setPlaying(false);
+                  setPlayheadSeconds(0);
+                }}
+                preload="metadata"
+              />
+              <button
+                type="button"
+                onClick={togglePreview}
+                className="flex items-center gap-2 rounded-xl border border-white/10 px-4 py-2.5 text-xs font-bold text-white/70"
+              >
+                {playing ? <Pause size={14} /> : <Play size={14} />}
+                {playing ? "Pause mix" : "Play mix"}
+              </button>
+'''
+
+          new_audio = '''              <audio
+                ref={previewRef}
+                src={previewUrl}
+                onTimeUpdate={(event) => setPlayheadSeconds(event.currentTarget.currentTime)}
+                onEnded={() => {
+                  setPlaying(false);
+                  setPlayheadSeconds(0);
+                  lastPlayStartRef.current = 0;
+                  lastRewindTargetRef.current = null;
+                }}
+                preload="metadata"
+              />
+              <button
+                type="button"
+                onClick={playing ? pausePreview : () => void playPreview()}
+                className="flex items-center gap-2 rounded-xl border border-white/10 px-4 py-2.5 text-xs font-bold text-white/70"
+              >
+                {playing ? <Pause size={14} /> : <Play size={14} />}
+                {playing ? "Pause mix" : "Play mix"}
+              </button>
+'''
+          replace_once(old_audio, new_audio, 'bottom preview controls')
+
+          path.write_text(text)
+          PY
+
+      - name: Validate
+        run: |
+          npm ci
+          npm run build
+
+      - name: Commit patched sequencer
+        shell: bash
+        run: |
+          if git diff --quiet -- components/sound-furnace/StemSequencer.tsx; then
+            echo "No sequencer changes needed"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add components/sound-furnace/StemSequencer.tsx
+          git commit -m "fix DAW transport and hold-to-drag clips"
+          git push
