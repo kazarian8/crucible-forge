@@ -95,9 +95,9 @@ export default function HomePage() {
           <div className="flex items-center gap-2 sm:gap-3">
             <Link
               href="/login"
-              className="hidden rounded-xl px-4 py-2.5 text-sm font-semibold text-white/70 transition hover:bg-white/5 hover:text-white sm:block"
+              className="rounded-xl border border-white/15 px-3 py-2.5 text-xs font-black text-white transition hover:bg-white/5 sm:px-4 sm:text-sm"
             >
-              Log in
+              Sign in
             </Link>
             <Link
               href="/signup"
@@ -159,6 +159,9 @@ export default function HomePage() {
                 Explore the furnaces
               </a>
             </div>
+            <Link href="/login" className="mt-4 inline-flex items-center gap-2 text-sm font-bold text-orange-200 underline decoration-orange-300/35 underline-offset-4">
+              <LockKeyhole size={15} /> Already a member? Sign in
+            </Link>
 
             <div className="mt-8 flex flex-wrap gap-x-6 gap-y-3 text-xs font-semibold text-white/45">
               <span className="flex items-center gap-2"><ShieldCheck size={15} className="text-orange-400" /> Private by design</span>

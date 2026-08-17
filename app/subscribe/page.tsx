@@ -65,6 +65,14 @@ export default function SubscribePage() {
           {loading ? "Opening secure checkout..." : "Add card and start free trial"}
         </button>
 
+        <div className="mt-4 rounded-xl border border-sky-300/20 bg-sky-400/[0.07] p-4 text-sm leading-6 text-sky-50/75">
+          <strong className="block text-sky-100">Already paid or received your 5,000 credits?</strong>
+          You may be signed into a different account. Do not pay again.
+          <a href="/auth/signout?next=/login" className="mt-2 block font-black text-sky-200 underline underline-offset-4">
+            Switch to my existing account
+          </a>
+        </div>
+
         {message ? (
           <p role="alert" className="mt-4 rounded-xl border border-red-300/20 bg-red-400/10 p-3 text-sm text-red-100">
             {message}
