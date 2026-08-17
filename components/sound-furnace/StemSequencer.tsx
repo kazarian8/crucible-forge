@@ -11,14 +11,18 @@ import {
 import {
   CircleStop,
   Download,
+  Drum,
+  FileText,
   Layers3,
   LoaderCircle,
   Magnet,
   Mic,
   Pause,
+  Piano,
   Play,
   Plus,
   Scissors,
+  Settings2,
   Trash2,
   WandSparkles,
   ZoomIn,
@@ -49,6 +53,24 @@ const EFFECT_PRESETS = [
   { id: "echo", label: "Echo", detail: "Tempo-safe depth" },
   { id: "space", label: "Space", detail: "Natural room tail" },
 ] as const;
+
+const DRUM_VOICES = ["Kick", "Snare", "Clap", "Closed Hat", "Open Hat", "Tom"] as const;
+const DRUM_KITS = [
+  { id: "forge-808", name: "Forge 808", pitch: 0.74, decay: 1.28, noise: 0.72 },
+  { id: "trap-steel", name: "Trap Steel", pitch: 0.92, decay: 0.82, noise: 0.9 },
+  { id: "boom-room", name: "Boom Bap", pitch: 0.84, decay: 0.98, noise: 0.78 },
+  { id: "velvet-rnb", name: "Velvet R&B", pitch: 0.7, decay: 1.08, noise: 0.58 },
+  { id: "live-rock", name: "Live Rock", pitch: 1.12, decay: 0.72, noise: 1 },
+  { id: "neon-club", name: "Neon Club", pitch: 1.28, decay: 0.62, noise: 0.86 },
+  { id: "acoustic-room", name: "Acoustic Room", pitch: 1, decay: 0.9, noise: 0.68 },
+] as const;
+const PIANO_INSTRUMENTS = [
+  { id: "forge-keys", name: "Forge Keys", wave: "triangle" as OscillatorType, release: 0.42 },
+  { id: "ember-bass", name: "Ember Bass", wave: "sawtooth" as OscillatorType, release: 0.24 },
+  { id: "glass-bell", name: "Glass Bell", wave: "sine" as OscillatorType, release: 0.75 },
+  { id: "analog-lead", name: "Analog Lead", wave: "square" as OscillatorType, release: 0.3 },
+] as const;
+const PIANO_ROLL_NOTES = ["B4", "A#4", "A4", "G#4", "G4", "F#4", "F4", "E4", "D#4", "D4", "C#4", "C4"] as const;
 
 type EffectPreset = typeof EFFECT_PRESETS[number]["id"];
 type MusicalNote = typeof MUSICAL_NOTES[number];
@@ -105,6 +127,101 @@ type PinchStart = {
   distance: number;
   zoom: number;
 };
+
+type InstrumentEditor = "drums" | "piano";
+type PianoCell = { length: number; velocity: number };
+
+function defaultDrumPattern() {
+  return DRUM_VOICES.map((_, voice) => Array.from({ length: 16 }, (_, step) => {
+    if (voice === 0) return [0, 7, 10].includes(step);
+    if (voice === 1) return [4, 12].includes(step);
+    if (voice === 2) return step === 12;
+    if (voice === 3) return step % 2 === 0;
+    if (voice === 4) return step === 15;
+    return false;
+  }));
+}
+
+function midiFrequency(label: string) {
+  const match = /^([A-G])(#?)(\d)$/.exec(label);
+  if (!match) return 440;
+  const semitones: Record<string, number> = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
+  const midi = (Number(match[3]) + 1) * 12 + semitones[match[1]] + (match[2] ? 1 : 0);
+  return 440 * Math.pow(2, (midi - 69) / 12);
+}
+
+async function renderInstrumentBuffer(options: {
+  editor: InstrumentEditor;
+  bpm: number;
+  swing: number;
+  drumPattern: boolean[][];
+  kitIndex: number;
+  pianoCells: Record<string, PianoCell>;
+  instrumentIndex: number;
+}) {
+  const sampleRate = 44100;
+  const stepSeconds = 60 / options.bpm / 4;
+  const duration = stepSeconds * 16 + 1;
+  const context = new OfflineAudioContext(2, Math.ceil(duration * sampleRate), sampleRate);
+  const master = context.createGain();
+  master.gain.value = 0.78;
+  master.connect(context.destination);
+
+  if (options.editor === "drums") {
+    const kit = DRUM_KITS[options.kitIndex];
+    options.drumPattern.forEach((row, voice) => row.forEach((active, step) => {
+      if (!active) return;
+      const when = step * stepSeconds + (step % 2 ? stepSeconds * options.swing * 0.32 : 0);
+      const length = Math.min(0.7, stepSeconds * kit.decay * (voice === 0 ? 2.2 : 1.2));
+      const gain = context.createGain();
+      gain.gain.setValueAtTime(voice === 0 ? 0.95 : voice === 1 ? 0.55 : 0.32, when);
+      gain.gain.exponentialRampToValueAtTime(0.001, when + length);
+      gain.connect(master);
+      if (voice === 0 || voice === 5) {
+        const oscillator = context.createOscillator();
+        oscillator.type = voice === 0 ? "sine" : "triangle";
+        oscillator.frequency.setValueAtTime((voice === 0 ? 118 : 180) * kit.pitch, when);
+        oscillator.frequency.exponentialRampToValueAtTime((voice === 0 ? 42 : 82) * kit.pitch, when + length);
+        oscillator.connect(gain);
+        oscillator.start(when);
+        oscillator.stop(when + length);
+      } else {
+        const noiseBuffer = context.createBuffer(1, Math.ceil(length * sampleRate), sampleRate);
+        const noise = noiseBuffer.getChannelData(0);
+        for (let index = 0; index < noise.length; index += 1) noise[index] = Math.random() * 2 - 1;
+        const source = context.createBufferSource();
+        const filter = context.createBiquadFilter();
+        filter.type = voice >= 3 ? "highpass" : "bandpass";
+        filter.frequency.value = (voice >= 3 ? 6200 : 1700) * kit.pitch;
+        filter.Q.value = voice === 1 ? 1.2 : 0.5;
+        source.buffer = noiseBuffer;
+        source.connect(filter);
+        filter.connect(gain);
+        source.start(when);
+      }
+    }));
+  } else {
+    const instrument = PIANO_INSTRUMENTS[options.instrumentIndex];
+    for (const [key, cell] of Object.entries(options.pianoCells)) {
+      const [note, rawStep] = key.split(":");
+      const step = Number(rawStep);
+      const when = step * stepSeconds + (step % 2 ? stepSeconds * options.swing * 0.32 : 0);
+      const length = Math.max(0.08, stepSeconds * cell.length + instrument.release);
+      const oscillator = context.createOscillator();
+      const gain = context.createGain();
+      oscillator.type = instrument.wave;
+      oscillator.frequency.value = midiFrequency(note) * (instrument.id === "ember-bass" ? 0.5 : 1);
+      gain.gain.setValueAtTime(0.0001, when);
+      gain.gain.exponentialRampToValueAtTime(0.26 * cell.velocity, when + 0.012);
+      gain.gain.exponentialRampToValueAtTime(0.001, when + length);
+      oscillator.connect(gain);
+      gain.connect(master);
+      oscillator.start(when);
+      oscillator.stop(when + length);
+    }
+  }
+  return context.startRendering();
+}
 
 function dbToGain(value: number) {
   return Math.pow(10, value / 20);
@@ -700,6 +817,29 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
   const [recording, setRecording] = useState(false);
   const [snapEnabled, setSnapEnabled] = useState(true);
   const [timelineZoom, setTimelineZoom] = useState(1);
+  const [instrumentOpen, setInstrumentOpen] = useState(false);
+  const [instrumentEditor, setInstrumentEditor] = useState<InstrumentEditor>("drums");
+  const [kitIndex, setKitIndex] = useState(0);
+  const [instrumentIndex, setInstrumentIndex] = useState(0);
+  const [projectBpm, setProjectBpm] = useState(120);
+  const [projectKey, setProjectKey] = useState<MusicalNote>("C");
+  const [swing, setSwing] = useState(0);
+  const [countIn, setCountIn] = useState(false);
+  const [metronomeVolume, setMetronomeVolume] = useState(70);
+  const [metronomeEnabled, setMetronomeEnabled] = useState(true);
+  const [projectSettingsOpen, setProjectSettingsOpen] = useState(false);
+  const [timeSignature, setTimeSignature] = useState("4/4");
+  const [rulerMode, setRulerMode] = useState<"clock" | "bars">("bars");
+  const [snapDivision, setSnapDivision] = useState("1/16");
+  const [countInBars, setCountInBars] = useState(1);
+  const [projectNotes, setProjectNotes] = useState("");
+  const [lyricsOpen, setLyricsOpen] = useState(false);
+  const [projectLyrics, setProjectLyrics] = useState("");
+  const [drumPattern, setDrumPattern] = useState(defaultDrumPattern);
+  const [pianoCells, setPianoCells] = useState<Record<string, PianoCell>>({});
+  const [noteLength, setNoteLength] = useState(1);
+  const [noteVelocity, setNoteVelocity] = useState(80);
+  const tapTimesRef = useRef<number[]>([]);
 
   useEffect(() => {
     previewUrlRef.current = previewUrl;
@@ -735,11 +875,116 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
     () => Array.from({ length: 9 }, (_, index) => (rulerDuration * index) / 8),
     [rulerDuration],
   );
+  const beatsPerBar = Number(timeSignature.split("/")[0]) || 4;
+
+  function rulerLabel(mark: number) {
+    if (rulerMode === "clock") return formatTime(mark);
+    const beatPosition = mark / (60 / projectBpm);
+    return `${Math.floor(beatPosition / beatsPerBar) + 1}.${Math.floor(beatPosition % beatsPerBar) + 1}`;
+  }
 
   function replaceTrack(id: string, patch: Partial<StemTrack>) {
     setTracks((current) =>
       current.map((track) => (track.id === id ? { ...track, ...patch } : track)),
     );
+  }
+
+  function tapTempo() {
+    const now = performance.now();
+    tapTimesRef.current = [...tapTimesRef.current.filter((time) => now - time < 3000), now].slice(-5);
+    const taps = tapTimesRef.current;
+    if (taps.length < 2) return;
+    const intervals = taps.slice(1).map((time, index) => time - taps[index]);
+    setProjectBpm(Math.max(50, Math.min(220, Math.round(60000 / (intervals.reduce((sum, value) => sum + value, 0) / intervals.length)))));
+  }
+
+  function auditionMetronome() {
+    const context = new AudioContext();
+    const beatSeconds = 60 / projectBpm;
+    const beats = Number(timeSignature.split("/")[0]) || 4;
+    for (let beat = 0; beat < beats; beat += 1) {
+      const oscillator = context.createOscillator();
+      const gain = context.createGain();
+      const when = context.currentTime + 0.04 + beat * beatSeconds;
+      oscillator.type = "sine";
+      oscillator.frequency.value = beat === 0 ? 1320 : 880;
+      gain.gain.setValueAtTime(0.0001, when);
+      gain.gain.exponentialRampToValueAtTime(Math.max(0.01, metronomeVolume / 300), when + 0.005);
+      gain.gain.exponentialRampToValueAtTime(0.0001, when + 0.08);
+      oscillator.connect(gain);
+      gain.connect(context.destination);
+      oscillator.start(when);
+      oscillator.stop(when + 0.09);
+    }
+    window.setTimeout(() => void context.close(), Math.ceil((beats * beatSeconds + 0.3) * 1000));
+  }
+
+  function toggleDrumStep(voice: number, step: number) {
+    setDrumPattern((current) => current.map((row, rowIndex) =>
+      rowIndex === voice ? row.map((active, stepIndex) => stepIndex === step ? !active : active) : row,
+    ));
+  }
+
+  function togglePianoCell(note: string, step: number) {
+    const key = `${note}:${step}`;
+    setPianoCells((current) => {
+      const next = { ...current };
+      if (next[key]) delete next[key];
+      else next[key] = { length: noteLength, velocity: noteVelocity / 100 };
+      return next;
+    });
+  }
+
+  async function addInstrumentTrack() {
+    if (tracks.length >= MAX_TRACKS) return;
+    const activeCount = instrumentEditor === "drums"
+      ? drumPattern.flat().filter(Boolean).length
+      : Object.keys(pianoCells).length;
+    if (activeCount === 0) {
+      setError(`Place at least one ${instrumentEditor === "drums" ? "drum hit" : "note"} first.`);
+      return;
+    }
+    setBusy(true);
+    setError("");
+    setStatus(`Rendering ${instrumentEditor === "drums" ? DRUM_KITS[kitIndex].name : PIANO_INSTRUMENTS[instrumentIndex].name} locally…`);
+    try {
+      const buffer = await renderInstrumentBuffer({
+        editor: instrumentEditor,
+        bpm: projectBpm,
+        swing,
+        drumPattern,
+        kitIndex,
+        pianoCells,
+        instrumentIndex,
+      });
+      const name = instrumentEditor === "drums"
+        ? `${DRUM_KITS[kitIndex].name} · ${projectBpm} BPM`
+        : `${PIANO_INSTRUMENTS[instrumentIndex].name} · ${projectKey}`;
+      const track: StemTrack = {
+        id: crypto.randomUUID(),
+        name,
+        buffer,
+        startSeconds: 0,
+        originalStartSeconds: 0,
+        trimStartSeconds: 0,
+        trimEndSeconds: buffer.duration,
+        fadeInSeconds: 0.005,
+        fadeOutSeconds: 0.04,
+        gainDb: 0,
+        muted: false,
+        solo: false,
+        effects: { enabled: false, preset: "clear", intensity: 50, focusNote: projectKey, octave: 3 },
+      };
+      setTracks((current) => [...current, track]);
+      setSelectedTrackId(track.id);
+      setCadenceReferenceId((current) => current || track.id);
+      setInstrumentOpen(false);
+      setStatus(`${name} was rendered into a new sequencer lane. No credits used.`);
+    } catch {
+      setError("The local instrument track could not be rendered on this device.");
+    } finally {
+      setBusy(false);
+    }
   }
 
   function beginClipDrag(event: ReactPointerEvent<HTMLElement>, track: StemTrack) {
@@ -759,7 +1004,9 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
     const drag = clipDragRef.current;
     if (!drag) return;
     const raw = Math.max(0, drag.startSeconds + ((event.clientX - drag.startX) / drag.timelineWidth) * rulerDuration);
-    const next = snapEnabled ? Math.round(raw / 0.5) * 0.5 : Math.round(raw * 100) / 100;
+    const snapMultipliers: Record<string, number> = { "1/4": 1, "1/8": 0.5, "1/16": 0.25, "1/32": 0.125 };
+    const snapSeconds = (60 / projectBpm) * (snapMultipliers[snapDivision] ?? 0.25);
+    const next = snapEnabled ? Math.round(raw / snapSeconds) * snapSeconds : Math.round(raw * 100) / 100;
     replaceTrack(drag.trackId, { startSeconds: next });
   }
 
@@ -1085,6 +1332,18 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
           </button>
           <button
             type="button"
+            onClick={() => {
+              setInstrumentOpen((open) => !open);
+              setProjectSettingsOpen(false);
+              setLyricsOpen(false);
+            }}
+            disabled={busy || tracks.length >= MAX_TRACKS}
+            className={`flex items-center gap-2 rounded-xl border px-4 py-2.5 text-xs font-black disabled:opacity-40 ${instrumentOpen ? "border-orange-300 bg-orange-400 text-black" : "border-orange-300/20 bg-orange-400/[0.06] text-orange-100"}`}
+          >
+            <Drum size={15} /> Add instrument track
+          </button>
+          <button
+            type="button"
             onClick={restoreOriginalTiming}
             disabled={busy || tracks.length === 0}
             className="rounded-xl border border-white/10 px-4 py-2.5 text-xs font-bold text-white/65 disabled:opacity-40"
@@ -1094,7 +1353,13 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
         </div>
       </div>
 
-      <div className="mt-5 grid grid-cols-2 gap-2 sm:grid-cols-4">
+      <nav aria-label="Engineer workspace views" className="mx-auto mt-5 grid max-w-sm grid-cols-3 rounded-2xl border border-white/10 bg-black/45 p-1">
+        <button type="button" aria-pressed={!lyricsOpen && !projectSettingsOpen} onClick={() => { setLyricsOpen(false); setProjectSettingsOpen(false); }} className={`grid place-items-center rounded-xl py-2.5 ${!lyricsOpen && !projectSettingsOpen ? "bg-white text-black" : "text-white/45"}`}><Layers3 size={19} /><span className="mt-1 text-[8px] font-black uppercase tracking-wider">Waveform</span></button>
+        <button type="button" aria-pressed={lyricsOpen} onClick={() => { setLyricsOpen(true); setProjectSettingsOpen(false); setInstrumentOpen(false); }} className={`grid place-items-center rounded-xl py-2.5 ${lyricsOpen ? "bg-white text-black" : "text-white/45"}`}><FileText size={19} /><span className="mt-1 text-[8px] font-black uppercase tracking-wider">Lyrics</span></button>
+        <button type="button" aria-pressed={projectSettingsOpen} onClick={() => { setProjectSettingsOpen(true); setLyricsOpen(false); setInstrumentOpen(false); }} className={`grid place-items-center rounded-xl py-2.5 ${projectSettingsOpen ? "bg-white text-black" : "text-white/45"}`}><Settings2 size={19} /><span className="mt-1 text-[8px] font-black uppercase tracking-wider">Settings</span></button>
+      </nav>
+
+      <div className={`mt-5 grid grid-cols-2 gap-2 sm:grid-cols-4 ${lyricsOpen || projectSettingsOpen ? "hidden" : ""}`}>
         {[
           ["Tracks", `${tracks.length} / ${MAX_TRACKS}`],
           ["Timeline", formatTime(duration)],
@@ -1108,6 +1373,144 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
         ))}
       </div>
 
+      {projectSettingsOpen ? (
+        <section className="mt-5 overflow-hidden rounded-2xl border border-violet-300/20 bg-[#0b0d12]">
+          <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
+            <div>
+              <p className="text-[10px] font-black uppercase tracking-[0.22em] text-violet-300">Project Settings</p>
+              <p className="mt-1 text-xs text-white/40">One clock and musical grid for every track.</p>
+            </div>
+            <Settings2 className="text-violet-300" size={20} />
+          </div>
+          <div className="grid gap-3 p-3 sm:grid-cols-2">
+            <div className="rounded-xl border border-white/10 bg-black/30 p-3">
+              <label className="text-[9px] font-black uppercase tracking-wider text-white/40">Tempo</label>
+              <div className="mt-2 grid grid-cols-[48px_1fr_48px] overflow-hidden rounded-xl border border-white/10">
+                <button type="button" onClick={() => setProjectBpm((value) => Math.max(50, value - 1))} className="bg-white/5 text-xl">−</button>
+                <div className="border-x border-white/10 py-3 text-center font-mono text-3xl font-black">{projectBpm}</div>
+                <button type="button" onClick={() => setProjectBpm((value) => Math.min(220, value + 1))} className="bg-white/5 text-xl">+</button>
+              </div>
+              <button type="button" onClick={tapTempo} className="mt-2 w-full rounded-lg bg-violet-300/15 py-2 text-xs font-black text-violet-100">Tap tempo</button>
+            </div>
+            <div className="grid grid-cols-2 gap-2 rounded-xl border border-white/10 bg-black/30 p-3">
+              <label className="text-[9px] font-black uppercase tracking-wider text-white/40">Time signature
+                <select value={timeSignature} onChange={(event) => setTimeSignature(event.target.value)} className="mt-1 block w-full rounded-lg border border-white/10 bg-[#11141a] p-2 text-sm text-white">
+                  {["2/4", "3/4", "4/4", "6/8", "12/8"].map((value) => <option key={value}>{value}</option>)}
+                </select>
+              </label>
+              <label className="text-[9px] font-black uppercase tracking-wider text-white/40">Project key
+                <select value={projectKey} onChange={(event) => setProjectKey(event.target.value as MusicalNote)} className="mt-1 block w-full rounded-lg border border-white/10 bg-[#11141a] p-2 text-sm text-white">
+                  {MUSICAL_NOTES.map((note) => <option key={note}>{note}</option>)}
+                </select>
+              </label>
+              <label className="text-[9px] font-black uppercase tracking-wider text-white/40">Timeline
+                <select value={rulerMode} onChange={(event) => setRulerMode(event.target.value as "clock" | "bars")} className="mt-1 block w-full rounded-lg border border-white/10 bg-[#11141a] p-2 text-sm text-white">
+                  <option value="bars">Bars / beats</option><option value="clock">Minutes / seconds</option>
+                </select>
+              </label>
+              <label className="text-[9px] font-black uppercase tracking-wider text-white/40">Snap division
+                <select value={snapDivision} onChange={(event) => setSnapDivision(event.target.value)} className="mt-1 block w-full rounded-lg border border-white/10 bg-[#11141a] p-2 text-sm text-white">
+                  {["1/4", "1/8", "1/16", "1/32"].map((value) => <option key={value}>{value}</option>)}
+                </select>
+              </label>
+            </div>
+            <div className="rounded-xl border border-white/10 bg-black/30 p-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold">Metronome</span>
+                <button type="button" aria-pressed={metronomeEnabled} onClick={() => setMetronomeEnabled((enabled) => !enabled)} className={`rounded-full px-3 py-1 text-[10px] font-black ${metronomeEnabled ? "bg-emerald-400 text-black" : "bg-white/10 text-white/45"}`}>{metronomeEnabled ? "ON" : "OFF"}</button>
+              </div>
+              <label className="mt-3 block text-[9px] font-black uppercase tracking-wider text-white/40">Volume {metronomeVolume}%
+                <input type="range" min="0" max="100" value={metronomeVolume} onChange={(event) => setMetronomeVolume(event.target.valueAsNumber)} className="mt-2 w-full accent-violet-300" />
+              </label>
+              <button type="button" onClick={auditionMetronome} disabled={!metronomeEnabled} className="mt-2 w-full rounded-lg border border-white/10 py-2 text-xs font-black disabled:opacity-35">Test one measure</button>
+            </div>
+            <div className="rounded-xl border border-white/10 bg-black/30 p-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold">Count in</span>
+                <button type="button" aria-pressed={countIn} onClick={() => setCountIn((enabled) => !enabled)} className={`rounded-full px-3 py-1 text-[10px] font-black ${countIn ? "bg-orange-400 text-black" : "bg-white/10 text-white/45"}`}>{countIn ? "ON" : "OFF"}</button>
+              </div>
+              <label className="mt-3 block text-[9px] font-black uppercase tracking-wider text-white/40">Pre-roll bars
+                <select value={countInBars} onChange={(event) => setCountInBars(Number(event.target.value))} disabled={!countIn} className="mt-1 block w-full rounded-lg border border-white/10 bg-[#11141a] p-2 text-sm text-white disabled:opacity-35">
+                  {[1, 2, 4].map((value) => <option key={value} value={value}>{value} bar{value > 1 ? "s" : ""}</option>)}
+                </select>
+              </label>
+            </div>
+          </div>
+          <div className="border-t border-white/10 p-3">
+            <label className="text-[9px] font-black uppercase tracking-wider text-white/40">Project note</label>
+            <textarea value={projectNotes} onChange={(event) => setProjectNotes(event.target.value)} rows={3} placeholder="Lyrics, arrangement reminders, mix notes, session details…" className="mt-2 w-full resize-y rounded-xl border border-white/10 bg-black/35 p-3 text-sm text-white outline-none placeholder:text-white/25 focus:border-violet-300/50" />
+          </div>
+        </section>
+      ) : null}
+
+      {lyricsOpen ? (
+        <section className="mt-5 overflow-hidden rounded-2xl border border-sky-300/20 bg-[#0a0d10]">
+          <div className="border-b border-white/10 px-4 py-3">
+            <p className="text-[10px] font-black uppercase tracking-[0.22em] text-sky-200">Project Lyrics</p>
+            <p className="mt-1 text-xs text-white/40">Keep the words beside the session without covering the timeline.</p>
+          </div>
+          <textarea value={projectLyrics} onChange={(event) => setProjectLyrics(event.target.value)} rows={18} placeholder="Verse 1…\n\nHook…\n\nVerse 2…" className="min-h-[420px] w-full resize-y bg-transparent p-5 font-mono text-sm leading-7 text-white outline-none placeholder:text-white/20" />
+        </section>
+      ) : null}
+
+      {instrumentOpen && !lyricsOpen && !projectSettingsOpen ? (
+        <section className="mt-5 overflow-hidden rounded-2xl border border-orange-300/20 bg-[#0b0b0c]">
+          <div className="flex items-center justify-between border-b border-white/10 p-3">
+            <div className="flex rounded-xl bg-white/[0.06] p-1">
+              <button type="button" onClick={() => setInstrumentEditor("drums")} className={`flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-black ${instrumentEditor === "drums" ? "bg-orange-400 text-black" : "text-white/50"}`}><Drum size={14} /> Drum Grid</button>
+              <button type="button" onClick={() => setInstrumentEditor("piano")} className={`flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-black ${instrumentEditor === "piano" ? "bg-violet-300 text-violet-950" : "text-white/50"}`}><Piano size={14} /> Piano Roll</button>
+            </div>
+            <span className="font-mono text-[10px] text-white/40">{projectBpm} BPM · {timeSignature}</span>
+          </div>
+          <div className="p-3">
+            {instrumentEditor === "drums" ? (
+              <>
+                <div className="flex gap-2 overflow-x-auto pb-3">
+                  {DRUM_KITS.map((kit, index) => <button key={kit.id} type="button" onClick={() => setKitIndex(index)} className={`shrink-0 rounded-xl border px-3 py-2 text-xs font-black ${kitIndex === index ? "border-orange-300 bg-orange-400 text-black" : "border-white/10 bg-white/[0.04] text-white/55"}`}>{kit.name}</button>)}
+                </div>
+                <div className="overflow-x-auto rounded-xl border border-white/10 bg-black/35 p-2">
+                  <div className="min-w-[650px] space-y-1.5">
+                    {DRUM_VOICES.map((voice, voiceIndex) => <div key={voice} className="grid grid-cols-[90px_repeat(16,1fr)] gap-1">
+                      <span className="self-center truncate text-[10px] font-bold text-white/55">{voice}</span>
+                      {drumPattern[voiceIndex].map((active, step) => <button key={step} type="button" aria-label={`${voice} step ${step + 1}`} aria-pressed={active} onClick={() => toggleDrumStep(voiceIndex, step)} className={`aspect-square min-h-7 rounded ${active ? "bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,.28)]" : step % 4 === 0 ? "bg-white/15" : "bg-white/[0.07]"}`} />)}
+                    </div>)}
+                  </div>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="flex flex-wrap items-end gap-2 pb-3">
+                  <label className="text-[9px] font-black uppercase tracking-wider text-white/40">Instrument
+                    <select value={instrumentIndex} onChange={(event) => setInstrumentIndex(Number(event.target.value))} className="mt-1 block rounded-lg border border-white/10 bg-[#151319] p-2 text-xs text-white">{PIANO_INSTRUMENTS.map((instrument, index) => <option key={instrument.id} value={index}>{instrument.name}</option>)}</select>
+                  </label>
+                  <label className="text-[9px] font-black uppercase tracking-wider text-white/40">Note length
+                    <select value={noteLength} onChange={(event) => setNoteLength(Number(event.target.value))} className="mt-1 block rounded-lg border border-white/10 bg-[#151319] p-2 text-xs text-white">{[1, 2, 3, 4].map((value) => <option key={value} value={value}>{value}/16</option>)}</select>
+                  </label>
+                  <label className="min-w-32 flex-1 text-[9px] font-black uppercase tracking-wider text-white/40">Velocity {noteVelocity}%
+                    <input type="range" min="10" max="100" value={noteVelocity} onChange={(event) => setNoteVelocity(event.target.valueAsNumber)} className="mt-2 w-full accent-violet-300" />
+                  </label>
+                </div>
+                <div className="overflow-x-auto rounded-xl border border-white/10 bg-black/35 p-2">
+                  <div className="min-w-[650px] space-y-1">
+                    {PIANO_ROLL_NOTES.map((note) => <div key={note} className="grid grid-cols-[44px_repeat(16,1fr)] gap-1">
+                      <span className={`self-center text-[10px] font-black ${note.includes("#") ? "text-violet-300/65" : "text-white/55"}`}>{note}</span>
+                      {Array.from({ length: 16 }, (_, step) => { const cell = pianoCells[`${note}:${step}`]; return <button key={step} type="button" aria-label={`${note} step ${step + 1}`} aria-pressed={Boolean(cell)} onClick={() => togglePianoCell(note, step)} className={`h-7 rounded-sm ${cell ? "bg-violet-300" : step % 4 === 0 ? "bg-white/15" : "bg-white/[0.065]"}`} title={cell ? `Length ${cell.length}/16 · velocity ${Math.round(cell.velocity * 100)}%` : undefined} />; })}
+                    </div>)}
+                  </div>
+                </div>
+              </>
+            )}
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <label className="min-w-40 flex-1 text-[9px] font-black uppercase tracking-wider text-white/40">Swing {Math.round(swing * 100)}%
+                <input type="range" min="0" max="0.75" step="0.01" value={swing} onChange={(event) => setSwing(event.target.valueAsNumber)} className="mt-2 w-full accent-orange-400" />
+              </label>
+              <button type="button" onClick={() => void addInstrumentTrack()} disabled={busy || tracks.length >= MAX_TRACKS} className="rounded-xl bg-gradient-to-r from-orange-500 to-amber-300 px-5 py-3 text-xs font-black text-black disabled:opacity-40"><Plus className="mr-1 inline" size={15} /> Add to timeline · Free</button>
+            </div>
+          </div>
+        </section>
+      ) : null}
+
+      {!lyricsOpen && !projectSettingsOpen ? <>
       {tracks.length === 0 ? (
         <button
           type="button"
@@ -1138,7 +1541,7 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
                 onClick={() => setSnapEnabled((enabled) => !enabled)}
                 className={`flex items-center gap-1 rounded-lg px-2.5 py-2 text-[9px] font-black uppercase tracking-wider ${snapEnabled ? "bg-orange-400 text-black" : "bg-white/8 text-white/50"}`}
               >
-                <Magnet size={13} /> {snapEnabled ? "Snap .5s" : "Free"}
+                <Magnet size={13} /> {snapEnabled ? `Snap ${snapDivision}` : "Free"}
               </button>
               <button type="button" aria-label="Zoom timeline out" onClick={() => setTimelineZoom((zoom) => Math.max(1, zoom - 0.5))} className="grid size-8 place-items-center rounded-lg bg-white/8 text-white/55"><ZoomOut size={14} /></button>
               <span className="min-w-9 text-center font-mono text-[9px] text-white/40">{Math.round(timelineZoom * 100)}%</span>
@@ -1160,7 +1563,7 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
                 <div className="relative h-9">
                   {rulerMarks.map((mark, index) => (
                     <div key={mark} className="absolute inset-y-0 border-l border-white/10" style={{ left: `${(index / 8) * 100}%` }}>
-                      <span className="ml-1 font-mono text-[9px] text-white/35">{formatTime(mark)}</span>
+                      <span className="ml-1 font-mono text-[9px] text-white/35">{rulerLabel(mark)}</span>
                     </div>
                   ))}
                 </div>
@@ -1488,6 +1891,7 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
           </button>
         </div>
       </div>
+      </> : null}
     </section>
   );
 }
