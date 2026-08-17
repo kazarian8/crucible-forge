@@ -8,9 +8,11 @@ import {
   useState,
 } from "react";
 import {
+  CircleStop,
   Download,
   Layers3,
   LoaderCircle,
+  Mic,
   Pause,
   Play,
   Plus,
@@ -31,7 +33,29 @@ const ACCEPTED_EXTENSIONS = new Set([
   "aif",
   "m4a",
   "aac",
+  "webm",
+  "ogg",
 ]);
+const MUSICAL_NOTES = ["C", "C#/Db", "D", "D#/Eb", "E", "F", "F#/Gb", "G", "G#/Ab", "A", "A#/Bb", "B"] as const;
+const EFFECT_PRESETS = [
+  { id: "warm", label: "Warm", detail: "Body and analog weight" },
+  { id: "clear", label: "Clear", detail: "Presence and definition" },
+  { id: "air", label: "Air", detail: "Open top end" },
+  { id: "bass", label: "Bass", detail: "Focused low-end punch" },
+  { id: "echo", label: "Echo", detail: "Tempo-safe depth" },
+  { id: "space", label: "Space", detail: "Natural room tail" },
+] as const;
+
+type EffectPreset = typeof EFFECT_PRESETS[number]["id"];
+type MusicalNote = typeof MUSICAL_NOTES[number];
+
+type TrackEffects = {
+  enabled: boolean;
+  preset: EffectPreset;
+  intensity: number;
+  focusNote: MusicalNote;
+  octave: number;
+};
 
 type StemTrack = {
   id: string;
@@ -46,11 +70,13 @@ type StemTrack = {
   gainDb: number;
   muted: boolean;
   solo: boolean;
+  effects: TrackEffects;
 };
 
 type StemSequencerProps = {
   onMixReady: (buffer: AudioBuffer, name: string) => void;
   initialFiles?: File[];
+  onTrackCountChange?: (count: number) => void;
 };
 
 type CadenceProfile = {
@@ -70,6 +96,12 @@ function dbToGain(value: number) {
 
 function seconds(value: number) {
   return Math.max(0, Number.isFinite(value) ? value : 0);
+}
+
+function noteFrequency(note: MusicalNote, octave: number) {
+  const noteIndex = MUSICAL_NOTES.indexOf(note);
+  const midi = (octave + 1) * 12 + noteIndex;
+  return 440 * Math.pow(2, (midi - 69) / 12);
 }
 
 function detectAudibleRange(buffer: AudioBuffer) {
@@ -276,10 +308,15 @@ async function renderMix(tracks: StemTrack[]) {
 
   const duration = projectDuration(active);
   if (duration <= 0) throw new Error("The active stems do not contain audible material.");
+  const effectTail = active.some((track) => track.effects.enabled && track.effects.preset === "space")
+    ? 3
+    : active.some((track) => track.effects.enabled && track.effects.preset === "echo")
+      ? 1.5
+      : 0.05;
 
   const context = new OfflineAudioContext(
     channels,
-    Math.ceil((duration + 0.05) * sampleRate),
+    Math.ceil((duration + effectTail) * sampleRate),
     sampleRate,
   );
 
@@ -305,7 +342,72 @@ async function renderMix(tracks: StemTrack[]) {
       gain.gain.linearRampToValueAtTime(0, startAt + clipDuration);
     }
 
-    source.connect(gain).connect(context.destination);
+    source.connect(gain);
+
+    if (!track.effects.enabled) {
+      gain.connect(context.destination);
+    } else {
+      const amount = Math.max(0, Math.min(1, track.effects.intensity / 100));
+      const focus = context.createBiquadFilter();
+      focus.type = "peaking";
+      focus.frequency.value = noteFrequency(track.effects.focusNote, track.effects.octave);
+      focus.Q.value = 1.2 + amount * 5;
+      focus.gain.value = amount * 7;
+      gain.connect(focus);
+
+      const tone = context.createBiquadFilter();
+      if (track.effects.preset === "warm") {
+        tone.type = "lowshelf";
+        tone.frequency.value = 320;
+        tone.gain.value = amount * 8;
+      } else if (track.effects.preset === "clear") {
+        tone.type = "peaking";
+        tone.frequency.value = 3_200;
+        tone.Q.value = 0.75;
+        tone.gain.value = amount * 7;
+      } else if (track.effects.preset === "air") {
+        tone.type = "highshelf";
+        tone.frequency.value = 8_500;
+        tone.gain.value = amount * 9;
+      } else if (track.effects.preset === "bass") {
+        tone.type = "lowshelf";
+        tone.frequency.value = 140;
+        tone.gain.value = amount * 10;
+      } else {
+        tone.type = "allpass";
+        tone.frequency.value = 1_000;
+      }
+      focus.connect(tone);
+      tone.connect(context.destination);
+
+      if (track.effects.preset === "echo") {
+        const delay = context.createDelay(1);
+        const feedback = context.createGain();
+        const wet = context.createGain();
+        delay.delayTime.value = 0.12 + amount * 0.28;
+        feedback.gain.value = 0.12 + amount * 0.38;
+        wet.gain.value = amount * 0.55;
+        tone.connect(delay);
+        delay.connect(feedback).connect(delay);
+        delay.connect(wet).connect(context.destination);
+      }
+
+      if (track.effects.preset === "space") {
+        const convolver = context.createConvolver();
+        const wet = context.createGain();
+        const seconds = 0.35 + amount * 2.2;
+        const impulse = context.createBuffer(2, Math.ceil(context.sampleRate * seconds), context.sampleRate);
+        for (let channel = 0; channel < impulse.numberOfChannels; channel += 1) {
+          const data = impulse.getChannelData(channel);
+          for (let index = 0; index < data.length; index += 1) {
+            data[index] = (Math.random() * 2 - 1) * Math.pow(1 - index / data.length, 2.4);
+          }
+        }
+        convolver.buffer = impulse;
+        wet.gain.value = amount * 0.6;
+        tone.connect(convolver).connect(wet).connect(context.destination);
+      }
+    }
     source.start(startAt, track.trimStartSeconds, clipDuration);
   }
 
@@ -485,11 +587,83 @@ function StemWaveform({ track }: { track: StemTrack }) {
   );
 }
 
-export default function StemSequencer({ onMixReady, initialFiles = [] }: StemSequencerProps) {
+function TimelineWaveform({ track }: { track: StemTrack }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ratio = window.devicePixelRatio || 1;
+    const width = canvas.clientWidth;
+    const height = canvas.clientHeight;
+    canvas.width = width * ratio;
+    canvas.height = height * ratio;
+    const context = canvas.getContext("2d");
+    if (!context) return;
+    context.scale(ratio, ratio);
+    context.clearRect(0, 0, width, height);
+
+    const startFrame = Math.floor(track.trimStartSeconds * track.buffer.sampleRate);
+    const endFrame = Math.min(
+      track.buffer.length,
+      Math.ceil(track.trimEndSeconds * track.buffer.sampleRate),
+    );
+    const points = Math.max(160, Math.floor(width));
+    const block = Math.max(1, Math.floor((endFrame - startFrame) / points));
+
+    context.fillStyle = "rgba(124,45,18,.96)";
+    context.fillRect(0, 0, width, height);
+    context.strokeStyle = "rgba(255,255,255,.12)";
+    context.beginPath();
+    context.moveTo(0, height / 2);
+    context.lineTo(width, height / 2);
+    context.stroke();
+
+    for (let point = 0; point < points; point += 1) {
+      let peak = 0;
+      const start = startFrame + point * block;
+      const end = Math.min(endFrame, start + block);
+      for (let channel = 0; channel < track.buffer.numberOfChannels; channel += 1) {
+        const data = track.buffer.getChannelData(channel);
+        for (let sample = start; sample < end; sample += 1) {
+          peak = Math.max(peak, Math.abs(data[sample]));
+        }
+      }
+      const x = (point / points) * width;
+      const bar = Math.max(1, peak * (height - 10));
+      context.fillStyle = "rgba(255,190,92,.96)";
+      context.fillRect(x, (height - bar) / 2, Math.max(1, width / points), bar);
+    }
+
+    const clipDuration = Math.max(0.001, trackDuration(track));
+    const fadeInX = Math.min(width, (track.fadeInSeconds / clipDuration) * width);
+    const fadeOutX = Math.max(0, width - (track.fadeOutSeconds / clipDuration) * width);
+    context.fillStyle = "rgba(253,224,71,.2)";
+    context.beginPath();
+    context.moveTo(0, height);
+    context.lineTo(fadeInX, 0);
+    context.lineTo(fadeInX, height);
+    context.closePath();
+    context.fill();
+    context.beginPath();
+    context.moveTo(fadeOutX, 0);
+    context.lineTo(width, height);
+    context.lineTo(fadeOutX, height);
+    context.closePath();
+    context.fill();
+  }, [track]);
+
+  return <canvas ref={canvasRef} className="h-full w-full" aria-label={`${track.name} timeline waveform`} />;
+}
+
+export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCountChange }: StemSequencerProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const previewRef = useRef<HTMLAudioElement>(null);
   const previewUrlRef = useRef("");
   const importedBatchRef = useRef("");
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const recordingStreamRef = useRef<MediaStream | null>(null);
+  const recordingChunksRef = useRef<Blob[]>([]);
   const [tracks, setTracks] = useState<StemTrack[]>([]);
   const [busy, setBusy] = useState(false);
   const [playing, setPlaying] = useState(false);
@@ -501,6 +675,10 @@ export default function StemSequencer({ onMixReady, initialFiles = [] }: StemSeq
   const [cadenceSuggestions, setCadenceSuggestions] = useState<Record<string, CadenceSuggestion>>({});
   const [error, setError] = useState("");
   const [status, setStatus] = useState("Add stems to build a clean master-ready mix.");
+  const [selectedTrackId, setSelectedTrackId] = useState("");
+  const [playheadSeconds, setPlayheadSeconds] = useState(0);
+  const [effectsTrackId, setEffectsTrackId] = useState("");
+  const [recording, setRecording] = useState(false);
 
   useEffect(() => {
     previewUrlRef.current = previewUrl;
@@ -509,6 +687,7 @@ export default function StemSequencer({ onMixReady, initialFiles = [] }: StemSeq
   useEffect(
     () => () => {
       if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
+      recordingStreamRef.current?.getTracks().forEach((track) => track.stop());
     },
     [],
   );
@@ -523,8 +702,18 @@ export default function StemSequencer({ onMixReady, initialFiles = [] }: StemSeq
     void addFiles(initialFiles);
   }, [initialFiles]);
 
+  useEffect(() => {
+    onTrackCountChange?.(tracks.length);
+  }, [onTrackCountChange, tracks.length]);
+
   const duration = useMemo(() => projectDuration(tracks), [tracks]);
   const hasSolo = tracks.some((track) => track.solo);
+  const selectedTrack = tracks.find((track) => track.id === selectedTrackId) ?? tracks[0] ?? null;
+  const rulerDuration = Math.max(1, duration);
+  const rulerMarks = useMemo(
+    () => Array.from({ length: 9 }, (_, index) => (rulerDuration * index) / 8),
+    [rulerDuration],
+  );
 
   function replaceTrack(id: string, patch: Partial<StemTrack>) {
     setTracks((current) =>
@@ -595,12 +784,20 @@ export default function StemSequencer({ onMixReady, initialFiles = [] }: StemSeq
           gainDb: 0,
           muted: false,
           solo: false,
+          effects: {
+            enabled: false,
+            preset: "clear",
+            intensity: 50,
+            focusNote: "A",
+            octave: 3,
+          },
         };
         additions.push(addition);
 
         // Reveal each decoded stem immediately so mobile users see the
         // sequencer filling instead of waiting for the entire batch.
         setTracks((current) => current.length >= MAX_TRACKS ? current : [...current, addition]);
+        setSelectedTrackId((current) => current || addition.id);
         setCadenceReferenceId((current) => current || addition.id);
         await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
       }
@@ -622,6 +819,55 @@ export default function StemSequencer({ onMixReady, initialFiles = [] }: StemSeq
 
   function handleFiles(event: ChangeEvent<HTMLInputElement>) {
     if (event.target.files) void addFiles(event.target.files);
+  }
+
+  async function startVocalRecording() {
+    if (tracks.length >= MAX_TRACKS) return;
+    setError("");
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false,
+        },
+      });
+      const preferredType = ["audio/mp4", "audio/webm;codecs=opus", "audio/webm"]
+        .find((type) => MediaRecorder.isTypeSupported(type));
+      const recorder = preferredType
+        ? new MediaRecorder(stream, { mimeType: preferredType })
+        : new MediaRecorder(stream);
+      recorderRef.current = recorder;
+      recordingStreamRef.current = stream;
+      recordingChunksRef.current = [];
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) recordingChunksRef.current.push(event.data);
+      };
+      recorder.onstop = () => {
+        const type = recorder.mimeType || preferredType || "audio/webm";
+        const extension = type.includes("mp4") ? "m4a" : type.includes("ogg") ? "ogg" : "webm";
+        const blob = new Blob(recordingChunksRef.current, { type });
+        const vocal = new File([blob], `Crucible-Vocal-${Date.now()}.${extension}`, { type });
+        stream.getTracks().forEach((track) => track.stop());
+        recordingStreamRef.current = null;
+        recorderRef.current = null;
+        setRecording(false);
+        setStatus("Vocal captured. Loading it into a new sequencer lane…");
+        void addFiles([vocal]);
+      };
+      recorder.start(250);
+      setRecording(true);
+      setStatus("Recording a new vocal track locally…");
+    } catch {
+      setError("Microphone access is required to create a vocal track.");
+      setStatus("Vocal recording did not start.");
+    }
+  }
+
+  function stopVocalRecording() {
+    if (recorderRef.current?.state === "recording") {
+      recorderRef.current.stop();
+    }
   }
 
   function restoreOriginalTiming() {
@@ -722,7 +968,7 @@ export default function StemSequencer({ onMixReady, initialFiles = [] }: StemSeq
   }
 
   return (
-    <section className="mt-10 rounded-[28px] border border-orange-300/20 bg-[#0d0a08] p-5 shadow-[0_30px_100px_rgba(0,0,0,.45)] sm:p-7">
+    <section className="mt-3 rounded-[22px] border border-orange-300/20 bg-[#0d0a08] p-3 shadow-[0_30px_100px_rgba(0,0,0,.45)] sm:mt-10 sm:rounded-[28px] sm:p-7">
       <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-start">
         <div>
           <p className="flex items-center gap-2 text-xs font-black uppercase tracking-[0.2em] text-orange-300">
@@ -739,7 +985,7 @@ export default function StemSequencer({ onMixReady, initialFiles = [] }: StemSeq
             ref={fileInputRef}
             type="file"
             multiple
-            accept="audio/*,.wav,.mp3,.flac,.aiff,.aif,.m4a,.aac"
+            accept="audio/*,.wav,.mp3,.flac,.aiff,.aif,.m4a,.aac,.webm,.ogg"
             onChange={handleFiles}
             className="sr-only"
           />
@@ -750,6 +996,15 @@ export default function StemSequencer({ onMixReady, initialFiles = [] }: StemSeq
             className="flex items-center gap-2 rounded-xl bg-orange-500 px-4 py-2.5 text-xs font-black text-black disabled:opacity-40"
           >
             <Plus size={15} /> Add stems
+          </button>
+          <button
+            type="button"
+            onClick={recording ? stopVocalRecording : () => void startVocalRecording()}
+            disabled={busy || tracks.length >= MAX_TRACKS}
+            className={`flex items-center gap-2 rounded-xl border px-4 py-2.5 text-xs font-black disabled:opacity-40 ${recording ? "border-red-400/40 bg-red-500/15 text-red-100" : "border-emerald-300/20 bg-emerald-400/[0.06] text-emerald-100"}`}
+          >
+            {recording ? <CircleStop size={15} fill="currentColor" /> : <Mic size={15} />}
+            {recording ? "Stop vocal" : "New vocal track"}
           </button>
           <button
             type="button"
@@ -776,82 +1031,6 @@ export default function StemSequencer({ onMixReady, initialFiles = [] }: StemSeq
         ))}
       </div>
 
-      {tracks.length > 0 ? (
-        <section className="mt-5 rounded-2xl border border-violet-300/20 bg-violet-400/[0.045] p-4">
-          <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-end">
-            <div className="max-w-xl">
-              <p className="text-[10px] font-black uppercase tracking-[0.2em] text-violet-200/75">
-                Smart Cadence Quantize
-              </p>
-              <h3 className="mt-1 text-lg font-black text-white/90">Learn the pocket—don’t erase it.</h3>
-              <p className="mt-1 text-xs leading-5 text-white/42">
-                The reference stem teaches Crucible the tempo, transient pattern, and human timing. Suggested stem nudges remain visible and require approval.
-              </p>
-            </div>
-
-            <div className="grid gap-3 sm:grid-cols-[minmax(150px,1fr)_minmax(180px,1fr)_auto_auto]">
-              <label className="text-[9px] font-bold uppercase tracking-wider text-white/35">
-                Learn from
-                <select
-                  value={cadenceReferenceId}
-                  onChange={(event) => {
-                    setCadenceReferenceId(event.target.value);
-                    setCadenceSuggestions({});
-                  }}
-                  className="mt-1 w-full rounded-lg border border-white/10 bg-black/55 px-3 py-2.5 text-xs text-white"
-                >
-                  {tracks.map((track) => (
-                    <option key={track.id} value={track.id}>{track.name}</option>
-                  ))}
-                </select>
-              </label>
-              <label className="text-[9px] font-bold uppercase tracking-wider text-white/35">
-                Strength {cadenceStrength}%
-                <input
-                  type="range"
-                  min="0"
-                  max="100"
-                  step="5"
-                  value={cadenceStrength}
-                  onChange={(event) => setCadenceStrength(event.target.valueAsNumber)}
-                  className="mt-3 w-full accent-violet-400"
-                />
-              </label>
-              <button
-                type="button"
-                onClick={scanCadence}
-                disabled={busy}
-                className="self-end rounded-xl border border-violet-300/25 px-4 py-2.5 text-xs font-black text-violet-100 disabled:opacity-40"
-              >
-                Scan cadence
-              </button>
-              <button
-                type="button"
-                onClick={applyCadenceSuggestions}
-                disabled={busy || Object.keys(cadenceSuggestions).length === 0}
-                className="self-end rounded-xl bg-violet-300 px-4 py-2.5 text-xs font-black text-violet-950 disabled:opacity-35"
-              >
-                Apply nudges
-              </button>
-            </div>
-          </div>
-
-          {cadenceProfiles[cadenceReferenceId] ? (
-            <div className="mt-3 flex flex-wrap gap-2 text-[10px] font-bold uppercase tracking-wider">
-              <span className="rounded-full bg-black/30 px-3 py-1.5 text-violet-100/70">
-                Estimated {cadenceProfiles[cadenceReferenceId].bpm} BPM
-              </span>
-              <span className="rounded-full bg-black/30 px-3 py-1.5 text-violet-100/70">
-                {cadenceProfiles[cadenceReferenceId].onsets.length} timing events
-              </span>
-              <span className="rounded-full bg-black/30 px-3 py-1.5 text-violet-100/70">
-                {Math.round(cadenceProfiles[cadenceReferenceId].confidence * 100)}% tempo confidence
-              </span>
-            </div>
-          ) : null}
-        </section>
-      ) : null}
-
       {tracks.length === 0 ? (
         <button
           type="button"
@@ -861,161 +1040,254 @@ export default function StemSequencer({ onMixReady, initialFiles = [] }: StemSeq
           <Scissors className="mr-2" size={18} /> Drop in synchronized stems or choose up to 16 files
         </button>
       ) : (
-        <div className="mt-5 space-y-3">
-          {tracks.map((track, index) => {
-            const clipDuration = trackDuration(track);
-            const inactive = track.muted || (hasSolo && !track.solo);
-            return (
-              <article
-                key={track.id}
-                className={`rounded-2xl border p-4 transition ${inactive ? "border-white/5 bg-black/20 opacity-55" : "border-white/10 bg-black/35"}`}
+        <div className="mt-5 overflow-hidden rounded-2xl border border-white/10 bg-[#080706]">
+          <div className="flex items-center justify-between border-b border-white/10 bg-black/55 px-3 py-2">
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={togglePreview}
+                disabled={!previewUrl}
+                aria-label={playing ? "Pause sequence" : "Play sequence"}
+                className="grid size-9 place-items-center rounded-full bg-orange-500 text-black disabled:opacity-30"
               >
-                <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
-                  <div className="min-w-0 lg:w-64">
-                    <p className="text-[10px] font-black uppercase tracking-[0.16em] text-orange-300/70">
-                      Track {String(index + 1).padStart(2, "0")}
-                    </p>
-                    <p className="truncate text-sm font-bold text-white/85" title={track.name}>{track.name}</p>
-                    <p className="mt-1 text-[10px] text-white/35">
-                      {formatTime(clipDuration)} after trim · source {formatTime(track.originalStartSeconds)}
-                    </p>
-                    {cadenceSuggestions[track.id] ? (
-                      <p className="mt-1 text-[10px] font-black text-violet-200/75">
-                        {track.id === cadenceReferenceId
-                          ? "Cadence reference"
-                          : `Suggested ${cadenceSuggestions[track.id].nudgeSeconds >= 0 ? "+" : ""}${Math.round(cadenceSuggestions[track.id].nudgeSeconds * 1000)} ms · ${Math.round(cadenceSuggestions[track.id].confidence * 100)}% match`}
-                      </p>
-                    ) : null}
-                  </div>
+                {playing ? <Pause size={16} fill="currentColor" /> : <Play size={16} fill="currentColor" />}
+              </button>
+              <p className="font-mono text-sm font-black tabular-nums text-orange-100">{formatTime(playheadSeconds)}</p>
+            </div>
+            <p className="text-[9px] font-black uppercase tracking-[0.16em] text-white/35">Multitrack timeline · tap a lane to edit</p>
+          </div>
 
-                  <div className="grid flex-1 grid-cols-2 gap-2 sm:grid-cols-4 xl:grid-cols-7">
-                    <label className="text-[9px] font-bold uppercase tracking-wider text-white/35">
-                      Start
-                      <input
-                        aria-label={`${track.name} timeline start in seconds`}
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        value={track.startSeconds}
-                        onChange={(event) => replaceTrack(track.id, { startSeconds: seconds(event.target.valueAsNumber) })}
-                        className="mt-1 w-full rounded-lg border border-white/10 bg-black/40 px-2 py-2 text-xs text-white"
-                      />
-                    </label>
-                    <label className="text-[9px] font-bold uppercase tracking-wider text-white/35">
-                      Trim in
-                      <input
-                        aria-label={`${track.name} trim start in seconds`}
-                        type="number"
-                        min="0"
-                        max={track.trimEndSeconds}
-                        step="0.01"
-                        value={track.trimStartSeconds}
-                        onChange={(event) => replaceTrack(track.id, {
-                          trimStartSeconds: Math.min(track.trimEndSeconds, seconds(event.target.valueAsNumber)),
-                        })}
-                        className="mt-1 w-full rounded-lg border border-white/10 bg-black/40 px-2 py-2 text-xs text-white"
-                      />
-                    </label>
-                    <label className="text-[9px] font-bold uppercase tracking-wider text-white/35">
-                      Trim out
-                      <input
-                        aria-label={`${track.name} trim end in seconds`}
-                        type="number"
-                        min={track.trimStartSeconds}
-                        max={track.buffer.duration}
-                        step="0.01"
-                        value={track.trimEndSeconds}
-                        onChange={(event) => replaceTrack(track.id, {
-                          trimEndSeconds: Math.max(
-                            track.trimStartSeconds,
-                            Math.min(track.buffer.duration, seconds(event.target.valueAsNumber)),
-                          ),
-                        })}
-                        className="mt-1 w-full rounded-lg border border-white/10 bg-black/40 px-2 py-2 text-xs text-white"
-                      />
-                    </label>
-                    <label className="text-[9px] font-bold uppercase tracking-wider text-white/35">
-                      Fade in
-                      <input
-                        aria-label={`${track.name} fade in seconds`}
-                        type="number"
-                        min="0"
-                        max={clipDuration / 2}
-                        step="0.01"
-                        value={track.fadeInSeconds}
-                        onChange={(event) => replaceTrack(track.id, { fadeInSeconds: seconds(event.target.valueAsNumber) })}
-                        className="mt-1 w-full rounded-lg border border-white/10 bg-black/40 px-2 py-2 text-xs text-white"
-                      />
-                    </label>
-                    <label className="text-[9px] font-bold uppercase tracking-wider text-white/35">
-                      Fade out
-                      <input
-                        aria-label={`${track.name} fade out seconds`}
-                        type="number"
-                        min="0"
-                        max={clipDuration / 2}
-                        step="0.01"
-                        value={track.fadeOutSeconds}
-                        onChange={(event) => replaceTrack(track.id, { fadeOutSeconds: seconds(event.target.valueAsNumber) })}
-                        className="mt-1 w-full rounded-lg border border-white/10 bg-black/40 px-2 py-2 text-xs text-white"
-                      />
-                    </label>
-                    <label className="text-[9px] font-bold uppercase tracking-wider text-white/35">
-                      Gain dB
-                      <input
-                        aria-label={`${track.name} gain in decibels`}
-                        type="number"
-                        min="-24"
-                        max="12"
-                        step="0.5"
-                        value={track.gainDb}
-                        onChange={(event) => replaceTrack(track.id, { gainDb: event.target.valueAsNumber || 0 })}
-                        className="mt-1 w-full rounded-lg border border-white/10 bg-black/40 px-2 py-2 text-xs text-white"
-                      />
-                    </label>
-                    <div className="flex items-end gap-1">
-                      <button
-                        type="button"
-                        aria-pressed={track.muted}
-                        onClick={() => replaceTrack(track.id, { muted: !track.muted })}
-                        className={`flex-1 rounded-lg border px-2 py-2 text-[10px] font-black ${track.muted ? "border-red-400/30 bg-red-500/15 text-red-200" : "border-white/10 text-white/45"}`}
-                      >
-                        Mute
-                      </button>
-                      <button
-                        type="button"
-                        aria-pressed={track.solo}
-                        onClick={() => replaceTrack(track.id, { solo: !track.solo })}
-                        className={`flex-1 rounded-lg border px-2 py-2 text-[10px] font-black ${track.solo ? "border-amber-300/35 bg-amber-400/15 text-amber-100" : "border-white/10 text-white/45"}`}
-                      >
-                        Solo
-                      </button>
-                      <button
-                        type="button"
-                        aria-pressed={compareIds.includes(track.id)}
-                        onClick={() => toggleCompare(track.id)}
-                        className={`flex-1 rounded-lg border px-2 py-2 text-[10px] font-black ${compareIds.includes(track.id) ? "border-sky-300/35 bg-sky-400/15 text-sky-100" : "border-white/10 text-white/45"}`}
-                      >
-                        A/B
-                      </button>
+          <div className="overflow-x-auto">
+            <div className="min-w-[760px]">
+              <div className="grid grid-cols-[150px_1fr] border-b border-white/10 bg-[#0d0b0a]">
+                <div className="border-r border-white/10 px-3 py-2 text-[9px] font-black uppercase tracking-wider text-white/30">Tracks</div>
+                <div className="relative h-9">
+                  {rulerMarks.map((mark, index) => (
+                    <div key={mark} className="absolute inset-y-0 border-l border-white/10" style={{ left: `${(index / 8) * 100}%` }}>
+                      <span className="ml-1 font-mono text-[9px] text-white/35">{formatTime(mark)}</span>
                     </div>
-                  </div>
-
-                  <button
-                    type="button"
-                    aria-label={`Remove ${track.name}`}
-                    onClick={() => setTracks((current) => current.filter((item) => item.id !== track.id))}
-                    className="self-start rounded-lg border border-white/10 p-2 text-white/35 hover:text-red-300 lg:self-center"
-                  >
-                    <Trash2 size={15} />
-                  </button>
+                  ))}
                 </div>
-                <StemWaveform track={track} />
-              </article>
-            );
-          })}
+              </div>
+
+              <div className="relative">
+                <div
+                  className="pointer-events-none absolute bottom-0 top-0 z-20 w-px bg-orange-300 shadow-[0_0_10px_rgba(253,186,116,.8)]"
+                  style={{ left: `calc(150px + (100% - 150px) * ${Math.min(1, playheadSeconds / rulerDuration)})` }}
+                />
+                {tracks.map((track, index) => {
+                  const inactive = track.muted || (hasSolo && !track.solo);
+                  const selected = selectedTrack?.id === track.id;
+                  const clipLeft = (track.startSeconds / rulerDuration) * 100;
+                  const clipWidth = Math.max(1.5, (trackDuration(track) / rulerDuration) * 100);
+                  return (
+                    <article key={track.id} className={`grid h-[84px] grid-cols-[150px_1fr] border-b border-white/[0.07] last:border-b-0 ${inactive ? "opacity-45" : ""}`}>
+                      <div className={`border-r px-2 py-2 ${selected ? "border-orange-400/50 bg-orange-500/10" : "border-white/10 bg-black/35"}`}>
+                        <button type="button" onClick={() => setSelectedTrackId(track.id)} className="block w-full text-left">
+                          <span className="text-[9px] font-black uppercase tracking-wider text-orange-300/70">{String(index + 1).padStart(2, "0")}</span>
+                          <span className="block truncate text-[11px] font-bold text-white/80" title={track.name}>{track.name}</span>
+                        </button>
+                        <div className="mt-2 flex gap-1">
+                          <button type="button" aria-label={`Mute ${track.name}`} aria-pressed={track.muted} onClick={() => replaceTrack(track.id, { muted: !track.muted })} className={`grid size-7 place-items-center rounded text-[9px] font-black ${track.muted ? "bg-red-500 text-white" : "bg-white/8 text-white/45"}`}>M</button>
+                          <button type="button" aria-label={`Solo ${track.name}`} aria-pressed={track.solo} onClick={() => replaceTrack(track.id, { solo: !track.solo })} className={`grid size-7 place-items-center rounded text-[9px] font-black ${track.solo ? "bg-amber-300 text-black" : "bg-white/8 text-white/45"}`}>S</button>
+                          <button type="button" aria-label={`Compare ${track.name}`} aria-pressed={compareIds.includes(track.id)} onClick={() => toggleCompare(track.id)} className={`grid size-7 place-items-center rounded text-[9px] font-black ${compareIds.includes(track.id) ? "bg-sky-300 text-black" : "bg-white/8 text-white/45"}`}>A/B</button>
+                          <button
+                            type="button"
+                            aria-label={`Open effects for ${track.name}`}
+                            aria-pressed={effectsTrackId === track.id}
+                            onClick={() => {
+                              setSelectedTrackId(track.id);
+                              setEffectsTrackId((current) => current === track.id ? "" : track.id);
+                            }}
+                            className={`grid size-7 place-items-center rounded text-[9px] font-black ${track.effects.enabled ? "bg-violet-300 text-violet-950" : "bg-white/8 text-white/45"}`}
+                          >FX</button>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedTrackId(track.id)}
+                        className={`relative overflow-hidden text-left ${selected ? "ring-1 ring-inset ring-orange-300/45" : ""}`}
+                        style={{ backgroundImage: "repeating-linear-gradient(90deg, transparent 0, transparent calc(12.5% - 1px), rgba(255,255,255,.05) 12.5%)" }}
+                        aria-label={`Select ${track.name} on timeline`}
+                      >
+                        <span
+                          className="absolute inset-y-2 overflow-hidden rounded-md border border-orange-300/30 shadow-[0_4px_18px_rgba(0,0,0,.35)]"
+                          style={{ left: `${clipLeft}%`, width: `${Math.min(100 - clipLeft, clipWidth)}%` }}
+                        >
+                          <TimelineWaveform track={track} />
+                        </span>
+                      </button>
+                    </article>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
         </div>
       )}
+
+      {selectedTrack && effectsTrackId === selectedTrack.id ? (
+        <section className="mt-4 overflow-hidden rounded-2xl border border-violet-300/20 bg-[#101014]">
+          <div className="flex items-center justify-between border-b border-white/8 px-4 py-3">
+            <div className="min-w-0">
+              <p className="text-[9px] font-black uppercase tracking-[0.18em] text-violet-200/65">Per-stem effects</p>
+              <h3 className="truncate text-sm font-black text-white/90">{selectedTrack.name}</h3>
+            </div>
+            <button
+              type="button"
+              onClick={() => replaceTrack(selectedTrack.id, { effects: { ...selectedTrack.effects, enabled: !selectedTrack.effects.enabled } })}
+              className={`rounded-full px-4 py-2 text-[10px] font-black uppercase tracking-wider ${selectedTrack.effects.enabled ? "bg-emerald-400 text-emerald-950" : "bg-white/8 text-white/45"}`}
+            >
+              {selectedTrack.effects.enabled ? "FX on" : "Enable FX"}
+            </button>
+          </div>
+
+          <div className="grid gap-5 p-4 lg:grid-cols-[240px_1fr]">
+            <div className="flex flex-col items-center justify-center rounded-2xl bg-black/30 p-5">
+              <div
+                className="relative grid size-40 place-items-center rounded-full"
+                style={{ background: `conic-gradient(#a78bfa 0 ${selectedTrack.effects.intensity * 3.6}deg, #27272a ${selectedTrack.effects.intensity * 3.6}deg 360deg)` }}
+              >
+                <div className="grid size-[132px] place-items-center rounded-full bg-[#202126] shadow-inner">
+                  <div className="h-12 w-1 origin-bottom rounded-full bg-white" style={{ transform: `rotate(${-135 + selectedTrack.effects.intensity * 2.7}deg) translateY(-22px)` }} />
+                </div>
+              </div>
+              <p className="mt-3 text-sm font-black text-white/85">Intensity {selectedTrack.effects.intensity}%</p>
+              <input
+                aria-label={`${selectedTrack.name} effect intensity`}
+                type="range"
+                min="0"
+                max="100"
+                value={selectedTrack.effects.intensity}
+                onChange={(event) => replaceTrack(selectedTrack.id, { effects: { ...selectedTrack.effects, intensity: event.target.valueAsNumber } })}
+                className="mt-3 w-full accent-violet-400"
+              />
+            </div>
+
+            <div>
+              <p className="text-[9px] font-black uppercase tracking-[0.18em] text-white/35">Effect character</p>
+              <div className="mt-2 grid grid-cols-3 gap-2 sm:grid-cols-6">
+                {EFFECT_PRESETS.map((preset) => (
+                  <button
+                    key={preset.id}
+                    type="button"
+                    onClick={() => replaceTrack(selectedTrack.id, { effects: { ...selectedTrack.effects, preset: preset.id, enabled: true } })}
+                    className={`rounded-xl border px-2 py-3 text-center ${selectedTrack.effects.preset === preset.id ? "border-violet-300/55 bg-violet-300 text-violet-950" : "border-white/8 bg-white/[0.035] text-white/55"}`}
+                    title={preset.detail}
+                  >
+                    <span className="block text-xs font-black">{preset.label}</span>
+                  </button>
+                ))}
+              </div>
+
+              <div className="mt-5 grid gap-3 sm:grid-cols-2">
+                <label className="text-[9px] font-black uppercase tracking-[0.16em] text-white/35">
+                  Focused note
+                  <select
+                    value={selectedTrack.effects.focusNote}
+                    onChange={(event) => replaceTrack(selectedTrack.id, { effects: { ...selectedTrack.effects, focusNote: event.target.value as MusicalNote } })}
+                    className="mt-1 w-full rounded-xl border border-white/10 bg-black/45 px-3 py-3 text-sm font-bold text-white"
+                  >
+                    {MUSICAL_NOTES.map((note) => <option key={note} value={note}>{note}</option>)}
+                  </select>
+                </label>
+                <label className="text-[9px] font-black uppercase tracking-[0.16em] text-white/35">
+                  Focus octave
+                  <select
+                    value={selectedTrack.effects.octave}
+                    onChange={(event) => replaceTrack(selectedTrack.id, { effects: { ...selectedTrack.effects, octave: Number(event.target.value) } })}
+                    className="mt-1 w-full rounded-xl border border-white/10 bg-black/45 px-3 py-3 text-sm font-bold text-white"
+                  >
+                    {[1, 2, 3, 4, 5, 6].map((octave) => <option key={octave} value={octave}>Octave {octave}</option>)}
+                  </select>
+                </label>
+              </div>
+
+              <div className="mt-4 rounded-xl border border-orange-300/15 bg-orange-400/[0.05] p-3 text-xs leading-5 text-orange-100/60">
+                Manual FX are included and processed on this device. AI Quick FX presets will display their coin price before running and will only charge after a cloud processor accepts the job.
+              </div>
+            </div>
+          </div>
+        </section>
+      ) : null}
+
+      {selectedTrack ? (
+        <section className="mt-4 rounded-2xl border border-orange-300/15 bg-orange-500/[0.035] p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-[9px] font-black uppercase tracking-[0.18em] text-orange-300/70">Selected track inspector</p>
+              <h3 className="truncate text-sm font-black text-white/85">{selectedTrack.name}</h3>
+            </div>
+            <button
+              type="button"
+              aria-label={`Remove ${selectedTrack.name}`}
+              onClick={() => {
+                setTracks((current) => current.filter((item) => item.id !== selectedTrack.id));
+                setSelectedTrackId("");
+              }}
+              className="rounded-lg border border-white/10 p-2 text-white/35 hover:text-red-300"
+            >
+              <Trash2 size={15} />
+            </button>
+          </div>
+          <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+            {[
+              ["Start", selectedTrack.startSeconds, 0, rulerDuration, (value: number) => ({ startSeconds: seconds(value) })],
+              ["Trim in", selectedTrack.trimStartSeconds, 0, selectedTrack.trimEndSeconds, (value: number) => ({ trimStartSeconds: Math.min(selectedTrack.trimEndSeconds, seconds(value)) })],
+              ["Trim out", selectedTrack.trimEndSeconds, selectedTrack.trimStartSeconds, selectedTrack.buffer.duration, (value: number) => ({ trimEndSeconds: Math.max(selectedTrack.trimStartSeconds, Math.min(selectedTrack.buffer.duration, seconds(value))) })],
+              ["Fade in", selectedTrack.fadeInSeconds, 0, trackDuration(selectedTrack) / 2, (value: number) => ({ fadeInSeconds: seconds(value) })],
+              ["Fade out", selectedTrack.fadeOutSeconds, 0, trackDuration(selectedTrack) / 2, (value: number) => ({ fadeOutSeconds: seconds(value) })],
+              ["Gain dB", selectedTrack.gainDb, -24, 12, (value: number) => ({ gainDb: value || 0 })],
+            ].map(([label, value, min, max, patch]) => (
+              <label key={label as string} className="text-[9px] font-bold uppercase tracking-wider text-white/35">
+                {label as string}
+                <input
+                  type="number"
+                  min={min as number}
+                  max={max as number}
+                  step={label === "Gain dB" ? 0.5 : 0.01}
+                  value={value as number}
+                  onChange={(event) => replaceTrack(selectedTrack.id, (patch as (value: number) => Partial<StemTrack>)(event.target.valueAsNumber))}
+                  className="mt-1 w-full rounded-lg border border-white/10 bg-black/45 px-2 py-2 text-xs text-white"
+                />
+              </label>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
+      {tracks.length > 0 ? (
+        <section className="mt-4 rounded-2xl border border-violet-300/20 bg-violet-400/[0.045] p-4">
+          <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-end">
+            <div className="max-w-xl">
+              <p className="text-[10px] font-black uppercase tracking-[0.2em] text-violet-200/75">Smart Cadence Quantize</p>
+              <h3 className="mt-1 text-lg font-black text-white/90">Learn the pocket—don’t erase it.</h3>
+              <p className="mt-1 text-xs leading-5 text-white/42">Choose a reference stem, scan the timing pocket, then approve any suggested lane nudges.</p>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-[minmax(150px,1fr)_minmax(180px,1fr)_auto_auto]">
+              <label className="text-[9px] font-bold uppercase tracking-wider text-white/35">
+                Learn from
+                <select value={cadenceReferenceId} onChange={(event) => { setCadenceReferenceId(event.target.value); setCadenceSuggestions({}); }} className="mt-1 w-full rounded-lg border border-white/10 bg-black/55 px-3 py-2.5 text-xs text-white">
+                  {tracks.map((track) => <option key={track.id} value={track.id}>{track.name}</option>)}
+                </select>
+              </label>
+              <label className="text-[9px] font-bold uppercase tracking-wider text-white/35">
+                Strength {cadenceStrength}%
+                <input type="range" min="0" max="100" step="5" value={cadenceStrength} onChange={(event) => setCadenceStrength(event.target.valueAsNumber)} className="mt-3 w-full accent-violet-400" />
+              </label>
+              <button type="button" onClick={scanCadence} disabled={busy} className="self-end rounded-xl border border-violet-300/25 px-4 py-2.5 text-xs font-black text-violet-100 disabled:opacity-40">Scan cadence</button>
+              <button type="button" onClick={applyCadenceSuggestions} disabled={busy || Object.keys(cadenceSuggestions).length === 0} className="self-end rounded-xl bg-violet-300 px-4 py-2.5 text-xs font-black text-violet-950 disabled:opacity-35">Apply nudges</button>
+            </div>
+          </div>
+          {cadenceProfiles[cadenceReferenceId] ? (
+            <div className="mt-3 flex flex-wrap gap-2 text-[10px] font-bold uppercase tracking-wider">
+              <span className="rounded-full bg-black/30 px-3 py-1.5 text-violet-100/70">Estimated {cadenceProfiles[cadenceReferenceId].bpm} BPM</span>
+              <span className="rounded-full bg-black/30 px-3 py-1.5 text-violet-100/70">{cadenceProfiles[cadenceReferenceId].onsets.length} timing events</span>
+              <span className="rounded-full bg-black/30 px-3 py-1.5 text-violet-100/70">{Math.round(cadenceProfiles[cadenceReferenceId].confidence * 100)}% confidence</span>
+            </div>
+          ) : null}
+        </section>
+      ) : null}
 
       {compareIds.length > 0 ? (
         <section className="mt-5 rounded-2xl border border-sky-300/15 bg-sky-400/[0.035] p-4">
@@ -1072,7 +1344,11 @@ export default function StemSequencer({ onMixReady, initialFiles = [] }: StemSeq
               <audio
                 ref={previewRef}
                 src={previewUrl}
-                onEnded={() => setPlaying(false)}
+                onTimeUpdate={(event) => setPlayheadSeconds(event.currentTarget.currentTime)}
+                onEnded={() => {
+                  setPlaying(false);
+                  setPlayheadSeconds(0);
+                }}
                 preload="metadata"
               />
               <button

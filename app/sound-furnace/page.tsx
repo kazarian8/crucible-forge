@@ -419,6 +419,7 @@ export default function SoundFurnacePage() {
   const [playing, setPlaying] = useState<"source" | "result" | null>(null);
   const [engineerOpen, setEngineerOpen] = useState(false);
   const [stemFiles, setStemFiles] = useState<File[]>([]);
+  const [engineerTrackCount, setEngineerTrackCount] = useState(0);
   const [separatingStems, setSeparatingStems] = useState(false);
   const [stemElapsed, setStemElapsed] = useState(0);
   const [stemEstimate, setStemEstimate] = useState(120);
@@ -455,6 +456,7 @@ export default function SoundFurnacePage() {
     setError("");
     setResult(null);
     setStemFiles([]);
+    setEngineerTrackCount(0);
     setEngineerOpen(false);
     const extension = candidate.name.split(".").pop()?.toLowerCase() ?? "";
     if (!ACCEPTED_EXTENSIONS.includes(extension)) {
@@ -817,31 +819,36 @@ export default function SoundFurnacePage() {
       {engineerOpen ? (
         <div className="fixed inset-0 z-50 overflow-y-auto bg-[#070605] text-white">
           <header className="sticky top-0 z-20 border-b border-violet-300/15 bg-[#090708]/95 backdrop-blur-xl">
-            <div className="mx-auto flex max-w-[1600px] flex-col gap-4 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-7">
+            <div className="mx-auto flex max-w-[1600px] flex-wrap items-center justify-between gap-3 px-3 py-3 sm:px-7 sm:py-4">
               <div className="flex items-center gap-4">
                 <button
                   type="button"
                   onClick={() => setEngineerOpen(false)}
-                  className="flex shrink-0 items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2.5 text-xs font-black text-white/70 hover:text-white"
+                  aria-label="Back to Sound Furnace"
+                  className="flex shrink-0 items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] p-2.5 text-xs font-black text-white/70 hover:text-white sm:px-4"
                 >
-                  <ArrowLeft size={16} /> Back to Sound Furnace
+                  <ArrowLeft size={18} /> <span className="hidden sm:inline">Back to Sound Furnace</span>
                 </button>
                 <div>
                   <p className="text-[10px] font-black uppercase tracking-[0.24em] text-violet-200">Crucible Engineer Mode</p>
-                  <h1 className="mt-1 text-xl font-black sm:text-2xl">16-Track Sequencing Workstation</h1>
+                  <h1 className="mt-0.5 text-sm font-black sm:text-2xl">16-Track Sequencer</h1>
                 </div>
               </div>
-              <div className="flex items-center gap-2 self-start rounded-full border border-emerald-300/15 bg-emerald-400/[0.06] px-3 py-2 text-[10px] font-black uppercase tracking-wider text-emerald-200/70 sm:self-auto">
-                <CheckCircle2 size={13} /> {stemFiles.length} stems secured · original timing preserved
+              <div className="flex items-center gap-2 rounded-full border border-emerald-300/15 bg-emerald-400/[0.06] px-3 py-2 text-[9px] font-black uppercase tracking-wider text-emerald-200/70">
+                <CheckCircle2 size={13} /> {engineerTrackCount} tracks loaded · original timing preserved
               </div>
             </div>
           </header>
 
           <div className="mx-auto max-w-[1600px] px-3 pb-16 pt-2 sm:px-6">
-            <div className="rounded-2xl border border-violet-300/15 bg-gradient-to-r from-violet-500/[0.07] to-orange-500/[0.05] px-4 py-3 text-xs leading-5 text-white/45 sm:px-5">
+            <div className="hidden rounded-2xl border border-violet-300/15 bg-gradient-to-r from-violet-500/[0.07] to-orange-500/[0.05] px-4 py-3 text-xs leading-5 text-white/45 sm:block sm:px-5">
               Full engineering workspace: trim dead space, restore source timing, balance each layer, compare stems, learn the cadence pocket, and send the finished mix back through the Forge.
             </div>
-            <StemSequencer onMixReady={acceptStemMix} initialFiles={stemFiles} />
+            <StemSequencer
+              onMixReady={acceptStemMix}
+              initialFiles={stemFiles}
+              onTrackCountChange={setEngineerTrackCount}
+            />
           </div>
         </div>
       ) : null}
