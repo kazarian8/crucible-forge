@@ -1,5 +1,6 @@
 import "./globals.css";
 import CreditBalance from "../components/CreditBalance";
+import SequencerClipGestureGuard from "../components/SequencerClipGestureGuard";
 import SupportDock from "../components/SupportDock";
 import type { Metadata } from "next";
 import { Gochi_Hand, JetBrains_Mono, Space_Grotesk } from "next/font/google";
@@ -20,6 +21,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en" className={`${spaceGrotesk.variable} ${jetBrainsMono.variable} ${gochiHand.variable}`}>
       <body>
         {children}
+        <SequencerClipGestureGuard />
         <CreditBalance />
         <SupportDock />
       </body>
