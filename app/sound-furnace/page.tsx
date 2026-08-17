@@ -280,6 +280,41 @@ function guidedSettings(prompt: string) {
 
 async function forgeBuffer(input: AudioBuffer, mode: ForgeMode, prompt: string) {
   const sourceStats = analyzeBuffer(input);
+  const ceiling = Math.pow(10, -1 / 20);
+
+  const alreadyMastered = mode === "auto" &&
+    sourceStats.peakDb >= -6 &&
+    sourceStats.rmsDb >= -18 &&
+    sourceStats.rmsDb <= -9 &&
+    sourceStats.crestDb >= 5 &&
+    sourceStats.crestDb <= 18;
+
+  if (alreadyMastered) {
+    const output = new AudioBuffer({
+      length: input.length,
+      numberOfChannels: input.numberOfChannels,
+      sampleRate: input.sampleRate,
+    });
+    let peak = 0;
+    for (let channel = 0; channel < input.numberOfChannels; channel += 1) {
+      const sourceData = input.getChannelData(channel);
+      const outputData = output.getChannelData(channel);
+      for (let index = 0; index < sourceData.length; index += 1) {
+        const sample = Number.isFinite(sourceData[index]) ? sourceData[index] : 0;
+        outputData[index] = sample;
+        peak = Math.max(peak, Math.abs(sample));
+      }
+    }
+    const scale = peak > ceiling ? ceiling / peak : 1;
+    if (scale < 1) {
+      for (let channel = 0; channel < output.numberOfChannels; channel += 1) {
+        const data = output.getChannelData(channel);
+        for (let index = 0; index < data.length; index += 1) data[index] *= scale;
+      }
+    }
+    return output;
+  }
+
   const settings = mode === "guided" ? guidedSettings(prompt) : guidedSettings("clear balanced release ready");
   const context = new OfflineAudioContext(
     input.numberOfChannels,
@@ -308,7 +343,9 @@ async function forgeBuffer(input: AudioBuffer, mode: ForgeMode, prompt: string) 
   compressor.ratio.value = settings.ratio;
   compressor.attack.value = 0.018;
   compressor.release.value = 0.24;
-  makeup.gain.value = Math.pow(10, Math.min(12, settings.targetRms - sourceStats.rmsDb) / 20);
+  const requestedMakeupDb = settings.targetRms - sourceStats.rmsDb;
+  const safeMakeupDb = Math.max(-3, Math.min(mode === "auto" ? 4 : 6, requestedMakeupDb));
+  makeup.gain.value = Math.pow(10, safeMakeupDb / 20);
 
   source.connect(highPass).connect(lowShelf).connect(highShelf).connect(compressor).connect(makeup).connect(context.destination);
   source.start();
@@ -317,9 +354,11 @@ async function forgeBuffer(input: AudioBuffer, mode: ForgeMode, prompt: string) 
   let peak = 0;
   for (let channel = 0; channel < rendered.numberOfChannels; channel += 1) {
     const data = rendered.getChannelData(channel);
-    for (let index = 0; index < data.length; index += 1) peak = Math.max(peak, Math.abs(data[index]));
+    for (let index = 0; index < data.length; index += 1) {
+      if (!Number.isFinite(data[index])) data[index] = 0;
+      peak = Math.max(peak, Math.abs(data[index]));
+    }
   }
-  const ceiling = Math.pow(10, -1 / 20);
   const scale = peak > ceiling ? ceiling / peak : 1;
   if (scale < 1) {
     for (let channel = 0; channel < rendered.numberOfChannels; channel += 1) {
