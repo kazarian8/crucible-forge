@@ -25,6 +25,7 @@ import {
   Settings2,
   Trash2,
   WandSparkles,
+  X,
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
@@ -1541,7 +1542,13 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
                 onClick={() => setSnapEnabled((enabled) => !enabled)}
                 className={`flex items-center gap-1 rounded-lg px-2.5 py-2 text-[9px] font-black uppercase tracking-wider ${snapEnabled ? "bg-orange-400 text-black" : "bg-white/8 text-white/50"}`}
               >
-                <Magnet size={13} /> {snapEnabled ? `Snap ${snapDivision}` : "Free"}
+                <span className="relative grid size-[15px] place-items-center" aria-hidden="true">
+                  <Magnet size={13} />
+                  {!snapEnabled ? (
+                    <X className="absolute" size={15} strokeWidth={3} />
+                  ) : null}
+                </span>
+                {snapEnabled ? `Snap ${snapDivision}` : "Snap off"}
               </button>
               <button type="button" aria-label="Zoom timeline out" onClick={() => setTimelineZoom((zoom) => Math.max(1, zoom - 0.5))} className="grid size-8 place-items-center rounded-lg bg-white/8 text-white/55"><ZoomOut size={14} /></button>
               <span className="min-w-9 text-center font-mono text-[9px] text-white/40">{Math.round(timelineZoom * 100)}%</span>
