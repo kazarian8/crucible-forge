@@ -9,32 +9,38 @@ export default function BillingSuccessPage() {
 
   useEffect(() => {
     let canceled = false;
-    let attempts = 0;
 
-    async function check() {
-      attempts += 1;
-      const response = await fetch("/api/billing/status", {
-        cache: "no-store",
+    async function confirm() {
+      const sessionId = new URLSearchParams(window.location.search).get(
+        "session_id",
+      );
+
+      if (!sessionId) {
+        setMessage("The Stripe checkout reference is missing. Return to Account and try again.");
+        return;
+      }
+
+      const confirmation = await fetch("/api/billing/confirm", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId }),
       });
-      const payload = await response.json();
+      const confirmationPayload = await confirmation.json();
 
       if (canceled) return;
 
-      if (payload.entitled) {
+      if (confirmation.ok && confirmationPayload.confirmed) {
         window.location.replace("/sound-furnace");
         return;
       }
 
-      if (attempts < 15) {
-        window.setTimeout(check, 1000);
-      } else {
-        setMessage(
-          "Stripe confirmed checkout, but access is still syncing. Refresh this page in a moment.",
-        );
-      }
+      setMessage(
+        confirmationPayload.error ??
+          "Stripe confirmed checkout, but access could not be prepared.",
+      );
     }
 
-    void check();
+    void confirm();
 
     return () => {
       canceled = true;
