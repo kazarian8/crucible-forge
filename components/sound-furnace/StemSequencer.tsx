@@ -2,6 +2,7 @@
 
 import {
   ChangeEvent,
+  PointerEvent as ReactPointerEvent,
   useEffect,
   useMemo,
   useRef,
@@ -12,6 +13,7 @@ import {
   Download,
   Layers3,
   LoaderCircle,
+  Magnet,
   Mic,
   Pause,
   Play,
@@ -19,6 +21,8 @@ import {
   Scissors,
   Trash2,
   WandSparkles,
+  ZoomIn,
+  ZoomOut,
 } from "lucide-react";
 
 const MAX_TRACKS = 16;
@@ -88,6 +92,18 @@ type CadenceProfile = {
 type CadenceSuggestion = {
   nudgeSeconds: number;
   confidence: number;
+};
+
+type ClipDrag = {
+  trackId: string;
+  startX: number;
+  startSeconds: number;
+  timelineWidth: number;
+};
+
+type PinchStart = {
+  distance: number;
+  zoom: number;
 };
 
 function dbToGain(value: number) {
@@ -664,6 +680,9 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
   const recorderRef = useRef<MediaRecorder | null>(null);
   const recordingStreamRef = useRef<MediaStream | null>(null);
   const recordingChunksRef = useRef<Blob[]>([]);
+  const clipDragRef = useRef<ClipDrag | null>(null);
+  const pinchPointersRef = useRef(new Map<number, { x: number; y: number }>());
+  const pinchStartRef = useRef<PinchStart | null>(null);
   const [tracks, setTracks] = useState<StemTrack[]>([]);
   const [busy, setBusy] = useState(false);
   const [playing, setPlaying] = useState(false);
@@ -679,6 +698,8 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
   const [playheadSeconds, setPlayheadSeconds] = useState(0);
   const [effectsTrackId, setEffectsTrackId] = useState("");
   const [recording, setRecording] = useState(false);
+  const [snapEnabled, setSnapEnabled] = useState(true);
+  const [timelineZoom, setTimelineZoom] = useState(1);
 
   useEffect(() => {
     previewUrlRef.current = previewUrl;
@@ -719,6 +740,62 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
     setTracks((current) =>
       current.map((track) => (track.id === id ? { ...track, ...patch } : track)),
     );
+  }
+
+  function beginClipDrag(event: ReactPointerEvent<HTMLElement>, track: StemTrack) {
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    const timeline = event.currentTarget.parentElement;
+    clipDragRef.current = {
+      trackId: track.id,
+      startX: event.clientX,
+      startSeconds: track.startSeconds,
+      timelineWidth: Math.max(1, timeline?.clientWidth ?? event.currentTarget.clientWidth),
+    };
+    setSelectedTrackId(track.id);
+  }
+
+  function moveClip(event: ReactPointerEvent<HTMLElement>) {
+    const drag = clipDragRef.current;
+    if (!drag) return;
+    const raw = Math.max(0, drag.startSeconds + ((event.clientX - drag.startX) / drag.timelineWidth) * rulerDuration);
+    const next = snapEnabled ? Math.round(raw / 0.5) * 0.5 : Math.round(raw * 100) / 100;
+    replaceTrack(drag.trackId, { startSeconds: next });
+  }
+
+  function endClipDrag(event: ReactPointerEvent<HTMLElement>) {
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    clipDragRef.current = null;
+  }
+
+  function pinchDistance() {
+    const points = Array.from(pinchPointersRef.current.values());
+    if (points.length < 2) return 0;
+    return Math.hypot(points[1].x - points[0].x, points[1].y - points[0].y);
+  }
+
+  function handleTimelinePointerDown(event: ReactPointerEvent<HTMLDivElement>) {
+    pinchPointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    if (pinchPointersRef.current.size === 2) {
+      pinchStartRef.current = { distance: pinchDistance(), zoom: timelineZoom };
+      clipDragRef.current = null;
+    }
+  }
+
+  function handleTimelinePointerMove(event: ReactPointerEvent<HTMLDivElement>) {
+    if (!pinchPointersRef.current.has(event.pointerId)) return;
+    pinchPointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    if (pinchPointersRef.current.size < 2 || !pinchStartRef.current) return;
+    event.preventDefault();
+    const ratio = pinchDistance() / Math.max(1, pinchStartRef.current.distance);
+    setTimelineZoom(Math.max(1, Math.min(6, pinchStartRef.current.zoom * ratio)));
+  }
+
+  function handleTimelinePointerEnd(event: ReactPointerEvent<HTMLDivElement>) {
+    pinchPointersRef.current.delete(event.pointerId);
+    if (pinchPointersRef.current.size < 2) pinchStartRef.current = null;
   }
 
   function toggleCompare(id: string) {
@@ -1054,11 +1131,30 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
               </button>
               <p className="font-mono text-sm font-black tabular-nums text-orange-100">{formatTime(playheadSeconds)}</p>
             </div>
-            <p className="text-[9px] font-black uppercase tracking-[0.16em] text-white/35">Multitrack timeline · tap a lane to edit</p>
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                aria-pressed={snapEnabled}
+                onClick={() => setSnapEnabled((enabled) => !enabled)}
+                className={`flex items-center gap-1 rounded-lg px-2.5 py-2 text-[9px] font-black uppercase tracking-wider ${snapEnabled ? "bg-orange-400 text-black" : "bg-white/8 text-white/50"}`}
+              >
+                <Magnet size={13} /> {snapEnabled ? "Snap .5s" : "Free"}
+              </button>
+              <button type="button" aria-label="Zoom timeline out" onClick={() => setTimelineZoom((zoom) => Math.max(1, zoom - 0.5))} className="grid size-8 place-items-center rounded-lg bg-white/8 text-white/55"><ZoomOut size={14} /></button>
+              <span className="min-w-9 text-center font-mono text-[9px] text-white/40">{Math.round(timelineZoom * 100)}%</span>
+              <button type="button" aria-label="Zoom timeline in" onClick={() => setTimelineZoom((zoom) => Math.min(6, zoom + 0.5))} className="grid size-8 place-items-center rounded-lg bg-white/8 text-white/55"><ZoomIn size={14} /></button>
+            </div>
           </div>
 
           <div className="overflow-x-auto">
-            <div className="min-w-[760px]">
+            <div
+              className="touch-pan-x"
+              style={{ width: `${Math.round(760 * timelineZoom)}px`, minWidth: "760px" }}
+              onPointerDownCapture={handleTimelinePointerDown}
+              onPointerMoveCapture={handleTimelinePointerMove}
+              onPointerUpCapture={handleTimelinePointerEnd}
+              onPointerCancelCapture={handleTimelinePointerEnd}
+            >
               <div className="grid grid-cols-[150px_1fr] border-b border-white/10 bg-[#0d0b0a]">
                 <div className="border-r border-white/10 px-3 py-2 text-[9px] font-black uppercase tracking-wider text-white/30">Tracks</div>
                 <div className="relative h-9">
@@ -1111,8 +1207,12 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
                         aria-label={`Select ${track.name} on timeline`}
                       >
                         <span
-                          className="absolute inset-y-2 overflow-hidden rounded-md border border-orange-300/30 shadow-[0_4px_18px_rgba(0,0,0,.35)]"
+                          className="absolute inset-y-2 touch-none cursor-grab overflow-hidden rounded-md border border-orange-300/30 shadow-[0_4px_18px_rgba(0,0,0,.35)] active:cursor-grabbing"
                           style={{ left: `${clipLeft}%`, width: `${Math.min(100 - clipLeft, clipWidth)}%` }}
+                          onPointerDown={(event) => beginClipDrag(event, track)}
+                          onPointerMove={moveClip}
+                          onPointerUp={endClipDrag}
+                          onPointerCancel={endClipDrag}
                         >
                           <TimelineWaveform track={track} />
                         </span>
