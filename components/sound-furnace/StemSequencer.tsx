@@ -34,6 +34,9 @@ const MAX_TRACKS = 16;
 const MAX_FILE_BYTES = 250 * 1024 * 1024;
 const SILENCE_THRESHOLD_DB = -52;
 const TRIM_PADDING_SECONDS = 0.025;
+const VOCAL_TRACK_PATTERN = /vocal|vox|voice|harmony|ad[ -]?lib|hook|chorus/i;
+const VOCAL_WAVE_COLOR = "#fb7185";
+const INSTRUMENT_WAVE_COLOR = "#60a5fa";
 const ACCEPTED_EXTENSIONS = new Set([
   "wav",
   "mp3",
@@ -721,7 +724,13 @@ function StemWaveform({ track }: { track: StemTrack }) {
   );
 }
 
-function TimelineWaveform({ track }: { track: StemTrack }) {
+function TimelineWaveform({
+  track,
+  waveColor,
+}: {
+  track: StemTrack;
+  waveColor: string;
+}) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
@@ -745,7 +754,7 @@ function TimelineWaveform({ track }: { track: StemTrack }) {
     const points = Math.max(160, Math.floor(width));
     const block = Math.max(1, Math.floor((endFrame - startFrame) / points));
 
-    context.fillStyle = "rgba(124,45,18,.96)";
+    context.fillStyle = "#27272a";
     context.fillRect(0, 0, width, height);
     context.strokeStyle = "rgba(255,255,255,.12)";
     context.beginPath();
@@ -765,7 +774,7 @@ function TimelineWaveform({ track }: { track: StemTrack }) {
       }
       const x = (point / points) * width;
       const bar = Math.max(1, peak * (height - 10));
-      context.fillStyle = "rgba(255,190,92,.96)";
+      context.fillStyle = waveColor;
       context.fillRect(x, (height - bar) / 2, Math.max(1, width / points), bar);
     }
 
@@ -785,7 +794,7 @@ function TimelineWaveform({ track }: { track: StemTrack }) {
     context.lineTo(fadeOutX, height);
     context.closePath();
     context.fill();
-  }, [track]);
+  }, [track, waveColor]);
 
   return <canvas ref={canvasRef} className="h-full w-full" aria-label={`${track.name} timeline waveform`} />;
 }
@@ -1582,6 +1591,9 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
                   style={{ left: `calc(150px + (100% - 150px) * ${Math.min(1, playheadSeconds / rulerDuration)})` }}
                 />
                 {tracks.map((track, index) => {
+                  const waveColor = VOCAL_TRACK_PATTERN.test(track.name)
+                    ? VOCAL_WAVE_COLOR
+                    : INSTRUMENT_WAVE_COLOR;
                   const inactive = track.muted || (hasSolo && !track.solo);
                   const selected = selectedTrack?.id === track.id;
                   const clipLeft = (track.startSeconds / rulerDuration) * 100;
@@ -1624,7 +1636,7 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
                           onPointerUp={endClipDrag}
                           onPointerCancel={endClipDrag}
                         >
-                          <TimelineWaveform track={track} />
+                          <TimelineWaveform track={track} waveColor={waveColor} />
                         </span>
                       </button>
                     </article>
