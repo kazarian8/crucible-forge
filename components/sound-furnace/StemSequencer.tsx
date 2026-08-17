@@ -810,6 +810,8 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
   const recordingTargetIdRef = useRef("");
   const recordingStartSecondsRef = useRef(0);
   const clipDragRef = useRef<ClipDrag | null>(null);
+  const clipLastTapRef = useRef<{ trackId: string; at: number } | null>(null);
+  const clipArmedPointerRef = useRef<number | null>(null);
   const pinchPointersRef = useRef(new Map<number, { x: number; y: number }>());
   const pinchStartRef = useRef<PinchStart | null>(null);
   const [tracks, setTracks] = useState<StemTrack[]>([]);
@@ -1000,8 +1002,30 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
   }
 
   function beginClipDrag(event: ReactPointerEvent<HTMLElement>, track: StemTrack) {
+    setSelectedTrackId(track.id);
+
+    const now = performance.now();
+    const previousTap = clipLastTapRef.current;
+    const isSecondTap = Boolean(
+      previousTap &&
+      previousTap.trackId === track.id &&
+      now - previousTap.at <= 380
+    );
+
+    if (!isSecondTap) {
+      // First touch only selects/arms this clip. It must never move the audio.
+      clipLastTapRef.current = { trackId: track.id, at: now };
+      clipArmedPointerRef.current = null;
+      clipDragRef.current = null;
+      return;
+    }
+
+    // Only the second tap of the double-tap can unlock movement. The user
+    // must keep this pointer down while dragging; lifting it locks the clip.
     event.preventDefault();
-    event.currentTarget.setPointerCapture(event.pointerId);
+    clipLastTapRef.current = null;
+    clipArmedPointerRef.current = event.pointerId;
+    try { event.currentTarget.setPointerCapture(event.pointerId); } catch {}
     const timeline = event.currentTarget.parentElement;
     clipDragRef.current = {
       trackId: track.id,
@@ -1009,12 +1033,14 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
       startSeconds: track.startSeconds,
       timelineWidth: Math.max(1, timeline?.clientWidth ?? event.currentTarget.clientWidth),
     };
-    setSelectedTrackId(track.id);
+    setStatus("Track unlocked — keep the second tap held and drag left or right.");
   }
 
   function moveClip(event: ReactPointerEvent<HTMLElement>) {
+    if (clipArmedPointerRef.current !== event.pointerId) return;
     const drag = clipDragRef.current;
     if (!drag) return;
+    event.preventDefault();
     const raw = Math.max(0, drag.startSeconds + ((event.clientX - drag.startX) / drag.timelineWidth) * rulerDuration);
     const snapMultipliers: Record<string, number> = { "1/4": 1, "1/8": 0.5, "1/16": 0.25, "1/32": 0.125 };
     const snapSeconds = (60 / projectBpm) * (snapMultipliers[snapDivision] ?? 0.25);
@@ -1026,7 +1052,10 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
-    clipDragRef.current = null;
+    if (clipArmedPointerRef.current === event.pointerId) {
+      clipArmedPointerRef.current = null;
+      clipDragRef.current = null;
+    }
   }
 
   function pinchDistance() {
