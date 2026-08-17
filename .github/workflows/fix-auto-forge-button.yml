@@ -1,0 +1,59 @@
+name: Fix Auto Forge button
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/fix-auto-forge-button.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Make Auto Forge submit immediately
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('app/sound-furnace/page.tsx')
+          s = p.read_text()
+
+          old = '''  async function handleForge(event: FormEvent) {\n    event.preventDefault();\n    if (!file || !buffer) return;\n    if (mode === \"guided\" && prompt.trim().length < 8) {\n      setError(\"Give the guided forge a little more direction—at least 8 characters.\");\n      return;\n    }\n    setBusy(true);\n    setError(\"\");\n    setStatus(\"Heating the furnace… balancing tone, dynamics, and final level.\");\n    try {\n      const forged = await forgeBuffer(buffer, mode, prompt);\n'''
+          new = '''  async function handleForge(event: FormEvent) {\n    event.preventDefault();\n    if (!file || !buffer) return;\n    const submitter = (event.nativeEvent as SubmitEvent).submitter as HTMLButtonElement | null;\n    const requestedMode: ForgeMode = submitter?.value === \"auto\" ? \"auto\" : mode;\n    if (requestedMode === \"guided\" && prompt.trim().length < 8) {\n      setError(\"Give the guided forge a little more direction—at least 8 characters.\");\n      return;\n    }\n    setMode(requestedMode);\n    setBusy(true);\n    setError(\"\");\n    setStatus(requestedMode === \"auto\"\n      ? \"Auto Forge started… balancing tone, dynamics, and final level.\"\n      : \"Heating the furnace… balancing tone, dynamics, and final level.\");\n    try {\n      const forged = await forgeBuffer(buffer, requestedMode, prompt);\n'''
+          if old not in s:
+              raise SystemExit('handleForge block not found')
+          s = s.replace(old, new, 1)
+
+          old2 = '''              <button type=\"button\" onClick={() => setMode(\"auto\")} className={`rounded-lg px-3 py-3 text-sm font-bold ${mode === \"auto\" ? \"bg-orange-500 text-black\" : \"text-white/45\"}`}><Sparkles size={15} className=\"mr-2 inline\" />Auto Forge</button>'''
+          new2 = '''              <button type=\"submit\" value=\"auto\" disabled={!buffer || busy} onClick={() => setMode(\"auto\")} className={`rounded-lg px-3 py-3 text-sm font-bold disabled:opacity-40 ${mode === \"auto\" ? \"bg-orange-500 text-black\" : \"text-white/45\"}`}><Sparkles size={15} className=\"mr-2 inline\" />Auto Forge</button>'''
+          if old2 not in s:
+              raise SystemExit('Auto Forge button not found')
+          s = s.replace(old2, new2, 1)
+          p.write_text(s)
+          PY
+      - name: Validate build
+        run: |
+          npm ci
+          npm run build
+      - name: Commit fix
+        shell: bash
+        run: |
+          if git diff --quiet -- app/sound-furnace/page.tsx; then
+            echo "No changes needed"
+            exit 0
+          fi
+          git config user.name "crucible-forge-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add app/sound-furnace/page.tsx
+          git commit -m "Make Auto Forge button start forging"
+          git push
