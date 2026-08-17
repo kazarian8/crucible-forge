@@ -527,15 +527,20 @@ export default function SoundFurnacePage() {
   async function handleForge(event: FormEvent) {
     event.preventDefault();
     if (!file || !buffer) return;
-    if (mode === "guided" && prompt.trim().length < 8) {
+    const submitter = (event.nativeEvent as SubmitEvent).submitter as HTMLButtonElement | null;
+    const requestedMode: ForgeMode = submitter?.value === "auto" ? "auto" : mode;
+    if (requestedMode === "guided" && prompt.trim().length < 8) {
       setError("Give the guided forge a little more direction—at least 8 characters.");
       return;
     }
+    setMode(requestedMode);
     setBusy(true);
     setError("");
-    setStatus("Heating the furnace… balancing tone, dynamics, and final level.");
+    setStatus(requestedMode === "auto"
+      ? "Auto Forge started… balancing tone, dynamics, and final level."
+      : "Heating the furnace… balancing tone, dynamics, and final level.");
     try {
-      const forged = await forgeBuffer(buffer, mode, prompt);
+      const forged = await forgeBuffer(buffer, requestedMode, prompt);
       const blob = encodeWav24(forged);
       const url = URL.createObjectURL(blob);
       const baseName = file.name.replace(/\.[^.]+$/, "");
@@ -701,7 +706,7 @@ export default function SoundFurnacePage() {
             )}
 
             <div className="mt-5 grid grid-cols-2 rounded-xl border border-white/10 bg-black/30 p-1">
-              <button type="button" onClick={() => setMode("auto")} className={`rounded-lg px-3 py-3 text-sm font-bold ${mode === "auto" ? "bg-orange-500 text-black" : "text-white/45"}`}><Sparkles size={15} className="mr-2 inline" />Auto Forge</button>
+              <button type="submit" value="auto" disabled={!buffer || busy} onClick={() => setMode("auto")} className={`rounded-lg px-3 py-3 text-sm font-bold disabled:opacity-40 ${mode === "auto" ? "bg-orange-500 text-black" : "text-white/45"}`}><Sparkles size={15} className="mr-2 inline" />Auto Forge</button>
               <button type="button" onClick={() => setMode("guided")} className={`rounded-lg px-3 py-3 text-sm font-bold ${mode === "guided" ? "bg-orange-500 text-black" : "text-white/45"}`}><Gauge size={15} className="mr-2 inline" />Prompt Guided</button>
             </div>
 
