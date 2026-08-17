@@ -1,0 +1,39 @@
+name: Apply sequencer gesture fix
+
+'on':
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/apply-sequencer-gesture-fix.yml'
+      - '.github/scripts/fix-sequencer-gesture.js'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Apply gesture fix
+        run: node .github/scripts/fix-sequencer-gesture.js
+      - name: Validate app build
+        run: npm ci && npm run build
+      - name: Commit sequencer fix
+        shell: bash
+        run: |
+          if git diff --quiet -- components/sound-furnace/StemSequencer.tsx; then
+            echo 'No sequencer changes needed.'
+            exit 0
+          fi
+          git config user.name 'crucible-forge-bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git add components/sound-furnace/StemSequencer.tsx
+          git commit -m 'Require double-tap hold to move sequencer clips'
+          git push
