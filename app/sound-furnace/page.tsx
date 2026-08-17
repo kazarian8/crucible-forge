@@ -204,6 +204,69 @@ function encodeWav24(buffer: AudioBuffer) {
   return new Blob([output], { type: "audio/wav" });
 }
 
+function encodeWav16(buffer: AudioBuffer) {
+  const channels = Math.min(2, buffer.numberOfChannels);
+  const bytesPerSample = 2;
+  const dataLength = buffer.length * channels * bytesPerSample;
+  const output = new ArrayBuffer(44 + dataLength);
+  const view = new DataView(output);
+
+  function writeText(offset: number, value: string) {
+    for (let index = 0; index < value.length; index += 1) {
+      view.setUint8(offset + index, value.charCodeAt(index));
+    }
+  }
+
+  writeText(0, "RIFF");
+  view.setUint32(4, 36 + dataLength, true);
+  writeText(8, "WAVE");
+  writeText(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, channels, true);
+  view.setUint32(24, buffer.sampleRate, true);
+  view.setUint32(28, buffer.sampleRate * channels * bytesPerSample, true);
+  view.setUint16(32, channels * bytesPerSample, true);
+  view.setUint16(34, 16, true);
+  writeText(36, "data");
+  view.setUint32(40, dataLength, true);
+
+  let offset = 44;
+  for (let frame = 0; frame < buffer.length; frame += 1) {
+    for (let channel = 0; channel < channels; channel += 1) {
+      const sample = Math.max(-1, Math.min(1, buffer.getChannelData(channel)[frame]));
+      const integer = sample < 0 ? Math.round(sample * 0x8000) : Math.round(sample * 0x7fff);
+      view.setInt16(offset, integer, true);
+      offset += bytesPerSample;
+    }
+  }
+
+  return new Blob([output], { type: "audio/wav" });
+}
+
+async function createStemSourceFile(buffer: AudioBuffer, originalName: string) {
+  const sampleRate = Math.min(44_100, buffer.sampleRate);
+  const channels = Math.min(2, buffer.numberOfChannels);
+  let source = buffer;
+
+  if (buffer.sampleRate !== sampleRate || buffer.numberOfChannels !== channels) {
+    const context = new OfflineAudioContext(
+      channels,
+      Math.ceil(buffer.duration * sampleRate),
+      sampleRate,
+    );
+    const node = context.createBufferSource();
+    node.buffer = buffer;
+    node.connect(context.destination);
+    node.start();
+    source = await context.startRendering();
+  }
+
+  const blob = encodeWav16(source);
+  const baseName = originalName.replace(/\.[^.]+$/, "");
+  return new File([blob], `${baseName}-stem-source.wav`, { type: "audio/wav" });
+}
+
 function guidedSettings(prompt: string) {
   const direction = prompt.toLowerCase();
   return {
@@ -483,7 +546,7 @@ export default function SoundFurnacePage() {
       });
       playForgeFinish();
       try {
-        await separateIntoStems(file);
+        await separateIntoStems(file, buffer);
       } catch (caught) {
         setError(caught instanceof Error ? caught.message : "Stem separation could not finish.");
         setStatus("Forge complete and downloadable. Stem separation can be retried.");
@@ -496,16 +559,22 @@ export default function SoundFurnacePage() {
     }
   }
 
-  async function separateIntoStems(candidate: File) {
+  async function separateIntoStems(candidate: File, decoded: AudioBuffer | null = buffer) {
     const durationBasedEstimate = Math.round(45 + (sourceStats?.duration ?? 120) * 0.55);
     setStemEstimate(Math.min(360, Math.max(75, durationBasedEstimate)));
     setStemElapsed(0);
     setSeparatingStems(true);
-    setStatus("Forge complete. Crucible is forging six synchronized stems…");
+    setStatus("Preparing a high-quality stem source on this device…");
 
     try {
+      if (!decoded) throw new Error("Reload the source track before separating stems.");
+      const stemSource = await createStemSourceFile(decoded, candidate.name);
+      if (stemSource.size > 95 * 1024 * 1024) {
+        throw new Error("This track is too long for stem separation. Trim it below roughly nine minutes and retry.");
+      }
+      setStatus("Forge complete. Crucible is forging six synchronized stems…");
       const form = new FormData();
-      form.append("file", candidate, candidate.name);
+      form.append("file", stemSource, stemSource.name);
       const response = await fetch("/api/stem-separation", {
         method: "POST",
         body: form,
@@ -549,20 +618,7 @@ export default function SoundFurnacePage() {
     }
   }
 
-  async function openEngineerMode() {
-    if (stemFiles.length === 0 && file) {
-      setBusy(true);
-      setError("");
-      try {
-        await separateIntoStems(file);
-      } catch (caught) {
-        setError(caught instanceof Error ? caught.message : "Stem separation could not finish.");
-        setStatus("The master is safe. Stem separation can be retried.");
-      } finally {
-        setBusy(false);
-      }
-      return;
-    }
+  function openEngineerMode() {
     setEngineerOpen(true);
     window.setTimeout(() => {
       document.getElementById("engineer-crucible")?.scrollIntoView({
@@ -714,7 +770,7 @@ export default function SoundFurnacePage() {
           </div>
           {engineerOpen && stemFiles.length === 0 ? (
             <div className="mt-5 rounded-2xl border border-violet-300/15 bg-black/25 p-5 text-center text-sm text-white/45">
-              Stem separation is still forging the workstation session. Engineer Mode will open automatically when Track 01 is ready.
+              Engineer Mode is open. Use Add stems to import up to 16 tracks, or run six-stem separation from the Forge.
             </div>
           ) : null}
         </section>
@@ -744,7 +800,7 @@ export default function SoundFurnacePage() {
                       {playing === "result" ? <Square size={13} fill="currentColor" /> : <Play size={13} fill="currentColor" />} {playing === "result" ? "Stop forge" : "Play forge"}
                     </button>
                     <a href={result.url} download={result.name} className="flex items-center justify-center gap-2 rounded-lg bg-orange-500 px-4 py-2 text-xs font-black text-black"><Download size={14} /> Download 24-bit WAV</a>
-                    <button type="button" onClick={() => void openEngineerMode()} disabled={busy} className="flex items-center justify-center gap-2 rounded-lg bg-violet-300 px-4 py-2 text-xs font-black text-violet-950 disabled:opacity-40"><Hammer size={14} /> {busy ? "Separating stems…" : engineerOpen ? "Return to Engineer Mode" : stemFiles.length > 0 ? "Enter Engineer Mode" : "Separate stems + Engineer Mode"}</button>
+                    <button type="button" onClick={() => void openEngineerMode()} disabled={busy} className="flex items-center justify-center gap-2 rounded-lg bg-violet-300 px-4 py-2 text-xs font-black text-violet-950 disabled:opacity-40"><Hammer size={14} /> {engineerOpen ? "Return to Engineer Mode" : stemFiles.length > 0 ? "Enter Engineer Mode" : "Enable Engineer Mode"}</button>
                   </div>
                   <div className="mt-4 flex flex-wrap gap-3 text-[10px] font-bold uppercase tracking-wider text-orange-100/55"><span>Peak {formatDb(result.stats.peakDb)}</span><span>Average {formatDb(result.stats.rmsDb)}</span><span>Dynamics {formatDb(result.stats.crestDb)}</span></div>
                 </div>
@@ -758,7 +814,7 @@ export default function SoundFurnacePage() {
         )}
       </section>
 
-      {engineerOpen && stemFiles.length > 0 ? (
+      {engineerOpen ? (
         <div className="fixed inset-0 z-50 overflow-y-auto bg-[#070605] text-white">
           <header className="sticky top-0 z-20 border-b border-violet-300/15 bg-[#090708]/95 backdrop-blur-xl">
             <div className="mx-auto flex max-w-[1600px] flex-col gap-4 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-7">

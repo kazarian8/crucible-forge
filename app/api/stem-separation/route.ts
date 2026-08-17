@@ -10,7 +10,9 @@ import {
 export const runtime = "nodejs";
 export const maxDuration = 300;
 
-const MAX_FILE_BYTES = 250 * 1024 * 1024;
+// Vercel Functions accept request bodies up to 100 MB. Leave headroom for
+// multipart framing and headers; the browser prepares a 16-bit WAV below this.
+const MAX_FILE_BYTES = 95 * 1024 * 1024;
 const ALLOWED_AUDIO_TYPES = new Set([
   "audio/wav",
   "audio/x-wav",
@@ -76,7 +78,7 @@ export async function POST(request: Request) {
     return Response.json({ error: "Choose an audio file before separating stems." }, { status: 400 });
   }
   if (file.size === 0 || file.size > MAX_FILE_BYTES) {
-    return Response.json({ error: "The audio file is empty or larger than 250 MB." }, { status: 413 });
+    return Response.json({ error: "The stem source is empty or larger than 95 MB." }, { status: 413 });
   }
   if (!ALLOWED_AUDIO_TYPES.has(file.type.toLowerCase())) {
     return Response.json(
