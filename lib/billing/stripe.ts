@@ -1,11 +1,15 @@
 import Stripe from "stripe";
 
+// Price IDs are public identifiers. Keep the verified live Crucible Pro price
+// as a safe fallback so checkout cannot be disabled by a missing Vercel alias.
+const CRUCIBLE_PRO_PRICE_ID = "price_1U0ypKL2Q1z9VIQ1LeXHpmT8";
+
 let stripeClient: Stripe | null = null;
 let stripeClientKey: string | null = null;
 
 export function getBillingConfig() {
   const secretKey = process.env.STRIPE_SECRET_KEY;
-  const priceId = process.env.STRIPE_PRO_PRICE_ID;
+  const priceId = process.env.STRIPE_PRO_PRICE_ID ?? CRUCIBLE_PRO_PRICE_ID;
   const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
 
   return { secretKey, priceId, webhookSecret };
