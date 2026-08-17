@@ -95,7 +95,7 @@ export default async function WinnerDashboardPage() {
           </div>
 
           <a
-            href="/auth/signout"
+            href="/auth/signout?next=/winners/login"
             className="rounded-xl border border-zinc-700 px-4 py-3 text-sm font-bold transition hover:border-orange-500 hover:text-orange-300"
           >
             Sign Out
