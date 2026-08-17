@@ -1,0 +1,151 @@
+name: Fix Auto Forge static
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/fix-auto-forge-static.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Make Auto Forge preserve already-mastered audio
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          p = Path('app/sound-furnace/page.tsx')
+          s = p.read_text()
+          start = s.index('async function forgeBuffer(input: AudioBuffer, mode: ForgeMode, prompt: string) {')
+          end = s.index('\nfunction Waveform(', start)
+
+          replacement = r'''async function forgeBuffer(input: AudioBuffer, mode: ForgeMode, prompt: string) {
+  const sourceStats = analyzeBuffer(input);
+  const ceiling = Math.pow(10, -1 / 20);
+
+  // Auto Forge must never punish a clean, already-mastered source. Material
+  // that is already in a healthy release-ready window bypasses tone shaping,
+  // compression, and makeup gain. We only apply a safety ceiling if needed.
+  const alreadyMastered = mode === "auto" &&
+    sourceStats.peakDb >= -6 &&
+    sourceStats.rmsDb >= -18 &&
+    sourceStats.rmsDb <= -9 &&
+    sourceStats.crestDb >= 5 &&
+    sourceStats.crestDb <= 18;
+
+  if (alreadyMastered) {
+    const output = new AudioBuffer({
+      length: input.length,
+      numberOfChannels: input.numberOfChannels,
+      sampleRate: input.sampleRate,
+    });
+    let peak = 0;
+    for (let channel = 0; channel < input.numberOfChannels; channel += 1) {
+      const sourceData = input.getChannelData(channel);
+      const outputData = output.getChannelData(channel);
+      for (let index = 0; index < sourceData.length; index += 1) {
+        const sample = Number.isFinite(sourceData[index]) ? sourceData[index] : 0;
+        outputData[index] = sample;
+        peak = Math.max(peak, Math.abs(sample));
+      }
+    }
+    const scale = peak > ceiling ? ceiling / peak : 1;
+    if (scale < 1) {
+      for (let channel = 0; channel < output.numberOfChannels; channel += 1) {
+        const data = output.getChannelData(channel);
+        for (let index = 0; index < data.length; index += 1) data[index] *= scale;
+      }
+    }
+    return output;
+  }
+
+  const settings = mode === "guided" ? guidedSettings(prompt) : guidedSettings("clear balanced release ready");
+  const context = new OfflineAudioContext(
+    input.numberOfChannels,
+    input.length,
+    input.sampleRate,
+  );
+  const source = context.createBufferSource();
+  const highPass = context.createBiquadFilter();
+  const lowShelf = context.createBiquadFilter();
+  const highShelf = context.createBiquadFilter();
+  const compressor = context.createDynamicsCompressor();
+  const makeup = context.createGain();
+
+  source.buffer = input;
+  highPass.type = "highpass";
+  highPass.frequency.value = 24;
+  highPass.Q.value = 0.7;
+  lowShelf.type = "lowshelf";
+  lowShelf.frequency.value = 120;
+  lowShelf.gain.value = settings.lowGain;
+  highShelf.type = "highshelf";
+  highShelf.frequency.value = 6800;
+  highShelf.gain.value = settings.highGain;
+  compressor.threshold.value = settings.threshold;
+  compressor.knee.value = 9;
+  compressor.ratio.value = settings.ratio;
+  compressor.attack.value = 0.018;
+  compressor.release.value = 0.24;
+
+  // Cap automatic makeup gain. Large boosts on already-hot program material
+  // can expose codec noise and turn transient edges into audible crackle.
+  const requestedMakeupDb = settings.targetRms - sourceStats.rmsDb;
+  const safeMakeupDb = Math.max(-3, Math.min(mode === "auto" ? 4 : 6, requestedMakeupDb));
+  makeup.gain.value = Math.pow(10, safeMakeupDb / 20);
+
+  source.connect(highPass).connect(lowShelf).connect(highShelf).connect(compressor).connect(makeup).connect(context.destination);
+  source.start();
+  const rendered = await context.startRendering();
+
+  let peak = 0;
+  for (let channel = 0; channel < rendered.numberOfChannels; channel += 1) {
+    const data = rendered.getChannelData(channel);
+    for (let index = 0; index < data.length; index += 1) {
+      if (!Number.isFinite(data[index])) data[index] = 0;
+      peak = Math.max(peak, Math.abs(data[index]));
+    }
+  }
+  const scale = peak > ceiling ? ceiling / peak : 1;
+  if (scale < 1) {
+    for (let channel = 0; channel < rendered.numberOfChannels; channel += 1) {
+      const data = rendered.getChannelData(channel);
+      for (let index = 0; index < data.length; index += 1) data[index] *= scale;
+    }
+  }
+
+  return rendered;
+}
+'''
+
+          s = s[:start] + replacement + s[end:]
+          p.write_text(s)
+          PY
+      - name: Validate build
+        run: |
+          npm ci
+          npm run build
+      - name: Commit fix
+        shell: bash
+        run: |
+          if git diff --quiet -- app/sound-furnace/page.tsx; then
+            echo "No changes needed"
+            exit 0
+          fi
+          git config user.name "crucible-forge-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add app/sound-furnace/page.tsx
+          git commit -m "Protect mastered tracks from Auto Forge overprocessing"
+          git push
