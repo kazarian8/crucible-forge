@@ -71,8 +71,10 @@ export default function AccountPage() {
     }
   }
 
-  const usernameChangeCost = profile?.username ? CREDIT_PRICES.usernameChange : 0;
-  const fontChangeCost = profile && profile.username_font !== usernameFont ? CREDIT_PRICES.usernameFontChange : 0;
+  const firstSetup = !!profile && !profile.username;
+  const usernameChangeCost = profile?.username && profile.username !== username ? CREDIT_PRICES.usernameChange : 0;
+  const fontChangeCost = !firstSetup && profile && profile.username_font !== usernameFont ? CREDIT_PRICES.usernameFontChange : 0;
+  const pendingCost = usernameChangeCost + fontChangeCost;
 
   return (
     <main className="min-h-screen bg-[#080604] px-5 py-12 text-white">
@@ -80,7 +82,7 @@ export default function AccountPage() {
         <div className="rounded-3xl border border-white/10 bg-white/[0.03] p-7">
           <p className="text-xs font-black uppercase tracking-[0.2em] text-orange-300">Crucible identity</p>
           <h1 className="mt-3 text-3xl font-black">Your username.</h1>
-          <p className="mt-3 text-sm leading-6 text-white/50">Your first username is free. Later username changes cost {CREDIT_PRICES.usernameChange} credits. Font-only changes cost {CREDIT_PRICES.usernameFontChange} credits.</p>
+          <p className="mt-3 text-sm leading-6 text-white/50">Your first username and initial font are free. Later username changes cost {CREDIT_PRICES.usernameChange} credits. Font-only changes cost {CREDIT_PRICES.usernameFontChange} credits.</p>
 
           <form onSubmit={saveIdentity} className="mt-6 space-y-4">
             <label className="block">
@@ -102,7 +104,7 @@ export default function AccountPage() {
             </div>
 
             <button type="submit" disabled={loading || !username} className="w-full rounded-xl bg-orange-500 px-5 py-4 font-black text-black disabled:opacity-50">
-              {loading ? "Saving..." : `Save${usernameChangeCost + fontChangeCost ? ` · ${usernameChangeCost + fontChangeCost} credits max` : ""}`}
+              {loading ? "Saving..." : `Save${pendingCost ? ` · ${pendingCost} credits` : " · free"}`}
             </button>
           </form>
         </div>
