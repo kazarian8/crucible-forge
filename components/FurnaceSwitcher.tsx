@@ -7,7 +7,7 @@ import { usePathname } from "next/navigation";
 const FURNACES = [
   { id: "sound", label: "Sound", href: "/sound-furnace", icon: AudioWaveform, live: true },
   { id: "picture", label: "Picture", href: "/picture-furnace", icon: ImageIcon, live: false },
-  { id: "video", label: "Video", href: "/prompt-reforge", icon: Video, live: true },
+  { id: "video", label: "Video DNA Furnace", href: "/prompt-reforge", icon: Video, live: true },
   { id: "code", label: "Code", href: "/code-furnace", icon: Braces, live: false },
 ] as const;
 
