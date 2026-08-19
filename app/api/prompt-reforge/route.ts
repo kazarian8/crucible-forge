@@ -14,12 +14,11 @@ export const runtime = "nodejs";
 export const maxDuration = 60;
 
 const REFORGE_INSTRUCTIONS = `
-You are Prompt Reforge, a professional video reverse-engineering system.
+You are the intelligence engine inside Crucible Video DNA Furnace, a professional video reverse-engineering and reconstruction system.
 
 Analyze the supplied chronological video frames as one continuous video.
 
-Reconstruct the video's production logic so another creator can produce a
-visually similar but original video.
+Reconstruct the video's production logic so another creator can produce a visually similar but original video.
 
 Analyze the concept, subjects, environment, composition, camera movement,
 lighting, color grading, scene sequence, transitions, effects, typography,
@@ -32,6 +31,20 @@ Create:
 - A negative prompt
 - An editing recipe
 - Continuity rules
+- An evidence-based confidence report
+
+CONFIDENCE RULES:
+- Confidence must be earned from evidence, never invented as decoration.
+- Separate measured facts, detected patterns, AI inference, and external source matches.
+- In this request, duration and aspect ratio are measured browser metadata supplied by Crucible.
+- The chronological frames are direct visual evidence, but interpretations of camera, lighting, editing, authorship, origin, AI generation, or intent remain AI inference unless independently measured.
+- Never label an item as "measured" unless the supplied request explicitly provides that measurement.
+- Never label an item as "source_match" unless Crucible explicitly supplies an external match. No external source search is included in this request.
+- Do not claim to know the original creator, original upload, platform of origin, or whether a video is definitively original from frames alone.
+- When origin/authorship evidence is unavailable, state that clearly in limitations and keep the related evidence signal unavailable.
+- Conflicting or weak visual clues must lower confidence.
+- Explain what additional evidence would raise confidence, such as full media metadata, audio fingerprinting, perceptual hashes, compression analysis, provenance credentials, or verified earlier source matches.
+- Use conservative scores. A high or very-high score requires multiple strong, consistent evidence signals.
 
 Do not identify private individuals. Do not copy logos, protected characters
 or a creator's exact signature style. Describe general production techniques.
@@ -114,11 +127,16 @@ export async function POST(request: NextRequest) {
     }));
 
     const videoInformation = `
+MEASURED BY CRUCIBLE:
 Video duration: ${body.duration ?? "unknown"} seconds
 Aspect ratio: ${body.aspectRatio ?? "unknown"}
+Frame evidence count: ${body.frames.length}
+
+USER-SUPPLIED CONTEXT:
 Creator notes: ${body.userNotes?.trim() || "None supplied"}
 
 The images are chronological frames extracted at evenly spaced intervals.
+No external source-match, audio-fingerprint, provenance, codec, bitrate, or original-upload evidence is included in this request.
 `;
 
     let reservation;
