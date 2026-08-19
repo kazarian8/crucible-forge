@@ -14,6 +14,84 @@ export const promptReforgeSchema = {
         "A concise explanation of the video's overall concept and production style.",
     },
 
+    confidence: {
+      type: "object",
+      additionalProperties: false,
+      description:
+        "Confidence in the AI-derived Video DNA analysis. This must never claim measured metadata or source matches that were not actually supplied.",
+      properties: {
+        overall_score: {
+          type: "integer",
+          minimum: 0,
+          maximum: 100,
+          description:
+            "Overall confidence from 0-100 based only on the available evidence. Be conservative when evidence is incomplete.",
+        },
+        band: {
+          type: "string",
+          enum: ["low", "medium", "high", "very_high"],
+          description:
+            "Human-readable confidence band corresponding to the overall score.",
+        },
+        explanation: {
+          type: "string",
+          description:
+            "Short explanation of why the confidence is at this level and what would raise it.",
+        },
+        evidence: {
+          type: "array",
+          description:
+            "Individual evidence signals used to support, limit, or conflict with the analysis.",
+          items: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              signal: {
+                type: "string",
+                description: "Name of the evidence signal.",
+              },
+              source: {
+                type: "string",
+                enum: ["measured", "detected", "ai_inference", "source_match"],
+                description:
+                  "Where the evidence came from. Use measured or source_match only when such evidence was explicitly supplied.",
+              },
+              score: {
+                type: "integer",
+                minimum: 0,
+                maximum: 100,
+                description: "Confidence for this individual evidence signal.",
+              },
+              status: {
+                type: "string",
+                enum: ["supporting", "neutral", "conflicting", "unavailable"],
+                description: "How this signal affects the analysis.",
+              },
+              detail: {
+                type: "string",
+                description:
+                  "Concise evidence detail. Clearly say when a signal was unavailable or inferred.",
+              },
+            },
+            required: ["signal", "source", "score", "status", "detail"],
+          },
+        },
+        limitations: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            "Missing evidence or limitations that prevent stronger conclusions, especially authorship or origin claims.",
+        },
+      },
+      required: [
+        "overall_score",
+        "band",
+        "explanation",
+        "evidence",
+        "limitations",
+      ],
+    },
+
     visual_dna: {
       type: "object",
       additionalProperties: false,
@@ -246,6 +324,7 @@ export const promptReforgeSchema = {
   required: [
     "title",
     "summary",
+    "confidence",
     "visual_dna",
     "master_prompt",
     "scenes",
