@@ -38,6 +38,14 @@ function parseDataUrl(dataUrl: string) {
   return { mime, buffer, ext };
 }
 
+export async function GET() {
+  return NextResponse.json({
+    service: "picture-furnace",
+    ready: Boolean(process.env.OPENAI_API_KEY),
+    model: "gpt-image-1",
+  });
+}
+
 export async function POST(request: NextRequest) {
   try {
     if (!process.env.OPENAI_API_KEY) {
