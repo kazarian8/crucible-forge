@@ -29,7 +29,7 @@ const PRESETS: Record<string, string> = {
 };
 
 function parseDataUrl(dataUrl: string) {
-  const match = dataUrl.match(/^data:(image\/(?:png|jpeg|webp));base64,(.+)$/s);
+  const match = dataUrl.match(/^data:(image\/(?:png|jpeg|webp));base64,([\s\S]+)$/);
   if (!match) throw new Error("Unsupported image format. Use PNG, JPEG or WebP.");
   const mime = match[1];
   const buffer = Buffer.from(match[2], "base64");
