@@ -1,4 +1,4 @@
-import OpenAI from "openai";
+import OpenAI, { toFile } from "openai";
 import { NextRequest, NextResponse } from "next/server";
 
 export const runtime = "nodejs";
@@ -63,7 +63,7 @@ export async function POST(request: NextRequest) {
     const requestedEdit = preset ?? body.customPrompt?.trim() ?? body.command.trim();
     const removeBackground = body.command === "Remove Background";
 
-    const image = new File([buffer], `picture-furnace-input.${ext}`, { type: mime });
+    const image = await toFile(buffer, `picture-furnace-input.${ext}`, { type: mime });
     const result = await openai.images.edit({
       model: "gpt-image-1",
       image,
