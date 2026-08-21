@@ -42,15 +42,10 @@ export async function proxy(request: NextRequest) {
   const authEndpoint = pathname.startsWith("/auth/");
   const switchingAccount = pathname === LOGIN_ROUTE && searchParams.get("switch") === "1";
 
-  // Never refresh/inspect browser Supabase cookies on login/signup pages OR on
-  // /auth/* handlers. Those handlers intentionally establish/clear sessions.
-  // Intercepting /auth/login here caused stale refresh tokens to fail with 503
-  // before the clean password login route could run.
+  // Login/signup and /auth/* establish or clear sessions themselves.
   if (authPageRoute || authEndpoint) return NextResponse.next({ request });
 
   let response = NextResponse.next({ request });
-  const hostname = (request.headers.get("x-forwarded-host") ?? request.nextUrl.hostname).split(",")[0].trim().split(":")[0].toLowerCase();
-  const sharedCookieDomain = hostname === "crucibleforge.org" || hostname === "www.crucibleforge.org" ? ".crucibleforge.org" : undefined;
 
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -66,7 +61,10 @@ export async function proxy(request: NextRequest) {
       setAll(cookiesToSet) {
         cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value));
         response = NextResponse.next({ request });
-        cookiesToSet.forEach(({ name, value, options }) => response.cookies.set(name, value, sharedCookieDomain ? { ...options, domain: sharedCookieDomain } : options));
+        // Keep refreshed sessions host-only. Sharing the same Supabase cookie
+        // name across host and parent-domain scopes can make Safari send two
+        // refresh tokens and create a login loop.
+        cookiesToSet.forEach(({ name, value, options }) => response.cookies.set(name, value, { ...options, domain: undefined }));
       },
     },
   });
@@ -80,7 +78,7 @@ export async function proxy(request: NextRequest) {
   }
 
   const requestedRoute = `${pathname}${request.nextUrl.search}`;
-  if (authenticatedRoute && !userId) return redirectWithNext(request, LOGIN_ROUTE, requestedRoute, undefined, response);
+  if (authenticatedRoute && !userId) return redirectWithNext(request, LOGIN_ROUTE, requestedRoute, "session", response);
 
   let entitled = false;
   if (userId && authenticatedRoute) {
