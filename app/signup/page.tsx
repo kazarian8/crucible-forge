@@ -106,10 +106,11 @@ export default function SignupPage() {
 
   return (
     <main className="flex min-h-screen items-center justify-center bg-[#080604] px-5 py-12 text-white">
-      <section className="w-full max-w-md rounded-3xl border border-orange-300/20 bg-black/70 p-7">
+      <section className="w-full max-w-md rounded-3xl border border-orange-300/20 bg-black/70 p-7 pb-32">
         <p className="text-xs font-black uppercase tracking-[0.2em] text-orange-300">Verified access only</p>
         <h1 className="mt-4 text-3xl font-black">Create your Crucible account.</h1>
         <p className="mt-3 text-sm leading-6 text-white/55">Confirm your email before the account can be used. Unverified signups do not get Forge access.</p>
+        <a href="/login" className="mt-5 block rounded-xl border border-orange-300/30 bg-orange-400/10 px-5 py-3 text-center text-sm font-black text-orange-100">Already have an account? Sign in</a>
         <form onSubmit={handleSubmit} className="mt-7 space-y-4">
           <div aria-hidden="true" className="absolute -left-[9999px] h-px w-px overflow-hidden">
             <label>Website<input tabIndex={-1} autoComplete="off" value={website} onChange={(e) => setWebsite(e.target.value)} /></label>
@@ -138,7 +139,7 @@ export default function SignupPage() {
           <button type="submit" disabled={!configured || loading || !email || !password || !confirmation || usernameStatus !== "available"} className="w-full rounded-xl bg-gradient-to-r from-orange-600 to-amber-400 px-5 py-4 font-black text-black disabled:opacity-50">{loading ? "Creating account..." : "Create account"}</button>
         </form>
         {message ? <p role={isError ? "alert" : "status"} className={`mt-4 rounded-xl border p-3 text-sm ${isError ? "border-red-300/20 text-red-100" : "border-emerald-300/20 text-emerald-100"}`}>{message}</p> : null}
-        <a href="/login" className="mt-6 block text-center text-sm text-white/45">Already verified? Sign in</a>
+        <a href="/login" className="mt-6 block rounded-xl border border-white/10 px-5 py-3 text-center text-sm font-bold text-white/70">Already verified? Sign in</a>
       </section>
     </main>
   );
