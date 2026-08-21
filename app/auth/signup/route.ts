@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "../../../lib/supabase/server";
+import { createAdminClient } from "../../../lib/supabase/admin";
 
 function getClientIp(request: NextRequest) {
   return (
@@ -28,48 +29,28 @@ export async function POST(request: NextRequest) {
     const startedAt = Number(body.startedAt || 0);
     const now = Date.now();
 
-    // Honeypot: real users never see or fill this field.
-    if (body.website) {
-      return NextResponse.json({ error: "blocked" }, { status: 400 });
-    }
-
-    // Bots commonly submit instantly. Require a small human interaction window.
+    if (body.website) return NextResponse.json({ error: "blocked" }, { status: 400 });
     if (!startedAt || now - startedAt < 2500 || now - startedAt > 30 * 60 * 1000) {
       return NextResponse.json({ error: "blocked" }, { status: 400 });
     }
-
-    if (!email || !password || !/^[A-Za-z0-9_]{3,24}$/.test(username) || password.length < 12) {
+    if (!email || !password || !/^[A-Za-z0-9_]{3,24}$/.test(username) || password.length < 12 || password.length > 128) {
       return NextResponse.json({ error: "invalid-input" }, { status: 400 });
     }
 
-    const supabase = await createClient();
+    const admin = createAdminClient();
     const ip = getClientIp(request);
-
-    const { data: guardData, error: guardError } = await supabase.rpc("consume_signup_attempt", {
-      p_ip: ip,
-      p_email: email,
-    });
-
-    if (guardError) {
-      return NextResponse.json({ error: "service-unavailable" }, { status: 503 });
-    }
+    const { data: guardData, error: guardError } = await admin.rpc("consume_signup_attempt", { p_ip: ip, p_email: email });
+    if (guardError) return NextResponse.json({ error: "service-unavailable" }, { status: 503 });
 
     const guard = Array.isArray(guardData) ? guardData[0] : guardData;
     if (guard && guard.allowed === false) {
-      return NextResponse.json(
-        { error: "rate-limited", retryAfter: guard.retry_after_seconds ?? 900 },
-        { status: 429 },
-      );
+      return NextResponse.json({ error: "rate-limited" }, { status: 429, headers: { "Retry-After": "900" } });
     }
 
-    const { data: usernameAvailable, error: usernameError } = await supabase.rpc("username_available", {
-      p_username: username,
-    });
+    const { data: usernameAvailable, error: usernameError } = await admin.rpc("username_available", { p_username: username });
+    if (usernameError || !usernameAvailable) return NextResponse.json({ error: "username-unavailable" }, { status: 409 });
 
-    if (usernameError || !usernameAvailable) {
-      return NextResponse.json({ error: "username-taken" }, { status: 409 });
-    }
-
+    const supabase = await createClient();
     const origin = request.nextUrl.origin;
     const callback = new URL("/auth/callback", origin);
     const safeNext = body.next?.startsWith("/") && !body.next.startsWith("//") ? body.next : "/subscribe";
@@ -78,26 +59,17 @@ export async function POST(request: NextRequest) {
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
-      options: {
-        emailRedirectTo: callback.toString(),
-        data: { username, username_font: usernameFont },
-      },
+      options: { emailRedirectTo: callback.toString(), data: { username, username_font: usernameFont } },
     });
 
     if (error) {
       const lower = error.message.toLowerCase();
       const status = lower.includes("rate") ? 429 : 400;
-      return NextResponse.json({ error: error.message }, { status });
+      return NextResponse.json({ error: status === 429 ? "rate-limited" : "signup-failed" }, { status });
     }
+    if (data.user && data.user.identities?.length === 0) return NextResponse.json({ error: "signup-failed" }, { status: 409 });
 
-    if (data.user && data.user.identities?.length === 0) {
-      return NextResponse.json({ error: "email-in-use" }, { status: 409 });
-    }
-
-    return NextResponse.json(
-      { ok: true, pendingVerification: !data.session },
-      { headers: { "Cache-Control": "private, no-store" } },
-    );
+    return NextResponse.json({ ok: true, pendingVerification: !data.session }, { headers: { "Cache-Control": "private, no-store" } });
   } catch {
     return NextResponse.json({ error: "service-unavailable" }, { status: 503 });
   }
