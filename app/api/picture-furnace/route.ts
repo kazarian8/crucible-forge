@@ -1,5 +1,4 @@
 import OpenAI, { toFile } from "openai";
-import sharp from "sharp";
 import { NextRequest, NextResponse } from "next/server";
 
 export const runtime = "nodejs";
@@ -32,18 +31,11 @@ const PRESETS: Record<string, string> = {
 function parseDataUrl(dataUrl: string) {
   const match = dataUrl.match(/^data:(image\/(?:png|jpeg|webp));base64,([\s\S]+)$/);
   if (!match) throw new Error("Unsupported image format. Use PNG, JPEG or WebP.");
+  const mime = match[1];
   const buffer = Buffer.from(match[2], "base64");
   if (buffer.byteLength > 12 * 1024 * 1024) throw new Error("Image is too large. Maximum upload is 12 MB.");
-  return buffer;
-}
-
-async function normalizeForOpenAI(buffer: Buffer) {
-  return sharp(buffer, { failOn: "none" })
-    .rotate()
-    .toColourspace("srgb")
-    .ensureAlpha()
-    .png({ compressionLevel: 6 })
-    .toBuffer();
+  const ext = mime === "image/jpeg" ? "jpg" : mime.split("/")[1];
+  return { mime, buffer, ext };
 }
 
 export async function GET() {
@@ -51,7 +43,6 @@ export async function GET() {
     service: "picture-furnace",
     ready: Boolean(process.env.OPENAI_API_KEY),
     model: "gpt-image-1",
-    normalization: "srgb-rgba-png",
   });
 }
 
@@ -66,14 +57,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "An image and command are required." }, { status: 400 });
     }
 
-    const rawBuffer = parseDataUrl(body.image);
-    const normalizedBuffer = await normalizeForOpenAI(rawBuffer);
+    const { mime, buffer, ext } = parseDataUrl(body.image);
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
     const preset = PRESETS[body.command];
     const requestedEdit = preset ?? body.customPrompt?.trim() ?? body.command.trim();
     const removeBackground = body.command === "Remove Background";
 
-    const image = await toFile(normalizedBuffer, "picture-furnace-input.png", { type: "image/png" });
+    const image = await toFile(buffer, `picture-furnace-input.${ext}`, { type: mime });
     const result = await openai.images.edit({
       model: "gpt-image-1",
       image,
