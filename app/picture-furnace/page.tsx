@@ -28,12 +28,42 @@ const PRIMARY = ["Enhance Natural", "Enhance Blurry Image", "Enhance Beauty", "R
 
 type ViewMode = "result" | "before-after";
 
-function readAsDataUrl(file: File) {
+function normalizeImageFile(file: File) {
   return new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result));
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+
+    img.onload = () => {
+      try {
+        const maxSide = 3072;
+        const scale = Math.min(1, maxSide / Math.max(img.naturalWidth, img.naturalHeight));
+        const width = Math.max(1, Math.round(img.naturalWidth * scale));
+        const height = Math.max(1, Math.round(img.naturalHeight * scale));
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d", { alpha: false });
+        if (!ctx) throw new Error("Image conversion is unavailable in this browser.");
+
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(0, 0, width, height);
+        ctx.drawImage(img, 0, 0, width, height);
+        const data = canvas.toDataURL("image/jpeg", 0.95);
+        if (!data.startsWith("data:image/jpeg;base64,")) throw new Error("Image conversion failed.");
+        resolve(data);
+      } catch (error) {
+        reject(error);
+      } finally {
+        URL.revokeObjectURL(url);
+      }
+    };
+
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("This image could not be decoded. Try saving it as JPEG or PNG first."));
+    };
+
+    img.src = url;
   });
 }
 
@@ -72,14 +102,22 @@ export default function PictureFurnacePage() {
     const file = event.target.files?.[0];
     if (!file) return;
     if (!file.type.startsWith("image/")) return setError("Choose an image file.");
-    if (file.size > 12 * 1024 * 1024) return setError("Maximum upload is 12 MB.");
-    const data = await readAsDataUrl(file);
-    setOriginal(data);
-    setHistory([data]);
-    setHistoryIndex(0);
-    setViewMode("result");
+    if (file.size > 20 * 1024 * 1024) return setError("Maximum source image is 20 MB.");
+
+    setBusy(true);
     setError("");
-    event.target.value = "";
+    try {
+      const data = await normalizeImageFile(file);
+      setOriginal(data);
+      setHistory([data]);
+      setHistoryIndex(0);
+      setViewMode("result");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "The image could not be prepared.");
+    } finally {
+      setBusy(false);
+      event.target.value = "";
+    }
   }
 
   function pushHistory(next: string) {
@@ -157,7 +195,7 @@ export default function PictureFurnacePage() {
                   <div>
                     <div className="mx-auto grid size-16 place-items-center rounded-2xl bg-orange-500/10 text-orange-300"><Upload size={28}/></div>
                     <p className="mt-5 text-xl font-black">Load an image</p>
-                    <p className="mt-2 text-sm text-white/40">PNG, JPEG or WebP · up to 12 MB</p>
+                    <p className="mt-2 text-sm text-white/40">PNG, JPEG, WebP or phone photo · up to 20 MB</p>
                   </div>
                 </button>
               ) : (
@@ -236,7 +274,7 @@ export default function PictureFurnacePage() {
           </aside>
         </div>
 
-        <input ref={inputRef} onChange={onUpload} type="file" accept="image/png,image/jpeg,image/webp" className="hidden" />
+        <input ref={inputRef} onChange={onUpload} type="file" accept="image/*" className="hidden" />
       </section>
     </main>
   );
