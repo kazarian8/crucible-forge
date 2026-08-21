@@ -2,7 +2,7 @@ import OpenAI, { toFile } from "openai";
 import { NextRequest, NextResponse } from "next/server";
 
 export const runtime = "nodejs";
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 const SYSTEM_RULE = "Change only what the user requests. Preserve every other visible detail, subject, composition, identity cue, lighting relationship, and object as closely as possible.";
 
@@ -58,7 +58,7 @@ export async function POST(request: NextRequest) {
     }
 
     const { mime, buffer, ext } = parseDataUrl(body.image);
-    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY, timeout: 240_000, maxRetries: 1 });
     const preset = PRESETS[body.command];
     const requestedEdit = preset ?? body.customPrompt?.trim() ?? body.command.trim();
     const removeBackground = body.command === "Remove Background";
