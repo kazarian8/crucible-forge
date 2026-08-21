@@ -4,17 +4,10 @@ import { createAdminClient } from "../../../lib/supabase/admin";
 
 type PendingCookie = { name: string; value: string; options: CookieOptions };
 
-function sharedDomain(request: NextRequest) {
-  const hostname = (request.headers.get("x-forwarded-host") ?? request.nextUrl.hostname)
-    .split(",")[0]
-    .trim()
-    .split(":")[0]
-    .toLowerCase();
-
-  return hostname === "crucibleforge.org" || hostname === "www.crucibleforge.org"
-    ? ".crucibleforge.org"
-    : undefined;
-}
+type UserSummary = {
+  email?: string | null;
+  email_confirmed_at?: string | null;
+};
 
 function getClientIp(request: NextRequest) {
   return (
@@ -22,6 +15,22 @@ function getClientIp(request: NextRequest) {
     request.headers.get("x-real-ip") ||
     "unknown"
   );
+}
+
+async function findUserByEmail(email: string): Promise<UserSummary | null | undefined> {
+  try {
+    const admin = createAdminClient();
+    for (let page = 1; page <= 10; page += 1) {
+      const { data, error } = await admin.auth.admin.listUsers({ page, perPage: 1000 });
+      if (error) return undefined;
+      const found = data.users.find((user) => user.email?.toLowerCase() === email);
+      if (found) return found;
+      if (data.users.length < 1000) return null;
+    }
+    return null;
+  } catch {
+    return undefined;
+  }
 }
 
 export async function POST(request: NextRequest) {
@@ -46,24 +55,23 @@ export async function POST(request: NextRequest) {
       throw new Error("Supabase environment variables are missing.");
     }
 
-    // The custom abuse guard is defense in depth. It must never turn an
-    // admin-key/RPC outage into a site-wide login outage. Supabase Auth still
-    // applies its own rate limits if this guard is temporarily unavailable.
-    let guardData: unknown = null;
+    // Abuse protection is defense-in-depth. If its admin key/RPC is unavailable,
+    // password authentication must still work.
     try {
       const admin = createAdminClient();
       const guardResult = await admin.rpc("consume_login_attempt", {
         p_ip: getClientIp(request),
         p_email: email,
       });
-
+      const guard = Array.isArray(guardResult.data) ? guardResult.data[0] : guardResult.data;
+      if (!guardResult.error && guard && typeof guard === "object" && "allowed" in guard && (guard as { allowed?: boolean }).allowed === false) {
+        return NextResponse.json(
+          { error: "rate-limited" },
+          { status: 429, headers: { "Cache-Control": "private, no-store", "Retry-After": "900" } },
+        );
+      }
       if (guardResult.error) {
-        console.warn("Login abuse guard unavailable", {
-          code: guardResult.error.code,
-          message: guardResult.error.message,
-        });
-      } else {
-        guardData = guardResult.data;
+        console.warn("Login abuse guard unavailable", { message: guardResult.error.message });
       }
     } catch (guardFailure) {
       console.warn("Login abuse guard failed open", {
@@ -71,27 +79,7 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    const guard = Array.isArray(guardData) ? guardData[0] : guardData;
-    if (
-      guard &&
-      typeof guard === "object" &&
-      "allowed" in guard &&
-      (guard as { allowed?: boolean }).allowed === false
-    ) {
-      return NextResponse.json(
-        { error: "rate-limited" },
-        {
-          status: 429,
-          headers: {
-            "Cache-Control": "private, no-store",
-            "Retry-After": "900",
-          },
-        },
-      );
-    }
-
-    // Start from a clean auth state. /auth/* is excluded from the proxy, so an
-    // expired browser refresh token cannot be consumed before password auth.
+    // Authenticate without reading any stale browser session.
     const pendingCookies: PendingCookie[] = [];
     const supabase = createServerClient(supabaseUrl, supabaseKey, {
       cookies: {
@@ -106,10 +94,17 @@ export async function POST(request: NextRequest) {
 
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) {
-      return NextResponse.json(
-        { error: "invalid-credentials" },
-        { status: 401, headers: { "Cache-Control": "private, no-store" } },
-      );
+      const account = await findUserByEmail(email);
+      if (account === null) {
+        return NextResponse.json({ error: "account-not-found" }, { status: 404, headers: { "Cache-Control": "private, no-store" } });
+      }
+      if (account && !account.email_confirmed_at) {
+        return NextResponse.json({ error: "email-not-verified" }, { status: 403, headers: { "Cache-Control": "private, no-store" } });
+      }
+      if (account) {
+        return NextResponse.json({ error: "wrong-password" }, { status: 401, headers: { "Cache-Control": "private, no-store" } });
+      }
+      return NextResponse.json({ error: "invalid-credentials" }, { status: 401, headers: { "Cache-Control": "private, no-store" } });
     }
 
     const response = NextResponse.json(
@@ -117,42 +112,30 @@ export async function POST(request: NextRequest) {
       { headers: { "Cache-Control": "private, no-store" } },
     );
 
-    const domain = sharedDomain(request);
-
-    // Clear stale Supabase cookies first, including both host-only and shared
-    // crucibleforge.org variants. Then let @supabase/ssr write its native cookie
-    // format instead of manually serializing the session.
+    // Remove every stale auth cookie visible on this host and remove the old
+    // shared-domain variants. Install the fresh session as host-only cookies so
+    // Safari cannot send two cookies with the same Supabase name.
     const staleNames = new Set(
       request.cookies
         .getAll()
         .map(({ name }) => name)
         .filter((name) => name.startsWith("sb-") || name.includes("auth-token")),
     );
-
     pendingCookies.forEach(({ name }) => staleNames.add(name));
 
     staleNames.forEach((name) => {
-      response.cookies.set(name, "", {
-        path: "/",
-        expires: new Date(0),
-        maxAge: 0,
-      });
-      if (domain) {
-        response.cookies.set(name, "", {
-          path: "/",
-          domain,
-          expires: new Date(0),
-          maxAge: 0,
-        });
-      }
+      response.headers.append(
+        "set-cookie",
+        `${name}=; Path=/; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax`,
+      );
+      response.headers.append(
+        "set-cookie",
+        `${name}=; Path=/; Domain=.crucibleforge.org; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax`,
+      );
     });
 
     pendingCookies.forEach(({ name, value, options }) => {
-      response.cookies.set(
-        name,
-        value,
-        domain ? { ...options, domain } : options,
-      );
+      response.cookies.set(name, value, { ...options, domain: undefined });
     });
 
     return response;

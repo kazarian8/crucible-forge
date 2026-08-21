@@ -19,6 +19,9 @@ export default function LoginPage() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     setVerified(params.get("verified") === "1");
+    if (params.get("error") === "session") {
+      setMessage("Your sign-in expired before Crucible could open. Please sign in again.");
+    }
   }, []);
 
   async function handleSignIn(event: FormEvent<HTMLFormElement>) {
@@ -36,20 +39,30 @@ export default function LoginPage() {
           password,
         }),
       });
+      const result = await response.json().catch(() => ({}));
 
       if (!response.ok) {
-        setMessage(
-          response.status === 401
-            ? "That email and password combination was not accepted."
-            : "Sign-in is temporarily unavailable.",
-        );
+        const error = String(result.error || "");
+        if (error === "account-not-found") {
+          setMessage("No account found with this email. Create an account instead.");
+        } else if (error === "wrong-password") {
+          setMessage("Incorrect password. Try again.");
+        } else if (error === "email-not-verified") {
+          setMessage("Verify your email before signing in.");
+        } else if (error === "rate-limited") {
+          setMessage("Too many sign-in attempts. Wait 15 minutes and try again.");
+        } else if (response.status === 401) {
+          setMessage("That email or password was not accepted.");
+        } else {
+          setMessage("We couldn’t complete sign-in. Please try again.");
+        }
         setLoading(false);
         return;
       }
 
       window.location.replace(safeNext());
     } catch {
-      setMessage("Sign-in is temporarily unavailable.");
+      setMessage("We couldn’t complete sign-in. Please try again.");
       setLoading(false);
     }
   }
@@ -66,7 +79,7 @@ export default function LoginPage() {
             Email confirmed. Your account is enabled — sign in with your password.
           </p>
         ) : null}
-        <form onSubmit={handleSignIn} className="mt-7 space-y-4">
+        <form onSubmit={handleSignIn} className="mt-7 space-y-4" noValidate>
           <label className="block">
             <span className="text-xs font-bold uppercase tracking-wider text-zinc-400">Email</span>
             <input
@@ -84,7 +97,6 @@ export default function LoginPage() {
             <input
               type="password"
               required
-              minLength={12}
               value={password}
               onChange={(event) => setPassword(event.target.value)}
               placeholder="Your password"
