@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 
 function safeNext() {
   const value = new URLSearchParams(window.location.search).get("next");
@@ -13,7 +13,13 @@ export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [message, setMessage] = useState("");
+  const [verified, setVerified] = useState(false);
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    setVerified(params.get("verified") === "1");
+  }, []);
 
   async function handleSignIn(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -53,14 +59,16 @@ export default function LoginPage() {
       <section className="w-full max-w-md rounded-2xl border border-orange-500/40 bg-zinc-950 p-8">
         <h1 className="text-center text-3xl font-bold">Enter the Crucible</h1>
         <p className="mt-3 text-center text-sm leading-6 text-zinc-400">
-          Sign in with your verified email and password. Your active trial or
-          subscription is checked before the Forge opens.
+          Sign in with your verified email and the same password you created at signup.
         </p>
+        {verified ? (
+          <p role="status" className="mt-4 rounded-lg border border-emerald-400/30 bg-emerald-400/10 p-3 text-center text-sm text-emerald-200">
+            Email confirmed. Your account is enabled — sign in with your password.
+          </p>
+        ) : null}
         <form onSubmit={handleSignIn} className="mt-7 space-y-4">
           <label className="block">
-            <span className="text-xs font-bold uppercase tracking-wider text-zinc-400">
-              Email
-            </span>
+            <span className="text-xs font-bold uppercase tracking-wider text-zinc-400">Email</span>
             <input
               type="email"
               required
@@ -72,9 +80,7 @@ export default function LoginPage() {
             />
           </label>
           <label className="block">
-            <span className="text-xs font-bold uppercase tracking-wider text-zinc-400">
-              Password
-            </span>
+            <span className="text-xs font-bold uppercase tracking-wider text-zinc-400">Password</span>
             <input
               type="password"
               required
@@ -95,9 +101,7 @@ export default function LoginPage() {
           </button>
         </form>
         {message ? (
-          <p role="alert" className="mt-4 text-center text-sm text-red-200">
-            {message}
-          </p>
+          <p role="alert" className="mt-4 text-center text-sm text-red-200">{message}</p>
         ) : null}
         <a href="/signup" className="mt-6 block text-center text-sm text-orange-300">
           Create a new account
