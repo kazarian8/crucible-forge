@@ -46,21 +46,38 @@ export async function POST(request: NextRequest) {
       throw new Error("Supabase environment variables are missing.");
     }
 
-    const admin = createAdminClient();
-    const { data: guardData, error: guardError } = await admin.rpc(
-      "consume_login_attempt",
-      { p_ip: getClientIp(request), p_email: email },
-    );
+    // The custom abuse guard is defense in depth. It must never turn an
+    // admin-key/RPC outage into a site-wide login outage. Supabase Auth still
+    // applies its own rate limits if this guard is temporarily unavailable.
+    let guardData: unknown = null;
+    try {
+      const admin = createAdminClient();
+      const guardResult = await admin.rpc("consume_login_attempt", {
+        p_ip: getClientIp(request),
+        p_email: email,
+      });
 
-    if (guardError) {
-      return NextResponse.json(
-        { error: "service-unavailable" },
-        { status: 503, headers: { "Cache-Control": "private, no-store" } },
-      );
+      if (guardResult.error) {
+        console.warn("Login abuse guard unavailable", {
+          code: guardResult.error.code,
+          message: guardResult.error.message,
+        });
+      } else {
+        guardData = guardResult.data;
+      }
+    } catch (guardFailure) {
+      console.warn("Login abuse guard failed open", {
+        message: guardFailure instanceof Error ? guardFailure.message : "unknown",
+      });
     }
 
     const guard = Array.isArray(guardData) ? guardData[0] : guardData;
-    if (guard && guard.allowed === false) {
+    if (
+      guard &&
+      typeof guard === "object" &&
+      "allowed" in guard &&
+      (guard as { allowed?: boolean }).allowed === false
+    ) {
       return NextResponse.json(
         { error: "rate-limited" },
         {
@@ -139,7 +156,10 @@ export async function POST(request: NextRequest) {
     });
 
     return response;
-  } catch {
+  } catch (error) {
+    console.error("Login route failed", {
+      message: error instanceof Error ? error.message : "unknown",
+    });
     return NextResponse.json(
       { error: "service-unavailable" },
       { status: 503, headers: { "Cache-Control": "private, no-store" } },
