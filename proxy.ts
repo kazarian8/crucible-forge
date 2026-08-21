@@ -38,14 +38,15 @@ export async function proxy(request: NextRequest) {
   const { pathname, searchParams } = request.nextUrl;
   const paidRoute = PAID_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
   const authenticatedRoute = paidRoute || pathname === "/account" || pathname === SUBSCRIBE_ROUTE || pathname.startsWith("/billing/success");
-  const authRoute = pathname === LOGIN_ROUTE || pathname === SIGNUP_ROUTE;
+  const authPageRoute = pathname === LOGIN_ROUTE || pathname === SIGNUP_ROUTE;
+  const authEndpoint = pathname.startsWith("/auth/");
   const switchingAccount = pathname === LOGIN_ROUTE && searchParams.get("switch") === "1";
 
-  // Login/signup must remain reachable even when the browser carries an expired
-  // Supabase refresh cookie. The login POST creates a fresh session itself.
-  // Reading the stale cookie here causes Supabase SSR to attempt a refresh first,
-  // which turns a valid password login into refresh_token_not_found / HTTP 503.
-  if (authRoute) return NextResponse.next({ request });
+  // Never refresh/inspect browser Supabase cookies on login/signup pages OR on
+  // /auth/* handlers. Those handlers intentionally establish/clear sessions.
+  // Intercepting /auth/login here caused stale refresh tokens to fail with 503
+  // before the clean password login route could run.
+  if (authPageRoute || authEndpoint) return NextResponse.next({ request });
 
   let response = NextResponse.next({ request });
   const hostname = (request.headers.get("x-forwarded-host") ?? request.nextUrl.hostname).split(",")[0].trim().split(":")[0].toLowerCase();
@@ -75,7 +76,6 @@ export async function proxy(request: NextRequest) {
     const { data: claimsData } = await supabase.auth.getClaims();
     userId = claimsData?.claims?.sub;
   } catch {
-    // A stale/invalid browser session is unauthenticated, not a server outage.
     userId = undefined;
   }
 
