@@ -77,6 +77,7 @@ export async function proxy(request: NextRequest) {
     pathname === SUBSCRIBE_ROUTE ||
     pathname.startsWith("/billing/success");
   const authRoute = pathname === LOGIN_ROUTE || pathname === SIGNUP_ROUTE;
+  const switchingAccount = pathname === LOGIN_ROUTE && searchParams.get("switch") === "1";
 
   let response = NextResponse.next({ request });
   const hostname = (request.headers.get("x-forwarded-host") ?? request.nextUrl.hostname)
@@ -129,8 +130,6 @@ export async function proxy(request: NextRequest) {
     },
   });
 
-  // getClaims verifies the JWT signature and refreshes cookie-backed auth when
-  // needed. Any response returned after this point must preserve those cookies.
   const { data: claimsData } = await supabase.auth.getClaims();
   const userId = claimsData?.claims?.sub;
 
@@ -186,7 +185,9 @@ export async function proxy(request: NextRequest) {
     );
   }
 
-  if (authRoute && userId) {
+  // Explicit account switching must always be allowed to reach the login form,
+  // even when another account currently has a valid browser session.
+  if (authRoute && userId && !switchingAccount) {
     return redirectPreservingSession(
       request,
       response,
