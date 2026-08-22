@@ -13,6 +13,7 @@ import {
   Upload,
   WandSparkles,
 } from "lucide-react";
+import { getPictureActionPrice } from "../../lib/credits/pricing";
 
 const COMMANDS = [
   "Enhance Natural", "Enhance Blurry Image", "Enhance Beauty", "Remove Background",
@@ -90,9 +91,12 @@ export default function PictureFurnacePage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [viewMode, setViewMode] = useState<ViewMode>("result");
+  const [lastCharge, setLastCharge] = useState<number | null>(null);
+  const [creditBalance, setCreditBalance] = useState<number | null>(null);
 
   const image = historyIndex >= 0 ? history[historyIndex] : null;
   const hasResult = Boolean(original && image && historyIndex > 0);
+  const actionCost = getPictureActionPrice(command);
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return q ? COMMANDS.filter((item) => item.toLowerCase().includes(q)) : COMMANDS;
@@ -112,6 +116,7 @@ export default function PictureFurnacePage() {
       setHistory([data]);
       setHistoryIndex(0);
       setViewMode("result");
+      setLastCharge(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "The image could not be prepared.");
     } finally {
@@ -131,6 +136,7 @@ export default function PictureFurnacePage() {
     if (!image || busy) return;
     setBusy(true);
     setError("");
+    setLastCharge(null);
     try {
       const response = await fetch("/api/picture-furnace", {
         method: "POST",
@@ -138,8 +144,13 @@ export default function PictureFurnacePage() {
         body: JSON.stringify({ image, command, customPrompt: customPrompt || command }),
       });
       const data = await response.json();
-      if (!response.ok || !data.image) throw new Error(data.error || "Image edit failed.");
+      if (!response.ok || !data.image) {
+        const suffix = data.refunded ? " Credits were refunded." : "";
+        throw new Error(`${data.error || "Image edit failed."}${suffix}`);
+      }
       pushHistory(data.image);
+      if (typeof data.creditCost === "number") setLastCharge(data.creditCost);
+      if (typeof data.creditBalance === "number") setCreditBalance(data.creditBalance);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Image edit failed.");
     } finally {
@@ -161,6 +172,7 @@ export default function PictureFurnacePage() {
     setHistoryIndex(0);
     setViewMode("result");
     setError("");
+    setLastCharge(null);
   }
 
   function download() {
@@ -181,8 +193,15 @@ export default function PictureFurnacePage() {
             <p className="mt-2 max-w-3xl text-sm text-white/45">Upload once, make targeted AI edits, compare before and after, undo or redo every forge, reset anytime, and save the result you want.</p>
           </div>
           {image && (
-            <div className="rounded-full border border-white/10 bg-white/[0.03] px-3 py-1.5 text-[11px] font-bold text-white/45">
-              History step {historyIndex + 1} of {history.length}
+            <div className="flex flex-wrap items-center gap-2">
+              {creditBalance !== null && (
+                <div className="rounded-full border border-orange-300/20 bg-orange-400/[0.06] px-3 py-1.5 text-[11px] font-black text-orange-200">
+                  {creditBalance.toLocaleString()} credits left
+                </div>
+              )}
+              <div className="rounded-full border border-white/10 bg-white/[0.03] px-3 py-1.5 text-[11px] font-bold text-white/45">
+                History step {historyIndex + 1} of {history.length}
+              </div>
             </div>
           )}
         </div>
@@ -222,7 +241,7 @@ export default function PictureFurnacePage() {
                       <div className="rounded-2xl border border-white/10 bg-black/70 px-8 py-6 text-center shadow-2xl">
                         <Loader2 className="mx-auto animate-spin text-orange-300" size={36}/>
                         <p className="mt-3 font-black">Forging image…</p>
-                        <p className="mt-1 text-xs text-white/40">Preserving everything you did not ask to change.</p>
+                        <p className="mt-1 text-xs text-white/40">{actionCost} credits reserved · refunded automatically if this forge fails.</p>
                       </div>
                     </div>
                   )}
@@ -240,22 +259,24 @@ export default function PictureFurnacePage() {
 
           <aside className="h-fit rounded-[28px] border border-white/10 bg-white/[0.025] p-4 sm:p-5 lg:sticky lg:top-4">
             <div className="flex items-center gap-2 text-orange-300"><WandSparkles size={20}/><p className="font-black">Commands</p></div>
-            <p className="mt-1 text-xs leading-5 text-white/35">Pick a command or type exactly what you want changed.</p>
+            <p className="mt-1 text-xs leading-5 text-white/35">Every processing action has its own credit cost. You are only charged when the forge succeeds.</p>
 
             <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Type: en, re, color…" className="mt-4 w-full rounded-xl border border-white/10 bg-black/30 px-4 py-3 text-sm outline-none placeholder:text-white/25 focus:border-orange-300/50" />
 
             <div className="mt-3 grid grid-cols-2 gap-2">
               {PRIMARY.map((item) => (
                 <button key={item} onClick={() => { setCommand(item); setCustomPrompt(""); }} className={`rounded-xl border px-3 py-3 text-left text-xs font-bold ${command === item ? "border-orange-300/60 bg-orange-500/10 text-orange-200" : "border-white/10 bg-white/[0.02] text-white/65"}`}>
-                  {item}
+                  <span className="block">{item}</span>
+                  <span className="mt-1 block text-[10px] font-black text-orange-300/70">{getPictureActionPrice(item)} credits</span>
                 </button>
               ))}
             </div>
 
             <div className="mt-3 max-h-52 overflow-y-auto rounded-xl border border-white/10 bg-black/20 p-1">
               {filtered.map((item) => (
-                <button key={item} onClick={() => { setCommand(item); setCustomPrompt(item); }} className="block w-full rounded-lg px-3 py-2 text-left text-xs text-white/55 hover:bg-white/5 hover:text-white">
-                  {item}
+                <button key={item} onClick={() => { setCommand(item); setCustomPrompt(item); }} className="flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2 text-left text-xs text-white/55 hover:bg-white/5 hover:text-white">
+                  <span>{item}</span>
+                  <span className="shrink-0 text-[10px] font-black text-orange-300/60">{getPictureActionPrice(item)}</span>
                 </button>
               ))}
             </div>
@@ -264,9 +285,13 @@ export default function PictureFurnacePage() {
             <textarea value={customPrompt} onChange={(e) => setCustomPrompt(e.target.value)} placeholder="Example: Replace beanie with black Supreme beanie with red logo" rows={4} className="mt-2 w-full resize-none rounded-xl border border-white/10 bg-black/30 px-4 py-3 text-sm outline-none placeholder:text-white/20 focus:border-orange-300/50" />
             <p className="mt-2 text-[11px] leading-5 text-white/30"><span className="font-black text-white/50">Core rule:</span> change only what you request. Preserve everything else as closely as possible.</p>
 
-            <button onClick={forge} disabled={!image || busy} className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-orange-400 px-4 py-3.5 font-black text-black disabled:cursor-not-allowed disabled:opacity-30"><Sparkles size={18}/>{busy ? "Forging…" : `Forge · ${command}`}</button>
+            <div className="mt-4 rounded-xl border border-orange-300/15 bg-orange-400/[0.04] px-3 py-2.5 text-xs text-orange-100/70">
+              <span className="font-black text-orange-200">{command}</span> · {actionCost} credits
+            </div>
+            <button onClick={forge} disabled={!image || busy} className="mt-2 flex w-full items-center justify-center gap-2 rounded-xl bg-orange-400 px-4 py-3.5 font-black text-black disabled:cursor-not-allowed disabled:opacity-30"><Sparkles size={18}/>{busy ? "Forging…" : `Forge · ${actionCost} credits`}</button>
             <button onClick={() => inputRef.current?.click()} disabled={busy} className="mt-2 flex w-full items-center justify-center gap-2 rounded-xl border border-white/10 px-4 py-3 text-sm font-bold text-white/60"><ImageIcon size={17}/>Load different image</button>
 
+            {lastCharge !== null && <p className="mt-3 rounded-xl border border-emerald-300/15 bg-emerald-400/[0.04] p-3 text-[11px] leading-5 text-emerald-100/70">Forge complete · {lastCharge} credits charged{creditBalance !== null ? ` · ${creditBalance.toLocaleString()} remaining` : ""}.</p>}
             {command === "Enhance Blurry Image" && <p className="mt-3 rounded-xl border border-amber-300/15 bg-amber-400/[0.04] p-3 text-[11px] leading-5 text-amber-100/55">AI reconstruction can infer missing detail. Use Enhance Natural when strict fidelity matters.</p>}
             {command === "Enhance Beauty" && <p className="mt-3 rounded-xl border border-fuchsia-300/15 bg-fuchsia-400/[0.04] p-3 text-[11px] leading-5 text-fuchsia-100/55">Beauty mode polishes skin, eyes, hair, beard, color and lighting while protecting facial geometry and identity.</p>}
             {command === "Remove Background" && <p className="mt-3 rounded-xl border border-cyan-300/15 bg-cyan-400/[0.04] p-3 text-[11px] leading-5 text-cyan-100/55">Background removal returns a transparent PNG with the foreground subject isolated.</p>}
