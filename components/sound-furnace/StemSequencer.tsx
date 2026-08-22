@@ -35,8 +35,7 @@ const MAX_FILE_BYTES = 250 * 1024 * 1024;
 const SILENCE_THRESHOLD_DB = -52;
 const TRIM_PADDING_SECONDS = 0.025;
 const VOCAL_TRACK_PATTERN = /vocal|vox|voice|harmony|ad[ -]?lib|hook|chorus/i;
-const VOCAL_WAVE_COLOR = "#fb7185";
-const INSTRUMENT_WAVE_COLOR = "#60a5fa";
+const WAVE_COLORS = ["#fb7185", "#60a5fa", "#34d399", "#fbbf24", "#a78bfa", "#22d3ee", "#f472b6", "#fb923c", "#4ade80", "#818cf8", "#e879f9", "#2dd4bf", "#facc15", "#38bdf8", "#c084fc", "#f87171"] as const;
 const ACCEPTED_EXTENSIONS = new Set([
   "wav",
   "mp3",
@@ -830,6 +829,13 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
   const [effectsTrackId, setEffectsTrackId] = useState("");
   const [recording, setRecording] = useState(false);
   const [snapEnabled, setSnapEnabled] = useState(true);
+  const [loopEnabled, setLoopEnabled] = useState(false);
+  const [loopStartSeconds, setLoopStartSeconds] = useState(0);
+  const [loopEndSeconds, setLoopEndSeconds] = useState(0);
+  const loopDragStartRef = useRef<number | null>(null);
+  const loopEnabledRef = useRef(false);
+  const loopStartRef = useRef(0);
+  const loopEndRef = useRef(0);
   const [timelineZoom, setTimelineZoom] = useState(1);
   const [instrumentOpen, setInstrumentOpen] = useState(false);
   const [instrumentEditor, setInstrumentEditor] = useState<InstrumentEditor>("drums");
@@ -895,6 +901,55 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
     if (rulerMode === "clock") return formatTime(mark);
     const beatPosition = mark / (60 / projectBpm);
     return `${Math.floor(beatPosition / beatsPerBar) + 1}.${Math.floor(beatPosition % beatsPerBar) + 1}`;
+  }
+
+  useEffect(() => {
+    loopEnabledRef.current = loopEnabled;
+    loopStartRef.current = loopStartSeconds;
+    loopEndRef.current = loopEndSeconds;
+  }, [loopEnabled, loopStartSeconds, loopEndSeconds]);
+
+  function rulerPointerSeconds(event: ReactPointerEvent<HTMLDivElement>) {
+    const rect = event.currentTarget.getBoundingClientRect();
+    return Math.max(0, Math.min(rulerDuration, ((event.clientX - rect.left) / Math.max(1, rect.width)) * rulerDuration));
+  }
+
+  function toggleLoop() {
+    setLoopEnabled((enabled) => {
+      const next = !enabled;
+      if (next && loopEndSeconds <= loopStartSeconds) {
+        const start = Math.min(playheadSeconds, rulerDuration);
+        setLoopStartSeconds(start);
+        setLoopEndSeconds(Math.min(rulerDuration, start + Math.max(0.5, (60 / Math.max(1, projectBpm)) * 4)));
+      }
+      setStatus(next ? "Loop on — drag across the timeline ruler to set the repeat range." : "Loop off.");
+      return next;
+    });
+  }
+
+  function beginLoopSelection(event: ReactPointerEvent<HTMLDivElement>) {
+    if (!loopEnabled) return;
+    event.preventDefault();
+    const value = rulerPointerSeconds(event);
+    loopDragStartRef.current = value;
+    setLoopStartSeconds(value);
+    setLoopEndSeconds(Math.min(rulerDuration, value + 0.1));
+    try { event.currentTarget.setPointerCapture(event.pointerId); } catch {}
+  }
+
+  function moveLoopSelection(event: ReactPointerEvent<HTMLDivElement>) {
+    if (!loopEnabled || loopDragStartRef.current === null) return;
+    event.preventDefault();
+    const value = rulerPointerSeconds(event);
+    const start = Math.min(loopDragStartRef.current, value);
+    const end = Math.max(loopDragStartRef.current, value);
+    setLoopStartSeconds(start);
+    setLoopEndSeconds(Math.max(start + 0.05, end));
+  }
+
+  function endLoopSelection(event: ReactPointerEvent<HTMLDivElement>) {
+    loopDragStartRef.current = null;
+    try { if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId); } catch {}
   }
 
   function replaceTrack(id: string, patch: Partial<StemTrack>) {
@@ -1366,15 +1421,49 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
     }
   }
 
-  function togglePreview() {
-    const player = previewRef.current;
-    if (!player) return;
+  async function togglePreview() {
+    let player = previewRef.current;
+    if (!player) {
+      player = new Audio();
+      previewRef.current = player;
+    }
+    player.ontimeupdate = () => {
+      if (loopEnabledRef.current && loopEndRef.current > loopStartRef.current && player && player.currentTime >= loopEndRef.current) {
+        player.currentTime = loopStartRef.current;
+      }
+      if (player) setPlayheadSeconds(player.currentTime);
+    };
+    player.onended = () => { setPlaying(false); setPlayheadSeconds(0); };
     if (playing) {
       player.pause();
       setPlaying(false);
-    } else {
-      void player.play();
+      setPlayheadSeconds(player.currentTime);
+      setStatus("Timeline paused.");
+      return;
+    }
+    setError("");
+    try {
+      let url = previewUrl;
+      if (!url) {
+        setBusy(true);
+        setStatus("Preparing Engineer Mode playback…");
+        const mixed = await renderMix(tracks);
+        const blob = encodeWav24(mixed);
+        url = URL.createObjectURL(blob);
+        setPreviewUrl(url);
+      }
+      if (player.src !== url) player.src = url;
+      const startAt = loopEnabled && playheadSeconds >= loopEndSeconds ? loopStartSeconds : playheadSeconds;
+      player.currentTime = Math.max(0, Math.min(startAt, duration));
+      await player.play();
       setPlaying(true);
+      setStatus(loopEnabled ? "Engineer Mode timeline playing — loop active." : "Engineer Mode timeline playing.");
+    } catch (caught) {
+      setPlaying(false);
+      setError(caught instanceof Error ? caught.message : "Engineer Mode playback could not start on this device.");
+      setStatus("Playback stopped safely.");
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -1611,8 +1700,8 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
             <div className="flex items-center gap-2">
               <button
                 type="button"
-                onClick={togglePreview}
-                disabled={!previewUrl}
+                onClick={() => void togglePreview()}
+                disabled={busy || tracks.length === 0}
                 aria-label={playing ? "Pause sequence" : "Play sequence"}
                 className="grid size-9 place-items-center rounded-full bg-orange-500 text-black disabled:opacity-30"
               >
@@ -1635,12 +1724,12 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
                 type="button"
                 aria-pressed={snapEnabled}
                 onClick={() => setSnapEnabled((enabled) => !enabled)}
-                className={`flex items-center gap-1 rounded-lg px-2.5 py-2 text-[9px] font-black uppercase tracking-wider ${snapEnabled ? "bg-orange-400 text-black" : "bg-white/8 text-white/50"}`}
+                className={`flex items-center gap-0.5 rounded-md px-1.5 py-1 text-[8px] font-black uppercase tracking-tight ${snapEnabled ? "bg-orange-400 text-black" : "bg-white/8 text-white/50"}`}
               >
-                <span className="relative grid size-[15px] place-items-center" aria-hidden="true">
-                  <Magnet size={13} />
+                <span className="relative grid size-[11px] place-items-center" aria-hidden="true">
+                  <Magnet size={9} />
                   {!snapEnabled ? (
-                    <X className="absolute" size={15} strokeWidth={3} />
+                    <X className="absolute" size={11} strokeWidth={2.5} />
                   ) : null}
                 </span>
                 {snapEnabled ? `Snap ${snapDivision}` : "Snap off"}
@@ -1662,7 +1751,28 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
             >
               <div className="grid grid-cols-[170px_1fr] border-b border-white/10 bg-[#0d0b0a]">
                 <div className="border-r border-white/10 px-3 py-2 text-[9px] font-black uppercase tracking-wider text-white/30">Tracks</div>
-                <div className="relative h-9">
+                <div
+                  className={`relative h-9 ${loopEnabled ? "cursor-crosshair" : ""}`}
+                  onPointerDown={beginLoopSelection}
+                  onPointerMove={moveLoopSelection}
+                  onPointerUp={endLoopSelection}
+                  onPointerCancel={endLoopSelection}
+                >
+                  <button
+                    type="button"
+                    aria-pressed={loopEnabled}
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onClick={(event) => { event.stopPropagation(); toggleLoop(); }}
+                    className={`absolute right-1 top-1 z-20 rounded px-1.5 py-0.5 text-[8px] font-black uppercase ${loopEnabled ? "bg-emerald-400 text-black" : "bg-white/10 text-white/55"}`}
+                  >
+                    ↻ Loop
+                  </button>
+                  {loopEnabled && loopEndSeconds > loopStartSeconds ? (
+                    <div
+                      className="pointer-events-none absolute inset-y-0 z-0 border-x border-emerald-300/80 bg-emerald-300/15"
+                      style={{ left: `${(loopStartSeconds / rulerDuration) * 100}%`, width: `${((loopEndSeconds - loopStartSeconds) / rulerDuration) * 100}%` }}
+                    />
+                  ) : null}
                   {rulerMarks.map((mark, index) => (
                     <div key={mark} className="absolute inset-y-0 border-l border-white/10" style={{ left: `${(index / 8) * 100}%` }}>
                       <span className="ml-1 font-mono text-[9px] text-white/35">{rulerLabel(mark)}</span>
@@ -1677,9 +1787,7 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
                   style={{ left: `calc(170px + (100% - 170px) * ${Math.min(1, playheadSeconds / rulerDuration)})` }}
                 />
                 {tracks.map((track, index) => {
-                  const waveColor = VOCAL_TRACK_PATTERN.test(track.name)
-                    ? VOCAL_WAVE_COLOR
-                    : INSTRUMENT_WAVE_COLOR;
+                  const waveColor = WAVE_COLORS[index % WAVE_COLORS.length];
                   const inactive = track.muted || (hasSolo && !track.solo);
                   const selected = selectedTrack?.id === track.id;
                   const clipLeft = (track.startSeconds / rulerDuration) * 100;
@@ -1961,7 +2069,7 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
               />
               <button
                 type="button"
-                onClick={togglePreview}
+                onClick={() => void togglePreview()}
                 className="flex items-center gap-2 rounded-xl border border-white/10 px-4 py-2.5 text-xs font-bold text-white/70"
               >
                 {playing ? <Pause size={14} /> : <Play size={14} />}
