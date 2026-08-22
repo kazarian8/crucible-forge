@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { adminRequest } from "../billing/admin";
+import { createAdminClient } from "../supabase/admin";
 import { createClient } from "../supabase/server";
 
 type Subscription = {
@@ -19,6 +20,21 @@ export function hasPaidAccess(subscription: Subscription | null) {
         (subscription.status === "active" &&
           isFuture(subscription.current_period_end))),
   );
+}
+
+async function hasExpertMusicianDevAccess(userId: string) {
+  try {
+    const admin = createAdminClient();
+    const { data, error } = await admin
+      .from("expert_musician_dev_access")
+      .select("enabled")
+      .eq("user_id", userId)
+      .eq("enabled", true)
+      .maybeSingle<{ enabled: boolean }>();
+    return !error && Boolean(data?.enabled);
+  } catch {
+    return false;
+  }
 }
 
 export async function authorizePaidProvider(
@@ -49,19 +65,23 @@ export async function authorizePaidProvider(
     };
   }
 
-  const { data: subscription, error: subscriptionError } = await supabase
-    .from("pro_subscriptions")
-    .select("status,current_period_end,trial_end")
-    .eq("user_id", user.id)
-    .maybeSingle<Subscription>();
+  const expertMusicianDev = await hasExpertMusicianDevAccess(user.id);
 
-  if (subscriptionError || !hasPaidAccess(subscription)) {
-    return {
-      response: NextResponse.json(
-        { error: "An active trial or subscription is required." },
-        { status: 402, headers: { "Cache-Control": "private, no-store" } },
-      ),
-    };
+  if (!expertMusicianDev) {
+    const { data: subscription, error: subscriptionError } = await supabase
+      .from("pro_subscriptions")
+      .select("status,current_period_end,trial_end")
+      .eq("user_id", user.id)
+      .maybeSingle<Subscription>();
+
+    if (subscriptionError || !hasPaidAccess(subscription)) {
+      return {
+        response: NextResponse.json(
+          { error: "An active trial or subscription is required." },
+          { status: 402, headers: { "Cache-Control": "private, no-store" } },
+        ),
+      };
+    }
   }
 
   const rateLimit = await adminRequest<Array<{ allowed: boolean }>>(
