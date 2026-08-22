@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "../../../lib/supabase/server";
 import { createAdminClient } from "../../../lib/supabase/admin";
@@ -25,6 +26,29 @@ async function emailAlreadyExists(email: string): Promise<boolean | undefined> {
   }
 }
 
+async function validateExpertMusicianInvite(email: string, token: string) {
+  if (!token) return null;
+  const tokenHash = createHash("sha256").update(token).digest("hex");
+  const admin = createAdminClient();
+  const { data, error } = await admin
+    .from("expert_musician_dev_access")
+    .select("id,email,invite_expires_at,redeemed_at,enabled")
+    .eq("invite_token_hash", tokenHash)
+    .eq("email", email)
+    .eq("enabled", true)
+    .maybeSingle<{
+      id: string;
+      email: string;
+      invite_expires_at: string;
+      redeemed_at: string | null;
+      enabled: boolean;
+    }>();
+
+  if (error || !data || data.redeemed_at) return null;
+  if (new Date(data.invite_expires_at).getTime() <= Date.now()) return null;
+  return data;
+}
+
 export async function POST(request: NextRequest) {
   try {
     const body = (await request.json()) as {
@@ -35,6 +59,7 @@ export async function POST(request: NextRequest) {
       next?: string;
       website?: string;
       startedAt?: number;
+      inviteToken?: string;
     };
 
     const email = body.email?.trim().toLowerCase();
@@ -50,6 +75,14 @@ export async function POST(request: NextRequest) {
     }
     if (!email || !password || !/^[A-Za-z0-9_]{3,24}$/.test(username) || password.length < 12 || password.length > 128) {
       return NextResponse.json({ error: "invalid-input" }, { status: 400 });
+    }
+
+    let expertInvite: Awaited<ReturnType<typeof validateExpertMusicianInvite>> = null;
+    if (body.inviteToken) {
+      expertInvite = await validateExpertMusicianInvite(email, body.inviteToken);
+      if (!expertInvite) {
+        return NextResponse.json({ error: "invalid-invite" }, { status: 403 });
+      }
     }
 
     const existing = await emailAlreadyExists(email);
@@ -94,7 +127,11 @@ export async function POST(request: NextRequest) {
 
     const origin = request.nextUrl.origin;
     const callback = new URL("/auth/callback", origin);
-    const safeNext = body.next?.startsWith("/") && !body.next.startsWith("//") ? body.next : "/subscribe";
+    const safeNext = expertInvite
+      ? "/sound-furnace"
+      : body.next?.startsWith("/") && !body.next.startsWith("//")
+        ? body.next
+        : "/subscribe";
     callback.searchParams.set("next", safeNext);
 
     const { data, error } = await supabase.auth.signUp({
@@ -112,14 +149,25 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: status === 429 ? "rate-limited" : "signup-failed" }, { status });
     }
 
-    // With email confirmation enabled, Supabase can intentionally return a fake
-    // user object for an already-registered email. Empty identities is the signal.
     if (data.user && data.user.identities?.length === 0) {
       return NextResponse.json({ error: "email-in-use" }, { status: 409 });
     }
 
+    if (expertInvite && data.user) {
+      const expertAdmin = createAdminClient();
+      const { error: accessError } = await expertAdmin
+        .from("expert_musician_dev_access")
+        .update({ user_id: data.user.id, redeemed_at: new Date().toISOString() })
+        .eq("id", expertInvite.id)
+        .is("redeemed_at", null);
+      if (accessError) {
+        await expertAdmin.auth.admin.deleteUser(data.user.id).catch(() => undefined);
+        return NextResponse.json({ error: "invite-activation-failed" }, { status: 503 });
+      }
+    }
+
     return NextResponse.json(
-      { ok: true, pendingVerification: !data.session },
+      { ok: true, pendingVerification: !data.session, expertMusicianDev: Boolean(expertInvite) },
       { headers: { "Cache-Control": "private, no-store" } },
     );
   } catch (error) {
