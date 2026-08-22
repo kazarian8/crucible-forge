@@ -11,9 +11,15 @@ import {
   Undo2,
   Upload,
 } from "lucide-react";
-import { getPictureActionPrice } from "../../lib/credits/pricing";
+import { classifyPictureAction } from "../../lib/credits/pricing";
 
 type ViewMode = "result" | "before-after";
+type PendingEdit = {
+  command: string;
+  action: string;
+  description: string;
+  cost: number;
+};
 
 function normalizeImageFile(file: File) {
   return new Promise<string>((resolve, reject) => {
@@ -72,6 +78,7 @@ export default function PictureFurnacePage() {
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [original, setOriginal] = useState<string | null>(null);
   const [commandLine, setCommandLine] = useState("");
+  const [pendingEdit, setPendingEdit] = useState<PendingEdit | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [viewMode, setViewMode] = useState<ViewMode>("result");
@@ -80,7 +87,7 @@ export default function PictureFurnacePage() {
 
   const image = historyIndex >= 0 ? history[historyIndex] : null;
   const hasResult = Boolean(original && image && historyIndex > 0);
-  const actionCost = getPictureActionPrice(commandLine);
+  const liveQuote = commandLine.trim() ? classifyPictureAction(commandLine) : null;
 
   async function onUpload(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
@@ -97,6 +104,7 @@ export default function PictureFurnacePage() {
       setHistoryIndex(0);
       setViewMode("result");
       setLastCharge(null);
+      setPendingEdit(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "The image could not be prepared.");
     } finally {
@@ -112,10 +120,23 @@ export default function PictureFurnacePage() {
     setViewMode("before-after");
   }
 
-  async function forge() {
+  function prepareEdit() {
     const command = commandLine.trim();
     if (!image || busy || !command) return;
+    const quote = classifyPictureAction(command);
+    setPendingEdit({
+      command,
+      action: quote.action,
+      description: quote.description,
+      cost: quote.cost,
+    });
+    setError("");
+  }
 
+  async function continueEdit() {
+    if (!image || busy || !pendingEdit) return;
+    const edit = pendingEdit;
+    setPendingEdit(null);
     setBusy(true);
     setError("");
     setLastCharge(null);
@@ -124,11 +145,25 @@ export default function PictureFurnacePage() {
       const response = await fetch("/api/picture-furnace", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ image, command, customPrompt: command }),
+        body: JSON.stringify({
+          image,
+          command: edit.command,
+          customPrompt: edit.command,
+          confirmedCost: edit.cost,
+        }),
       });
 
       const data = await response.json();
       if (!response.ok || !data.image) {
+        if (data.requiresConfirmation && typeof data.creditCost === "number") {
+          setPendingEdit({
+            command: edit.command,
+            action: data.action || edit.action,
+            description: data.description || edit.description,
+            cost: data.creditCost,
+          });
+          throw new Error("The credit price changed. Confirm the updated amount to continue.");
+        }
         const suffix = data.refunded ? " Credits were refunded." : "";
         throw new Error(`${data.error || "Image edit failed."}${suffix}`);
       }
@@ -146,7 +181,7 @@ export default function PictureFurnacePage() {
   function onCommandKeyDown(event: KeyboardEvent<HTMLInputElement>) {
     if (event.key === "Enter") {
       event.preventDefault();
-      void forge();
+      prepareEdit();
     }
   }
 
@@ -165,6 +200,7 @@ export default function PictureFurnacePage() {
     setViewMode("result");
     setError("");
     setLastCharge(null);
+    setPendingEdit(null);
   }
 
   function download() {
@@ -182,7 +218,7 @@ export default function PictureFurnacePage() {
           <div>
             <p className="text-xs font-black uppercase tracking-[0.22em] text-orange-300">Picture Furnace</p>
             <h1 className="mt-2 text-4xl font-black tracking-[-0.04em] sm:text-5xl">Forge the image. Keep control.</h1>
-            <p className="mt-2 max-w-3xl text-sm text-white/45">Load an image, type exactly what you want changed, then press Enter.</p>
+            <p className="mt-2 max-w-3xl text-sm text-white/45">Load an image, describe the edit, and press Enter. Crucible identifies the edit and asks before spending credits.</p>
           </div>
           {image && (
             <div className="flex flex-wrap items-center gap-2">
@@ -233,7 +269,7 @@ export default function PictureFurnacePage() {
                       <div className="rounded-2xl border border-white/10 bg-black/70 px-8 py-6 text-center shadow-2xl">
                         <Loader2 className="mx-auto animate-spin text-orange-300" size={36}/>
                         <p className="mt-3 font-black">Forging image…</p>
-                        <p className="mt-1 text-xs text-white/40">{actionCost} credits reserved · automatically refunded if the forge fails.</p>
+                        <p className="mt-1 text-xs text-white/40">Credits are reserved now and refunded automatically if the forge fails.</p>
                       </div>
                     </div>
                   )}
@@ -250,21 +286,35 @@ export default function PictureFurnacePage() {
           </div>
 
           <aside className="h-fit rounded-[28px] border border-white/10 bg-white/[0.025] p-4 sm:p-5 lg:sticky lg:top-4">
-            <p className="text-xs font-black uppercase tracking-[0.18em] text-orange-300">Command Line</p>
-            <p className="mt-1 text-xs leading-5 text-white/35">Type a natural command. Press Enter to run it.</p>
+            <p className="text-xs font-black uppercase tracking-[0.18em] text-orange-300">Intelligent Command</p>
+            <p className="mt-1 text-xs leading-5 text-white/35">One command line handles every image edit and matches it to the correct credit cost.</p>
 
             <input
               value={commandLine}
-              onChange={(e) => setCommandLine(e.target.value)}
+              onChange={(e) => {
+                setCommandLine(e.target.value);
+                setPendingEdit(null);
+              }}
               onKeyDown={onCommandKeyDown}
               disabled={!image || busy}
               autoComplete="off"
-              placeholder="enhance natural, remove background, sharpen face…"
+              placeholder="enhance this, remove the truck, sharpen the face…"
               className="mt-4 w-full rounded-xl border border-white/10 bg-black/30 px-4 py-4 text-sm outline-none placeholder:text-white/20 focus:border-orange-300/50 disabled:opacity-35"
             />
 
-            {commandLine.trim() && (
-              <p className="mt-2 text-[11px] font-bold text-orange-200/75">{actionCost} credits · press Enter</p>
+            {liveQuote && (
+              <p className="mt-2 text-[11px] font-bold text-orange-200/75">{liveQuote.action} · {liveQuote.cost} credits · press Enter</p>
+            )}
+
+            {pendingEdit && (
+              <div className="mt-4 rounded-2xl border border-orange-300/25 bg-orange-400/[0.07] p-4">
+                <p className="text-sm font-black text-white">Do you wish to spend {pendingEdit.cost} credits on {pendingEdit.description}?</p>
+                <p className="mt-2 text-[11px] leading-5 text-white/40">Command: “{pendingEdit.command}”</p>
+                <div className="mt-4 grid grid-cols-2 gap-2">
+                  <button onClick={() => setPendingEdit(null)} disabled={busy} className="rounded-xl border border-white/10 px-4 py-3 text-sm font-black text-white/65 disabled:opacity-30">Cancel</button>
+                  <button onClick={() => void continueEdit()} disabled={busy} className="rounded-xl bg-orange-400 px-4 py-3 text-sm font-black text-black disabled:opacity-30">Continue</button>
+                </div>
+              </div>
             )}
 
             <p className="mt-4 text-[11px] leading-5 text-white/30"><span className="font-black text-white/50">Core rule:</span> only change what the command requests. Preserve everything else as closely as possible.</p>
