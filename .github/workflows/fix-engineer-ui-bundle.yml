@@ -1,0 +1,78 @@
+name: Fix Engineer Mode transport loop snap and colors
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/fix-engineer-ui-bundle.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Patch functional Engineer Mode controls
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('components/sound-furnace/StemSequencer.tsx')
+          s=p.read_text()
+          def once(old,new,label):
+            global s
+            c=s.count(old)
+            if c!=1:
+              raise SystemExit(f'{label}: expected 1 match, found {c}')
+            s=s.replace(old,new,1)
+
+          once('const VOCAL_WAVE_COLOR = "#fb7185";\nconst INSTRUMENT_WAVE_COLOR = "#60a5fa";\n',
+               'const WAVE_COLORS = ["#fb7185", "#60a5fa", "#34d399", "#fbbf24", "#a78bfa", "#22d3ee", "#f472b6", "#fb923c", "#4ade80", "#818cf8", "#e879f9", "#2dd4bf", "#facc15", "#38bdf8", "#c084fc", "#f87171"] as const;\n',
+               'wave palette')
+          once('''                  const waveColor = VOCAL_TRACK_PATTERN.test(track.name)\n                    ? VOCAL_WAVE_COLOR\n                    : INSTRUMENT_WAVE_COLOR;\n''','''                  const waveColor = WAVE_COLORS[index % WAVE_COLORS.length];\n''','wave assignment')
+
+          once('  const [snapEnabled, setSnapEnabled] = useState(true);\n',
+               '  const [snapEnabled, setSnapEnabled] = useState(true);\n  const [loopEnabled, setLoopEnabled] = useState(false);\n  const [loopStartSeconds, setLoopStartSeconds] = useState(0);\n  const [loopEndSeconds, setLoopEndSeconds] = useState(0);\n  const loopDragStartRef = useRef<number | null>(null);\n  const loopEnabledRef = useRef(false);\n  const loopStartRef = useRef(0);\n  const loopEndRef = useRef(0);\n',
+               'loop state')
+
+          marker='  function replaceTrack(id: string, patch: Partial<StemTrack>) {\n'
+          helpers='''  useEffect(() => {\n    loopEnabledRef.current = loopEnabled;\n    loopStartRef.current = loopStartSeconds;\n    loopEndRef.current = loopEndSeconds;\n  }, [loopEnabled, loopStartSeconds, loopEndSeconds]);\n\n  function rulerPointerSeconds(event: ReactPointerEvent<HTMLDivElement>) {\n    const rect = event.currentTarget.getBoundingClientRect();\n    return Math.max(0, Math.min(rulerDuration, ((event.clientX - rect.left) / Math.max(1, rect.width)) * rulerDuration));\n  }\n\n  function toggleLoop() {\n    setLoopEnabled((enabled) => {\n      const next = !enabled;\n      if (next && loopEndSeconds <= loopStartSeconds) {\n        const start = Math.min(playheadSeconds, rulerDuration);\n        setLoopStartSeconds(start);\n        setLoopEndSeconds(Math.min(rulerDuration, start + Math.max(0.5, (60 / Math.max(1, projectBpm)) * 4)));\n      }\n      setStatus(next ? "Loop on — drag across the timeline ruler to set the repeat range." : "Loop off.");\n      return next;\n    });\n  }\n\n  function beginLoopSelection(event: ReactPointerEvent<HTMLDivElement>) {\n    if (!loopEnabled) return;\n    event.preventDefault();\n    const value = rulerPointerSeconds(event);\n    loopDragStartRef.current = value;\n    setLoopStartSeconds(value);\n    setLoopEndSeconds(Math.min(rulerDuration, value + 0.1));\n    try { event.currentTarget.setPointerCapture(event.pointerId); } catch {}\n  }\n\n  function moveLoopSelection(event: ReactPointerEvent<HTMLDivElement>) {\n    if (!loopEnabled || loopDragStartRef.current === null) return;\n    event.preventDefault();\n    const value = rulerPointerSeconds(event);\n    const start = Math.min(loopDragStartRef.current, value);\n    const end = Math.max(loopDragStartRef.current, value);\n    setLoopStartSeconds(start);\n    setLoopEndSeconds(Math.max(start + 0.05, end));\n  }\n\n  function endLoopSelection(event: ReactPointerEvent<HTMLDivElement>) {\n    loopDragStartRef.current = null;\n    try { if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId); } catch {}\n  }\n\n'''
+          if marker not in s: raise SystemExit('replaceTrack marker missing')
+          s=s.replace(marker,helpers+marker,1)
+
+          old='''  function togglePreview() {\n    const player = previewRef.current;\n    if (!player) return;\n    if (playing) {\n      player.pause();\n      setPlaying(false);\n    } else {\n      void player.play();\n      setPlaying(true);\n    }\n  }\n'''
+          new='''  async function togglePreview() {\n    let player = previewRef.current;\n    if (!player) {\n      player = new Audio();\n      previewRef.current = player;\n    }\n    player.ontimeupdate = () => {\n      if (loopEnabledRef.current && loopEndRef.current > loopStartRef.current && player && player.currentTime >= loopEndRef.current) {\n        player.currentTime = loopStartRef.current;\n      }\n      if (player) setPlayheadSeconds(player.currentTime);\n    };\n    player.onended = () => { setPlaying(false); setPlayheadSeconds(0); };\n    if (playing) {\n      player.pause();\n      setPlaying(false);\n      setPlayheadSeconds(player.currentTime);\n      setStatus("Timeline paused.");\n      return;\n    }\n    setError("");\n    try {\n      let url = previewUrl;\n      if (!url) {\n        setBusy(true);\n        setStatus("Preparing Engineer Mode playback…");\n        const mixed = await renderMix(tracks);\n        const blob = encodeWav24(mixed);\n        url = URL.createObjectURL(blob);\n        setPreviewUrl(url);\n      }\n      if (player.src !== url) player.src = url;\n      const startAt = loopEnabled && playheadSeconds >= loopEndSeconds ? loopStartSeconds : playheadSeconds;\n      player.currentTime = Math.max(0, Math.min(startAt, duration));\n      await player.play();\n      setPlaying(true);\n      setStatus(loopEnabled ? "Engineer Mode timeline playing — loop active." : "Engineer Mode timeline playing.");\n    } catch (caught) {\n      setPlaying(false);\n      setError(caught instanceof Error ? caught.message : "Engineer Mode playback could not start on this device.");\n      setStatus("Playback stopped safely.");\n    } finally {\n      setBusy(false);\n    }\n  }\n'''
+          once(old,new,'play transport')
+          once('''                onClick={togglePreview}\n                disabled={!previewUrl}\n''','''                onClick={() => void togglePreview()}\n                disabled={busy || tracks.length === 0}\n''','top play')
+          s=s.replace('                onClick={togglePreview}\n','                onClick={() => void togglePreview()}\n')
+
+          once('''                className={`flex items-center gap-1 rounded-lg px-2.5 py-2 text-[9px] font-black uppercase tracking-wider ${snapEnabled ? "bg-orange-400 text-black" : "bg-white/8 text-white/50"}`}\n              >\n                <span className="relative grid size-[15px] place-items-center" aria-hidden="true">\n                  <Magnet size={13} />\n                  {!snapEnabled ? (\n                    <X className="absolute" size={15} strokeWidth={3} />\n''','''                className={`flex items-center gap-0.5 rounded-md px-1.5 py-1 text-[8px] font-black uppercase tracking-tight ${snapEnabled ? "bg-orange-400 text-black" : "bg-white/8 text-white/50"}`}\n              >\n                <span className="relative grid size-[11px] place-items-center" aria-hidden="true">\n                  <Magnet size={9} />\n                  {!snapEnabled ? (\n                    <X className="absolute" size={11} strokeWidth={2.5} />\n''','snap size')
+
+          once('''                <div className="relative h-9">\n                  {rulerMarks.map((mark, index) => (\n''','''                <div\n                  className={`relative h-9 ${loopEnabled ? "cursor-crosshair" : ""}`}\n                  onPointerDown={beginLoopSelection}\n                  onPointerMove={moveLoopSelection}\n                  onPointerUp={endLoopSelection}\n                  onPointerCancel={endLoopSelection}\n                >\n                  <button\n                    type="button"\n                    aria-pressed={loopEnabled}\n                    onPointerDown={(event) => event.stopPropagation()}\n                    onClick={(event) => { event.stopPropagation(); toggleLoop(); }}\n                    className={`absolute right-1 top-1 z-20 rounded px-1.5 py-0.5 text-[8px] font-black uppercase ${loopEnabled ? "bg-emerald-400 text-black" : "bg-white/10 text-white/55"}`}\n                  >\n                    ↻ Loop\n                  </button>\n                  {loopEnabled && loopEndSeconds > loopStartSeconds ? (\n                    <div\n                      className="pointer-events-none absolute inset-y-0 z-0 border-x border-emerald-300/80 bg-emerald-300/15"\n                      style={{ left: `${(loopStartSeconds / rulerDuration) * 100}%`, width: `${((loopEndSeconds - loopStartSeconds) / rulerDuration) * 100}%` }}\n                    />\n                  ) : null}\n                  {rulerMarks.map((mark, index) => (\n''','timeline loop UI')
+
+          p.write_text(s)
+          PY
+      - name: Verify build
+        run: |
+          npm ci
+          npm run build
+      - name: Commit verified Engineer Mode fixes
+        shell: bash
+        run: |
+          if git diff --quiet -- components/sound-furnace/StemSequencer.tsx; then
+            echo "No changes"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add components/sound-furnace/StemSequencer.tsx
+          git commit -m "fix Engineer Mode play loop snap and waveform colors"
+          git push
