@@ -1,6 +1,7 @@
 import "./globals.css";
 import CreditBalance from "../components/CreditBalance";
 import FurnaceSwitcher from "../components/FurnaceSwitcher";
+import PictureFurnaceSoundTrigger from "../components/PictureFurnaceSoundTrigger";
 import SequencerClipGestureGuard from "../components/SequencerClipGestureGuard";
 import SupportDock from "../components/SupportDock";
 import type { Metadata } from "next";
@@ -23,6 +24,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body>
         <FurnaceSwitcher />
         {children}
+        <PictureFurnaceSoundTrigger />
         <SequencerClipGestureGuard />
         <CreditBalance />
         <SupportDock />
