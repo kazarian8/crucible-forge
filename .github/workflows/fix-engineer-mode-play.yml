@@ -1,0 +1,132 @@
+name: Fix Engineer Mode play transport
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/fix-engineer-mode-play.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Patch Engineer Mode play transport
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("components/sound-furnace/StemSequencer.tsx")
+          text = path.read_text()
+
+          old_toggle = '''  function togglePreview() {
+    const player = previewRef.current;
+    if (!player) return;
+    if (playing) {
+      player.pause();
+      setPlaying(false);
+    } else {
+      void player.play();
+      setPlaying(true);
+    }
+  }
+'''
+
+          new_toggle = '''  async function togglePreview() {
+    let player = previewRef.current;
+    if (!player) {
+      player = new Audio();
+      previewRef.current = player;
+    }
+
+    player.ontimeupdate = () => setPlayheadSeconds(player?.currentTime ?? 0);
+    player.onended = () => {
+      setPlaying(false);
+      setPlayheadSeconds(0);
+    };
+
+    if (playing) {
+      player.pause();
+      setPlaying(false);
+      setPlayheadSeconds(player.currentTime);
+      setStatus("Timeline paused.");
+      return;
+    }
+
+    setError("");
+    try {
+      let url = previewUrl;
+      if (!url) {
+        setBusy(true);
+        setStatus("Preparing Engineer Mode playback…");
+        const mixed = await renderMix(tracks);
+        const blob = encodeWav24(mixed);
+        url = URL.createObjectURL(blob);
+        setPreviewUrl(url);
+      }
+
+      if (player.src != url) player.src = url;
+      player.currentTime = Math.max(0, Math.min(playheadSeconds, duration));
+      await player.play();
+      setPlaying(true);
+      setStatus("Engineer Mode timeline playing.");
+    } catch (caught) {
+      setPlaying(false);
+      setError(caught instanceof Error ? caught.message : "Engineer Mode playback could not start on this device.");
+      setStatus("Playback stopped safely.");
+    } finally {
+      setBusy(false);
+    }
+  }
+'''
+
+          if text.count(old_toggle) != 1:
+              raise SystemExit(f"playback function: expected 1 match, found {text.count(old_toggle)}")
+          text = text.replace(old_toggle, new_toggle, 1)
+
+          old_button = '''                onClick={togglePreview}
+                disabled={!previewUrl}
+'''
+          new_button = '''                onClick={() => void togglePreview()}
+                disabled={busy || tracks.length === 0}
+'''
+          if text.count(old_button) != 1:
+              raise SystemExit(f"Engineer Mode top play button: expected 1 match, found {text.count(old_button)}")
+          text = text.replace(old_button, new_button, 1)
+
+          # The bottom preview button can keep using the same transport, but make
+          # the async call explicit so React never treats its Promise as an event result.
+          text = text.replace('                onClick={togglePreview}\n', '                onClick={() => void togglePreview()}\n')
+
+          path.write_text(text)
+          PY
+
+      - name: Verify production build
+        run: |
+          npm ci
+          npm run build
+
+      - name: Commit verified fix
+        shell: bash
+        run: |
+          if git diff --quiet -- components/sound-furnace/StemSequencer.tsx; then
+            echo "No Engineer Mode play changes needed"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add components/sound-furnace/StemSequencer.tsx
+          git commit -m "fix Engineer Mode sequencer play button"
+          git push
