@@ -1,4 +1,4 @@
-name: Fix sequencer workstation controls
+name: Harden DAW timeline playback and controls
 
 on:
   push:
@@ -22,7 +22,7 @@ jobs:
           node-version: 20
           cache: npm
 
-      - name: Patch sequencer transport loop menu and snap
+      - name: Apply DAW behavior fixes
         shell: bash
         run: |
           python - <<'PY'
@@ -38,313 +38,85 @@ jobs:
                   raise SystemExit(f"{label}: expected 1 match, found {count}")
               text = text.replace(old, new, 1)
 
-          replace_once(
-              '  const pinchStartRef = useRef<PinchStart | null>(null);\n',
-              '  const pinchStartRef = useRef<PinchStart | null>(null);\n'
-              '  const loopDragStartRef = useRef<number | null>(null);\n'
-              '  const loopEnabledRef = useRef(false);\n'
-              '  const loopStartRef = useRef(0);\n'
-              '  const loopEndRef = useRef(0);\n',
-              'loop refs',
-          )
-
-          replace_once(
-              '  const [snapEnabled, setSnapEnabled] = useState(true);\n',
-              '  const [snapEnabled, setSnapEnabled] = useState(true);\n'
-              '  const [loopEnabled, setLoopEnabled] = useState(false);\n'
-              '  const [loopStartSeconds, setLoopStartSeconds] = useState(0);\n'
-              '  const [loopEndSeconds, setLoopEndSeconds] = useState(0);\n'
-              '  const [editMenuOpen, setEditMenuOpen] = useState(false);\n'
-              '  const [clipboardTrack, setClipboardTrack] = useState<StemTrack | null>(null);\n',
-              'loop and menu state',
-          )
-
-          marker = '  function replaceTrack(id: string, patch: Partial<StemTrack>) {\n'
-          insert = '''  useEffect(() => {
-    loopEnabledRef.current = loopEnabled;
-    loopStartRef.current = loopStartSeconds;
-    loopEndRef.current = loopEndSeconds;
-  }, [loopEnabled, loopStartSeconds, loopEndSeconds]);
-
-  function setDefaultLoop() {
-    const start = Math.min(playheadSeconds, Math.max(0, rulerDuration));
-    const fourBeats = (60 / Math.max(1, projectBpm)) * 4;
-    setLoopStartSeconds(start);
-    setLoopEndSeconds(Math.min(Math.max(start + 0.25, rulerDuration), start + fourBeats));
-  }
-
-  function toggleLoop() {
-    setLoopEnabled((enabled) => {
-      const next = !enabled;
-      if (next && loopEndSeconds <= loopStartSeconds) setDefaultLoop();
-      setStatus(next ? "Loop is on. Drag across the ruler to highlight the section to repeat." : "Loop is off.");
-      return next;
-    });
-  }
-
-  function beginLoopSelection(event: ReactPointerEvent<HTMLDivElement>) {
-    if (!loopEnabled) return;
-    event.preventDefault();
-    const rect = event.currentTarget.getBoundingClientRect();
-    const value = Math.max(0, Math.min(rulerDuration, ((event.clientX - rect.left) / Math.max(1, rect.width)) * rulerDuration));
-    loopDragStartRef.current = value;
-    setLoopStartSeconds(value);
-    setLoopEndSeconds(Math.min(rulerDuration, value + Math.max(0.1, (60 / Math.max(1, projectBpm)) / 4)));
-    try { event.currentTarget.setPointerCapture(event.pointerId); } catch {}
-  }
-
-  function moveLoopSelection(event: ReactPointerEvent<HTMLDivElement>) {
-    if (!loopEnabled || loopDragStartRef.current === null) return;
-    event.preventDefault();
-    const rect = event.currentTarget.getBoundingClientRect();
-    const value = Math.max(0, Math.min(rulerDuration, ((event.clientX - rect.left) / Math.max(1, rect.width)) * rulerDuration));
-    const start = Math.min(loopDragStartRef.current, value);
-    const end = Math.max(loopDragStartRef.current, value);
-    setLoopStartSeconds(start);
-    setLoopEndSeconds(Math.max(start + 0.05, end));
-  }
-
-  function endLoopSelection(event: ReactPointerEvent<HTMLDivElement>) {
-    loopDragStartRef.current = null;
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
-  }
-
-  function splitSelectedTrack() {
-    if (!selectedTrack) return;
-    const local = playheadSeconds - selectedTrack.startSeconds;
-    const clipLength = trackDuration(selectedTrack);
-    if (local <= 0.02 || local >= clipLength - 0.02) {
-      setError("Move the playhead inside the highlighted clip before splitting.");
-      return;
-    }
-    const splitSource = selectedTrack.trimStartSeconds + local;
-    const left: StemTrack = {
-      ...selectedTrack,
-      id: crypto.randomUUID(),
-      name: `${selectedTrack.name} · A`,
-      trimEndSeconds: splitSource,
-      fadeOutSeconds: Math.min(selectedTrack.fadeOutSeconds, 0.02),
-    };
-    const right: StemTrack = {
-      ...selectedTrack,
-      id: crypto.randomUUID(),
-      name: `${selectedTrack.name} · B`,
-      startSeconds: playheadSeconds,
-      originalStartSeconds: playheadSeconds,
-      trimStartSeconds: splitSource,
-      fadeInSeconds: Math.min(selectedTrack.fadeInSeconds, 0.02),
-    };
-    setTracks((current) => current.flatMap((track) => track.id === selectedTrack.id ? [left, right] : [track]));
-    setSelectedTrackId(right.id);
-    setEditMenuOpen(false);
-    setStatus(`Split ${selectedTrack.name} at ${formatTime(playheadSeconds)}.`);
-  }
-
-  function copySelectedTrack() {
-    if (!selectedTrack) return;
-    setClipboardTrack({ ...selectedTrack, effects: { ...selectedTrack.effects } });
-    setEditMenuOpen(false);
-    setStatus(`${selectedTrack.name} copied.`);
-  }
-
-  function pasteTrack() {
-    if (!clipboardTrack || tracks.length >= MAX_TRACKS) return;
-    const pasted: StemTrack = {
-      ...clipboardTrack,
-      id: crypto.randomUUID(),
-      name: `${clipboardTrack.name} · copy`,
-      startSeconds: playheadSeconds,
-      originalStartSeconds: playheadSeconds,
-      effects: { ...clipboardTrack.effects },
-    };
-    setTracks((current) => [...current, pasted]);
-    setSelectedTrackId(pasted.id);
-    setEditMenuOpen(false);
-    setStatus(`${clipboardTrack.name} pasted at ${formatTime(playheadSeconds)}.`);
-  }
-
-  function removeSelectedTrack() {
-    if (!selectedTrack) return;
-    const name = selectedTrack.name;
-    setTracks((current) => current.filter((track) => track.id !== selectedTrack.id));
-    setSelectedTrackId("");
-    setEditMenuOpen(false);
-    setStatus(`${name} removed.`);
-  }
-
+          # A DAW transport must never keep playing an obsolete rendered mix.
+          # Any edit to the track graph invalidates playback immediately.
+          marker = '''  function replaceTrack(id: string, patch: Partial<StemTrack>) {
 '''
           if marker not in text:
-              raise SystemExit('function marker missing')
-          text = text.replace(marker, insert + marker, 1)
-
-          old_toggle = '''  function togglePreview() {
+              raise SystemExit("replaceTrack marker missing")
+          if "Timeline edit invalidates the rendered preview" not in text:
+              invalidation = '''  // Timeline edit invalidates the rendered preview so playback always matches
+  // the clips, mute/solo state, trims, positions, gain and effects currently on screen.
+  useEffect(() => {
     const player = previewRef.current;
-    if (!player) return;
-    if (playing) {
+    if (player) {
       player.pause();
-      setPlaying(false);
-    } else {
-      void player.play();
-      setPlaying(true);
+      player.removeAttribute("src");
+      try { player.load(); } catch {}
     }
-  }
+    setPlaying(false);
+    setPreviewUrl((current) => {
+      if (current) URL.revokeObjectURL(current);
+      return "";
+    });
+  }, [tracks]);
+
 '''
-          new_toggle = '''  async function togglePreview() {
-    let player = previewRef.current;
-    if (!player) {
-      player = new Audio();
-      previewRef.current = player;
-    }
+              text = text.replace(marker, invalidation + marker, 1)
 
-    player.ontimeupdate = () => {
-      if (loopEnabledRef.current && loopEndRef.current > loopStartRef.current && player && player.currentTime >= loopEndRef.current) {
-        player.currentTime = loopStartRef.current;
-      }
-      if (player) setPlayheadSeconds(player.currentTime);
-    };
-    player.onended = () => {
-      setPlaying(false);
-      setPlayheadSeconds(0);
-    };
-
-    if (playing) {
-      player.pause();
-      setPlaying(false);
-      setPlayheadSeconds(player.currentTime);
-      setStatus("Timeline paused.");
-      return;
-    }
-
-    setError("");
-    try {
-      if (!previewUrl) {
-        setBusy(true);
-        setStatus("Preparing timeline playback…");
-        const mixed = await renderMix(tracks);
-        const blob = encodeWav24(mixed);
-        const url = URL.createObjectURL(blob);
-        setPreviewUrl(url);
-        player.src = url;
-      } else if (player.src !== previewUrl) {
-        player.src = previewUrl;
-      }
-      const startAt = loopEnabled && playheadSeconds >= loopEndSeconds ? loopStartSeconds : playheadSeconds;
-      player.currentTime = Math.max(0, Math.min(startAt, duration));
-      await player.play();
-      setPlaying(true);
-      setStatus(loopEnabled ? "Timeline playing with loop enabled." : "Timeline playing.");
-    } catch {
-      setPlaying(false);
-      setError("Timeline playback could not start on this device.");
-      setStatus("Playback stopped safely.");
-    } finally {
-      setBusy(false);
-    }
-  }
-'''
-          replace_once(old_toggle, new_toggle, 'playback function')
-
-          replace_once(
-              '                onClick={togglePreview}\n                disabled={!previewUrl}\n',
-              '                onClick={() => void togglePreview()}\n                disabled={busy || tracks.length === 0}\n',
-              'top play button',
-          )
-
-          replace_once(
-              '                className={`flex items-center gap-1 rounded-lg px-2.5 py-2 text-[9px] font-black uppercase tracking-wider ${snapEnabled ? "bg-orange-400 text-black" : "bg-white/8 text-white/50"}`}\n',
-              '                className={`flex items-center gap-0.5 rounded-md px-1.5 py-1 text-[8px] font-black uppercase tracking-tight ${snapEnabled ? "bg-orange-400 text-black" : "bg-white/8 text-white/50"}`}\n',
-              'smaller snap',
-          )
-
-          old_zoom = '''              <button type="button" aria-label="Zoom timeline out" onClick={() => setTimelineZoom((zoom) => Math.max(1, zoom - 0.5))} className="grid size-8 place-items-center rounded-lg bg-white/8 text-white/55"><ZoomOut size={14} /></button>
-'''
-          new_zoom = '''              <button
+          old_snap = '''              <button
                 type="button"
-                aria-pressed={loopEnabled}
-                onClick={toggleLoop}
-                className={`rounded-md px-2 py-1 text-[8px] font-black uppercase tracking-wider ${loopEnabled ? "bg-emerald-400 text-black" : "bg-white/8 text-white/55"}`}
+                aria-pressed={snapEnabled}
+                onClick={() => setSnapEnabled((enabled) => !enabled)}
+                className={`flex items-center gap-0.5 rounded-md px-1.5 py-1 text-[8px] font-black uppercase tracking-tight ${snapEnabled ? "bg-orange-400 text-black" : "bg-white/8 text-white/50"}`}
               >
-                Loop
-              </button>
-              <div className="relative">
-                <button type="button" onClick={() => setEditMenuOpen((open) => !open)} className="rounded-md bg-white/8 px-2 py-1 text-[8px] font-black uppercase tracking-wider text-white/65">Edit</button>
-                {editMenuOpen ? (
-                  <div className="absolute right-0 top-8 z-50 min-w-40 overflow-hidden rounded-xl border border-white/10 bg-[#15110f] p-1 shadow-2xl">
-                    <button type="button" onClick={splitSelectedTrack} disabled={!selectedTrack} className="block w-full rounded-lg px-3 py-2 text-left text-xs font-bold text-white/75 disabled:opacity-30">Split</button>
-                    <button type="button" onClick={copySelectedTrack} disabled={!selectedTrack} className="block w-full rounded-lg px-3 py-2 text-left text-xs font-bold text-white/75 disabled:opacity-30">Copy</button>
-                    <button type="button" onClick={pasteTrack} disabled={!clipboardTrack || tracks.length >= MAX_TRACKS} className="block w-full rounded-lg px-3 py-2 text-left text-xs font-bold text-white/75 disabled:opacity-30">Paste</button>
-                    <button type="button" onClick={() => { setEditMenuOpen(false); fileInputRef.current?.click(); }} disabled={tracks.length >= MAX_TRACKS} className="block w-full rounded-lg px-3 py-2 text-left text-xs font-bold text-white/75 disabled:opacity-30">Add track</button>
-                    <button type="button" onClick={() => { setEditMenuOpen(false); void addVocalLane(); }} disabled={tracks.length >= MAX_TRACKS} className="block w-full rounded-lg px-3 py-2 text-left text-xs font-bold text-white/75 disabled:opacity-30">Add vocal track</button>
-                    <button type="button" onClick={removeSelectedTrack} disabled={!selectedTrack} className="block w-full rounded-lg px-3 py-2 text-left text-xs font-bold text-red-300 disabled:opacity-30">Remove track</button>
-                  </div>
-                ) : null}
-              </div>
-              <button type="button" aria-label="Zoom timeline out" onClick={() => setTimelineZoom((zoom) => Math.max(1, zoom - 0.5))} className="grid size-8 place-items-center rounded-lg bg-white/8 text-white/55"><ZoomOut size={14} /></button>
-'''
-          replace_once(old_zoom, new_zoom, 'loop and edit controls')
-
-          old_ruler = '''                <div className="relative h-9">
-                  {rulerMarks.map((mark, index) => (
-'''
-          new_ruler = '''                <div
-                  className={`relative h-9 ${loopEnabled ? "cursor-crosshair" : ""}`}
-                  onPointerDown={beginLoopSelection}
-                  onPointerMove={moveLoopSelection}
-                  onPointerUp={endLoopSelection}
-                  onPointerCancel={endLoopSelection}
-                >
-                  {loopEnabled && loopEndSeconds > loopStartSeconds ? (
-                    <div
-                      className="pointer-events-none absolute inset-y-0 z-0 rounded-sm border-x border-emerald-300/70 bg-emerald-300/15"
-                      style={{ left: `${(loopStartSeconds / rulerDuration) * 100}%`, width: `${((loopEndSeconds - loopStartSeconds) / rulerDuration) * 100}%` }}
-                    />
+                <span className="relative grid size-[11px] place-items-center" aria-hidden="true">
+                  <Magnet size={9} />
+                  {!snapEnabled ? (
+                    <X className="absolute" size={11} strokeWidth={2.5} />
                   ) : null}
-                  {rulerMarks.map((mark, index) => (
+                </span>
+                {snapEnabled ? `Snap ${snapDivision}` : "Snap off"}
+              </button>
 '''
-          replace_once(old_ruler, new_ruler, 'loop ruler selection')
-
-          replace_once(
-              '          <button\n            type="button"\n            onClick={() => fileInputRef.current?.click()}\n',
-              '          <a href="/workstation" className="flex items-center gap-2 rounded-xl border border-emerald-300/20 bg-emerald-400/[0.06] px-4 py-2.5 text-xs font-black text-emerald-100">Workstation</a>\n          <button\n            type="button"\n            onClick={() => fileInputRef.current?.click()}\n',
-              'workstation link',
-          )
-
-          old_audio = '''              <audio
-                ref={previewRef}
-                src={previewUrl}
-                onTimeUpdate={(event) => setPlayheadSeconds(event.currentTarget.currentTime)}
-                onEnded={() => {
-                  setPlaying(false);
-                  setPlayheadSeconds(0);
-                }}
-                preload="metadata"
-              />
+          new_snap = '''              <button
+                type="button"
+                aria-pressed={snapEnabled}
+                aria-label={snapEnabled ? `Snap on at ${snapDivision}. Tap to turn snap off.` : "Snap off. Tap to turn snap on."}
+                title={snapEnabled ? `Snap ${snapDivision}` : "Snap off"}
+                onClick={() => setSnapEnabled((enabled) => !enabled)}
+                className={`relative grid size-6 shrink-0 place-items-center rounded-md ${snapEnabled ? "bg-orange-400 text-black" : "bg-white/8 text-white/50"}`}
+              >
+                <Magnet size={11} aria-hidden="true" />
+                {!snapEnabled ? (
+                  <X className="absolute" size={13} strokeWidth={2.5} aria-hidden="true" />
+                ) : null}
+              </button>
 '''
-          replace_once(old_audio, '', 'remove conditional audio element')
+          replace_once(old_snap, new_snap, "compact snap icon")
 
-          replace_once(
-              '                onClick={togglePreview}\n',
-              '                onClick={() => void togglePreview()}\n',
-              'bottom play button',
-          )
+          # Keep Loop on the visible beginning of the ruler instead of the far-right
+          # edge of a horizontally scrollable timeline.
+          old_loop_class = '''                    className={`absolute right-1 top-1 z-20 rounded px-1.5 py-0.5 text-[8px] font-black uppercase ${loopEnabled ? "bg-emerald-400 text-black" : "bg-white/10 text-white/55"}`}
+'''
+          new_loop_class = '''                    className={`absolute left-1 top-1 z-20 rounded px-1.5 py-0.5 text-[8px] font-black uppercase ${loopEnabled ? "bg-emerald-400 text-black" : "bg-white/10 text-white/55"}`}
+'''
+          replace_once(old_loop_class, new_loop_class, "visible loop control")
 
           path.write_text(text)
           PY
 
-      - name: Validate build
+      - name: Validate production build
         run: |
           npm ci
           npm run build
 
-      - name: Commit fixes
+      - name: Commit verified fixes and retire one-shot workflow
         shell: bash
         run: |
-          if git diff --quiet -- components/sound-furnace/StemSequencer.tsx; then
-            echo "No sequencer changes needed"
-            exit 0
-          fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/fix-sequencer-workstation-controls.yml
           git add components/sound-furnace/StemSequencer.tsx
-          git commit -m "fix sequencer playback loop menu and workstation controls"
+          git commit -m "fix DAW playback state loop visibility and snap control"
           git push
