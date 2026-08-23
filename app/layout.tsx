@@ -13,8 +13,8 @@ const gochiHand = Gochi_Hand({ weight: "400", subsets: ["latin"], variable: "--f
 
 export const metadata: Metadata = {
   title: { default: "Crucible Forge", template: "%s | Crucible Forge" },
-  description: "Private browser-based creative tools for independent creators.",
-  keywords: ["AI", "Artificial Intelligence", "Audio Mastering", "Music Production", "Creative Tools", "Crucible Forge"],
+  description: "AI-assisted file DNA analysis, editing, repair, transformation, and verification infrastructure for creators.",
+  keywords: ["AI", "File DNA", "AI Editing", "Audio Mastering", "Music Production", "Image Editing", "Video Analysis", "Creative Infrastructure", "Crucible Forge"],
   manifest: "/manifest.webmanifest",
 };
 
