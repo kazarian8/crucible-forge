@@ -1,7 +1,6 @@
 import "./globals.css";
 import CreditBalance from "../components/CreditBalance";
-import FurnaceSwitcher from "../components/FurnaceSwitcher";
-import PictureFurnaceSoundTrigger from "../components/PictureFurnaceSoundTrigger";
+import ArtistBottomNav from "../components/ArtistBottomNav";
 import SequencerClipGestureGuard from "../components/SequencerClipGestureGuard";
 import SupportDock from "../components/SupportDock";
 import type { Metadata } from "next";
@@ -13,18 +12,17 @@ const gochiHand = Gochi_Hand({ weight: "400", subsets: ["latin"], variable: "--f
 
 export const metadata: Metadata = {
   title: { default: "Crucible Forge", template: "%s | Crucible Forge" },
-  description: "AI-assisted file DNA analysis, editing, repair, transformation, and verification infrastructure for creators.",
-  keywords: ["AI", "File DNA", "AI Editing", "Audio Mastering", "Music Production", "Image Editing", "Video Analysis", "Creative Infrastructure", "Crucible Forge"],
+  description: "A private independent-artist network for making music, collaborating, sharing releases, and getting discovered.",
+  keywords: ["independent artists", "music collaboration", "DAW", "music production", "beats", "samples", "artist discovery", "Crucible Forge"],
   manifest: "/manifest.webmanifest",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className={`${spaceGrotesk.variable} ${jetBrainsMono.variable} ${gochiHand.variable}`}>
-      <body>
-        <FurnaceSwitcher />
+      <body className="pb-20 md:pb-0">
         {children}
-        <PictureFurnaceSoundTrigger />
+        <ArtistBottomNav />
         <SequencerClipGestureGuard />
         <CreditBalance />
         <SupportDock />
