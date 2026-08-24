@@ -1,4 +1,4 @@
-name: Fix pause transport and compact snap control
+name: Repair DAW transport pause
 
 on:
   push:
@@ -22,7 +22,7 @@ jobs:
           node-version: 20
           cache: npm
 
-      - name: Patch transport and snap UI
+      - name: Repair play pause transport
         shell: bash
         run: |
           python - <<'PY'
@@ -33,49 +33,51 @@ jobs:
           text = path.read_text()
           original = text
 
-          # Pause must follow the real HTMLAudioElement state, not a possibly stale
-          # React render. This makes the same transport button reliably pause audio.
-          text, pause_count = re.subn(
-              r'if \(playing\) \{\n\s*player\.pause\(\);\n\s*setPlaying\(false\);',
-              'if (!player.paused) {\n      player.pause();\n      setPlaying(false);',
-              text,
-              count=1,
-          )
-          if pause_count != 1 and 'if (!player.paused)' not in text:
-              raise SystemExit("pause transport pattern not found")
+          start = text.find("  async function togglePreview() {")
+          if start < 0:
+              raise SystemExit("togglePreview function not found")
+          end = text.find("\n  function ", start + 1)
+          if end < 0:
+              end = text.find("\n  async function ", start + 1)
+          if end < 0:
+              raise SystemExit("togglePreview function boundary not found")
 
-          # Make Snap an actually small icon-only control. Keep state obvious with
-          # the magnet plus an X overlay when disabled; label stays in aria/title.
-          snap_pattern = re.compile(
-              r'''(?P<indent>\s*)<button\n(?P=indent)  type="button"\n(?P=indent)  aria-pressed=\{snapEnabled\}.*?</button>''',
+          block = text[start:end]
+
+          # Pause must use the actual HTMLAudioElement state. React's `playing`
+          # state can lag a tap on mobile Safari and caused the transport button
+          # to call play again instead of pausing.
+          block, count = re.subn(r"if\s*\(playing\)\s*\{", "if (!player.paused) {", block, count=1)
+          if count == 0 and "if (!player.paused)" not in block:
+              raise SystemExit("pause condition not found inside togglePreview")
+
+          # Keep the playhead at the exact paused position and return immediately,
+          # so the same tap cannot fall through into the play path.
+          pause_pattern = re.compile(
+              r"if \(!player\.paused\) \{(?P<body>.*?)\n\s*\}",
               re.S,
           )
-          matches = list(snap_pattern.finditer(text))
-          target = None
-          for match in matches:
-              block = match.group(0)
-              if 'setSnapEnabled' in block and ('Magnet' in block or 'Snap' in block):
-                  target = match
-                  break
-          if target:
-              indent = target.group('indent')
-              replacement = f'''{indent}<button
-{indent}  type="button"
-{indent}  aria-pressed={{snapEnabled}}
-{indent}  aria-label={{snapEnabled ? `Snap on at ${{snapDivision}}. Tap to turn off.` : "Snap off. Tap to turn on."}}
-{indent}  title={{snapEnabled ? `Snap ${{snapDivision}}` : "Snap off"}}
-{indent}  onClick={{() => setSnapEnabled((enabled) => !enabled)}}
-{indent}  className={{`relative grid size-5 shrink-0 place-items-center rounded ${{snapEnabled ? "bg-orange-400 text-black" : "bg-white/8 text-white/50"}}`}}
-{indent}>
-{indent}  <Magnet size={{9}} aria-hidden="true" />
-{indent}  {{!snapEnabled ? <X className="absolute" size={{10}} strokeWidth={{2.5}} aria-hidden="true" /> : null}}
-{indent}</button>'''
-              text = text[:target.start()] + replacement + text[target.end():]
-          elif 'size-5 shrink-0 place-items-center' not in text:
-              raise SystemExit("snap control pattern not found")
+          match = pause_pattern.search(block)
+          if not match:
+              raise SystemExit("pause branch not found")
+          body = match.group("body")
+          if "player.pause();" not in body:
+              raise SystemExit("pause branch does not pause audio")
+          if "return;" not in body:
+              body = body.rstrip() + '\n      setPlayheadSeconds(player.currentTime);\n      setStatus("Timeline paused.");\n      return;'
+              replacement = "if (!player.paused) {" + body + "\n    }"
+              block = block[:match.start()] + replacement + block[match.end():]
+
+          text = text[:start] + block + text[end:]
+
+          # Keep the Loop control anchored to the visible start of the ruler.
+          text = text.replace(
+              'className={`absolute right-1 top-1 z-20 rounded px-1.5 py-0.5 text-[8px] font-black uppercase ${loopEnabled ? "bg-emerald-400 text-black" : "bg-white/10 text-white/55"}`}',
+              'className={`absolute left-1 top-1 z-20 rounded px-1.5 py-0.5 text-[8px] font-black uppercase ${loopEnabled ? "bg-emerald-400 text-black" : "bg-white/10 text-white/55"}`}',
+          )
 
           if text == original:
-              raise SystemExit("No changes applied")
+              raise SystemExit("No transport changes were needed")
           path.write_text(text)
           PY
 
@@ -84,15 +86,15 @@ jobs:
           npm ci
           npm run build
 
-      - name: Commit verified fix
+      - name: Commit verified transport repair
         shell: bash
         run: |
           if git diff --quiet -- components/sound-furnace/StemSequencer.tsx; then
-            echo "No sequencer changes needed"
+            echo "No sequencer transport changes"
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add components/sound-furnace/StemSequencer.tsx
-          git commit -m "fix sequencer pause and shrink snap icon"
+          git commit -m "fix DAW play pause transport and loop visibility"
           git push
