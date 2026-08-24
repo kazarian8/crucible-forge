@@ -1,4 +1,4 @@
-name: Harden DAW timeline playback and controls
+name: Fix pause transport and compact snap control
 
 on:
   push:
@@ -22,101 +22,77 @@ jobs:
           node-version: 20
           cache: npm
 
-      - name: Apply DAW behavior fixes
+      - name: Patch transport and snap UI
         shell: bash
         run: |
           python - <<'PY'
           from pathlib import Path
+          import re
 
           path = Path("components/sound-furnace/StemSequencer.tsx")
           text = path.read_text()
+          original = text
 
-          def replace_once(old, new, label):
-              global text
-              count = text.count(old)
-              if count != 1:
-                  raise SystemExit(f"{label}: expected 1 match, found {count}")
-              text = text.replace(old, new, 1)
+          # Pause must follow the real HTMLAudioElement state, not a possibly stale
+          # React render. This makes the same transport button reliably pause audio.
+          text, pause_count = re.subn(
+              r'if \(playing\) \{\n\s*player\.pause\(\);\n\s*setPlaying\(false\);',
+              'if (!player.paused) {\n      player.pause();\n      setPlaying(false);',
+              text,
+              count=1,
+          )
+          if pause_count != 1 and 'if (!player.paused)' not in text:
+              raise SystemExit("pause transport pattern not found")
 
-          # A DAW transport must never keep playing an obsolete rendered mix.
-          # Any edit to the track graph invalidates playback immediately.
-          marker = '''  function replaceTrack(id: string, patch: Partial<StemTrack>) {
-'''
-          if marker not in text:
-              raise SystemExit("replaceTrack marker missing")
-          if "Timeline edit invalidates the rendered preview" not in text:
-              invalidation = '''  // Timeline edit invalidates the rendered preview so playback always matches
-  // the clips, mute/solo state, trims, positions, gain and effects currently on screen.
-  useEffect(() => {
-    const player = previewRef.current;
-    if (player) {
-      player.pause();
-      player.removeAttribute("src");
-      try { player.load(); } catch {}
-    }
-    setPlaying(false);
-    setPreviewUrl((current) => {
-      if (current) URL.revokeObjectURL(current);
-      return "";
-    });
-  }, [tracks]);
+          # Make Snap an actually small icon-only control. Keep state obvious with
+          # the magnet plus an X overlay when disabled; label stays in aria/title.
+          snap_pattern = re.compile(
+              r'''(?P<indent>\s*)<button\n(?P=indent)  type="button"\n(?P=indent)  aria-pressed=\{snapEnabled\}.*?</button>''',
+              re.S,
+          )
+          matches = list(snap_pattern.finditer(text))
+          target = None
+          for match in matches:
+              block = match.group(0)
+              if 'setSnapEnabled' in block and ('Magnet' in block or 'Snap' in block):
+                  target = match
+                  break
+          if target:
+              indent = target.group('indent')
+              replacement = f'''{indent}<button
+{indent}  type="button"
+{indent}  aria-pressed={{snapEnabled}}
+{indent}  aria-label={{snapEnabled ? `Snap on at ${{snapDivision}}. Tap to turn off.` : "Snap off. Tap to turn on."}}
+{indent}  title={{snapEnabled ? `Snap ${{snapDivision}}` : "Snap off"}}
+{indent}  onClick={{() => setSnapEnabled((enabled) => !enabled)}}
+{indent}  className={{`relative grid size-5 shrink-0 place-items-center rounded ${{snapEnabled ? "bg-orange-400 text-black" : "bg-white/8 text-white/50"}}`}}
+{indent}>
+{indent}  <Magnet size={{9}} aria-hidden="true" />
+{indent}  {{!snapEnabled ? <X className="absolute" size={{10}} strokeWidth={{2.5}} aria-hidden="true" /> : null}}
+{indent}</button>'''
+              text = text[:target.start()] + replacement + text[target.end():]
+          elif 'size-5 shrink-0 place-items-center' not in text:
+              raise SystemExit("snap control pattern not found")
 
-'''
-              text = text.replace(marker, invalidation + marker, 1)
-
-          old_snap = '''              <button
-                type="button"
-                aria-pressed={snapEnabled}
-                onClick={() => setSnapEnabled((enabled) => !enabled)}
-                className={`flex items-center gap-0.5 rounded-md px-1.5 py-1 text-[8px] font-black uppercase tracking-tight ${snapEnabled ? "bg-orange-400 text-black" : "bg-white/8 text-white/50"}`}
-              >
-                <span className="relative grid size-[11px] place-items-center" aria-hidden="true">
-                  <Magnet size={9} />
-                  {!snapEnabled ? (
-                    <X className="absolute" size={11} strokeWidth={2.5} />
-                  ) : null}
-                </span>
-                {snapEnabled ? `Snap ${snapDivision}` : "Snap off"}
-              </button>
-'''
-          new_snap = '''              <button
-                type="button"
-                aria-pressed={snapEnabled}
-                aria-label={snapEnabled ? `Snap on at ${snapDivision}. Tap to turn snap off.` : "Snap off. Tap to turn snap on."}
-                title={snapEnabled ? `Snap ${snapDivision}` : "Snap off"}
-                onClick={() => setSnapEnabled((enabled) => !enabled)}
-                className={`relative grid size-6 shrink-0 place-items-center rounded-md ${snapEnabled ? "bg-orange-400 text-black" : "bg-white/8 text-white/50"}`}
-              >
-                <Magnet size={11} aria-hidden="true" />
-                {!snapEnabled ? (
-                  <X className="absolute" size={13} strokeWidth={2.5} aria-hidden="true" />
-                ) : null}
-              </button>
-'''
-          replace_once(old_snap, new_snap, "compact snap icon")
-
-          # Keep Loop on the visible beginning of the ruler instead of the far-right
-          # edge of a horizontally scrollable timeline.
-          old_loop_class = '''                    className={`absolute right-1 top-1 z-20 rounded px-1.5 py-0.5 text-[8px] font-black uppercase ${loopEnabled ? "bg-emerald-400 text-black" : "bg-white/10 text-white/55"}`}
-'''
-          new_loop_class = '''                    className={`absolute left-1 top-1 z-20 rounded px-1.5 py-0.5 text-[8px] font-black uppercase ${loopEnabled ? "bg-emerald-400 text-black" : "bg-white/10 text-white/55"}`}
-'''
-          replace_once(old_loop_class, new_loop_class, "visible loop control")
-
+          if text == original:
+              raise SystemExit("No changes applied")
           path.write_text(text)
           PY
 
-      - name: Validate production build
+      - name: Verify production build
         run: |
           npm ci
           npm run build
 
-      - name: Commit verified fixes and retire one-shot workflow
+      - name: Commit verified fix
         shell: bash
         run: |
+          if git diff --quiet -- components/sound-furnace/StemSequencer.tsx; then
+            echo "No sequencer changes needed"
+            exit 0
+          fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git rm .github/workflows/fix-sequencer-workstation-controls.yml
           git add components/sound-furnace/StemSequencer.tsx
-          git commit -m "fix DAW playback state loop visibility and snap control"
+          git commit -m "fix sequencer pause and shrink snap icon"
           git push
