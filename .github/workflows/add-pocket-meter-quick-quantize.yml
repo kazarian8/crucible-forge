@@ -1,0 +1,195 @@
+name: Add Pocket Meter and Quick Quantize
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/add-pocket-meter-quick-quantize.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Add vocal pocket meter and quick quantize
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("components/sound-furnace/StemSequencer.tsx")
+          text = path.read_text()
+          original = text
+
+          state_anchor = '  const [cadenceStrength, setCadenceStrength] = useState(65);\n'
+          state_insert = state_anchor + '  const [pocketMeterEnabled, setPocketMeterEnabled] = useState(false);\n'
+          if 'pocketMeterEnabled' not in text:
+              if state_anchor not in text:
+                  raise SystemExit('cadence strength state anchor not found')
+              text = text.replace(state_anchor, state_insert, 1)
+
+          function_anchor = '  function scanCadence() {\n'
+          functions = r'''  function snapStepSeconds() {
+    const snapMultipliers: Record<string, number> = { "1/4": 1, "1/8": 0.5, "1/16": 0.25, "1/32": 0.125 };
+    return (60 / Math.max(1, projectBpm)) * (snapMultipliers[snapDivision] ?? 0.25);
+  }
+
+  function pocketHits(track: StemTrack) {
+    const profile = cadenceProfiles[track.id];
+    if (!profile) return [];
+    const step = snapStepSeconds();
+    const tolerance = Math.max(0.025, Math.min(0.09, step * 0.28));
+    const duration = Math.max(0.001, trackDuration(track));
+    return profile.onsets
+      .filter((onset) => onset >= track.trimStartSeconds && onset <= track.trimEndSeconds)
+      .map((onset) => {
+        const absolute = track.startSeconds + onset - track.trimStartSeconds;
+        const target = Math.round(absolute / step) * step;
+        const delta = absolute - target;
+        const distance = Math.abs(delta);
+        const grade = distance <= tolerance ? "on" : distance <= tolerance * 2 ? "near" : "off";
+        return {
+          left: Math.max(0, Math.min(100, ((onset - track.trimStartSeconds) / duration) * 100)),
+          delta,
+          grade,
+        };
+      });
+  }
+
+  function togglePocketMeter() {
+    const next = !pocketMeterEnabled;
+    setPocketMeterEnabled(next);
+    if (!next) {
+      setStatus("Pocket Meter hidden. Vocal timing is unchanged.");
+      return;
+    }
+    const profiles = { ...cadenceProfiles };
+    for (const track of tracks) {
+      if (VOCAL_TRACK_PATTERN.test(track.name) && !profiles[track.id]) {
+        profiles[track.id] = analyzeCadence(track.buffer);
+      }
+    }
+    setCadenceProfiles(profiles);
+    setStatus(`Pocket Meter on — green is in pocket, amber is close, red is early/late against ${projectBpm} BPM at ${snapDivision}.`);
+  }
+
+  function quickQuantizeSelectedVocal() {
+    if (!selectedTrack || !VOCAL_TRACK_PATTERN.test(selectedTrack.name)) {
+      setError("Select a vocal lane before using Quick Quantize.");
+      setStatus("Quick Quantize only moves the selected vocal take.");
+      return;
+    }
+    const profile = cadenceProfiles[selectedTrack.id] ?? analyzeCadence(selectedTrack.buffer);
+    const step = snapStepSeconds();
+    const corrections = profile.onsets
+      .filter((onset) => onset >= selectedTrack.trimStartSeconds && onset <= selectedTrack.trimEndSeconds)
+      .map((onset) => {
+        const absolute = selectedTrack.startSeconds + onset - selectedTrack.trimStartSeconds;
+        return Math.round(absolute / step) * step - absolute;
+      })
+      .filter((correction) => Math.abs(correction) <= step * 0.5);
+    if (corrections.length === 0) {
+      setError("No clear vocal timing events were found to quantize.");
+      return;
+    }
+    const nudge = median(corrections) * (cadenceStrength / 100);
+    replaceTrack(selectedTrack.id, { startSeconds: Math.max(0, selectedTrack.startSeconds + nudge) });
+    setCadenceProfiles((current) => ({ ...current, [selectedTrack.id]: profile }));
+    setPocketMeterEnabled(true);
+    setError("");
+    setStatus(`Quick Quantize ${cadenceStrength}% applied to ${selectedTrack.name} at ${snapDivision}. The take moved as one piece; the vocal audio was not chopped or stretched.`);
+  }
+
+'''
+          if 'function quickQuantizeSelectedVocal()' not in text:
+              if function_anchor not in text:
+                  raise SystemExit('scanCadence anchor not found')
+              text = text.replace(function_anchor, functions + function_anchor, 1)
+
+          snap_anchor = '''              <button
+                type="button"
+                aria-pressed={snapEnabled}
+                onClick={() => setSnapEnabled((enabled) => !enabled)}
+'''
+          controls = '''              <button
+                type="button"
+                aria-pressed={pocketMeterEnabled}
+                onClick={togglePocketMeter}
+                className={`rounded-md px-2 py-1 text-[8px] font-black uppercase tracking-tight ${pocketMeterEnabled ? "bg-emerald-400 text-black" : "bg-white/8 text-white/50"}`}
+                title="Show vocal timing against the BPM grid"
+              >
+                Pocket {pocketMeterEnabled ? "on" : "off"}
+              </button>
+              <button
+                type="button"
+                onClick={quickQuantizeSelectedVocal}
+                disabled={busy || !selectedTrack || !VOCAL_TRACK_PATTERN.test(selectedTrack.name)}
+                className="rounded-md border border-violet-300/25 bg-violet-300/10 px-2 py-1 text-[8px] font-black uppercase tracking-tight text-violet-100 disabled:opacity-30"
+                title={`Nudge the selected vocal toward the ${snapDivision} grid at ${cadenceStrength}% strength`}
+              >
+                Quantize {cadenceStrength}%
+              </button>
+'''
+          if 'Pocket {pocketMeterEnabled ? "on" : "off"}' not in text:
+              if snap_anchor not in text:
+                  raise SystemExit('snap control anchor not found')
+              text = text.replace(snap_anchor, controls + snap_anchor, 1)
+
+          wave_anchor = '                          <TimelineWaveform track={track} waveColor={waveColor} />\n'
+          overlay = wave_anchor + '''                          {pocketMeterEnabled && VOCAL_TRACK_PATTERN.test(track.name) ? (
+                            <span className="pointer-events-none absolute inset-0 z-10" aria-hidden="true">
+                              {pocketHits(track).map((hit, hitIndex) => (
+                                <span
+                                  key={`${track.id}-pocket-${hitIndex}`}
+                                  className={`absolute bottom-1 top-1 w-[2px] rounded-full ${hit.grade === "on" ? "bg-emerald-300 shadow-[0_0_7px_rgba(110,231,183,.8)]" : hit.grade === "near" ? "bg-amber-300" : "bg-red-400"}`}
+                                  style={{ left: `${hit.left}%` }}
+                                  title={`${hit.delta < 0 ? "Early" : "Late"} ${Math.round(Math.abs(hit.delta) * 1000)} ms`}
+                                />
+                              ))}
+                            </span>
+                          ) : null}
+'''
+          if 'track.id}-pocket-' not in text:
+              if wave_anchor not in text:
+                  raise SystemExit('timeline waveform anchor not found')
+              text = text.replace(wave_anchor, overlay, 1)
+
+          smart_anchor = '              <p className="mt-1 text-xs leading-5 text-white/42">Choose a reference stem, scan the timing pocket, then approve any suggested lane nudges.</p>\n'
+          smart_replacement = '              <p className="mt-1 text-xs leading-5 text-white/42">Choose a reference stem, scan the timing pocket, then approve any suggested lane nudges. Pocket Meter overlays vocal hits against the project grid; Quick Quantize uses the same strength and snap division.</p>\n'
+          if smart_anchor in text:
+              text = text.replace(smart_anchor, smart_replacement, 1)
+
+          if text == original:
+              raise SystemExit('Pocket Meter patch made no changes')
+          path.write_text(text)
+          PY
+
+      - name: Verify TypeScript and production build
+        run: |
+          npm ci
+          npm run typecheck
+          npm run build
+
+      - name: Commit verified Pocket Meter
+        shell: bash
+        run: |
+          if git diff --quiet -- components/sound-furnace/StemSequencer.tsx; then
+            echo "No Pocket Meter changes"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add components/sound-furnace/StemSequencer.tsx
+          git commit -m "add vocal Pocket Meter and Quick Quantize"
+          git push
