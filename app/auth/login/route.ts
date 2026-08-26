@@ -5,6 +5,7 @@ import { createAdminClient } from "../../../lib/supabase/admin";
 type PendingCookie = { name: string; value: string; options: CookieOptions };
 
 type UserSummary = {
+  id?: string;
   email?: string | null;
   email_confirmed_at?: string | null;
 };
@@ -17,17 +18,47 @@ function getClientIp(request: NextRequest) {
   );
 }
 
+async function listUsers() {
+  const admin = createAdminClient();
+  const users: UserSummary[] = [];
+  for (let page = 1; page <= 10; page += 1) {
+    const { data, error } = await admin.auth.admin.listUsers({ page, perPage: 1000 });
+    if (error) return undefined;
+    users.push(...data.users);
+    if (data.users.length < 1000) break;
+  }
+  return users;
+}
+
 async function findUserByEmail(email: string): Promise<UserSummary | null | undefined> {
   try {
+    const users = await listUsers();
+    if (!users) return undefined;
+    return users.find((user) => user.email?.toLowerCase() === email) ?? null;
+  } catch {
+    return undefined;
+  }
+}
+
+async function resolveLoginToEmail(login: string): Promise<string | null | undefined> {
+  const normalized = login.trim().toLowerCase();
+  if (normalized.includes("@")) return normalized;
+
+  try {
     const admin = createAdminClient();
-    for (let page = 1; page <= 10; page += 1) {
-      const { data, error } = await admin.auth.admin.listUsers({ page, perPage: 1000 });
-      if (error) return undefined;
-      const found = data.users.find((user) => user.email?.toLowerCase() === email);
-      if (found) return found;
-      if (data.users.length < 1000) return null;
-    }
-    return null;
+    const { data: profiles, error } = await admin
+      .from("profiles")
+      .select("id,username")
+      .ilike("username", normalized)
+      .limit(2);
+
+    if (error) return undefined;
+    const profile = profiles?.[0];
+    if (!profile?.id) return null;
+
+    const { data, error: userError } = await admin.auth.admin.getUserById(profile.id);
+    if (userError) return undefined;
+    return data.user?.email?.toLowerCase() ?? null;
   } catch {
     return undefined;
   }
@@ -35,16 +66,31 @@ async function findUserByEmail(email: string): Promise<UserSummary | null | unde
 
 export async function POST(request: NextRequest) {
   try {
-    const body = (await request.json()) as { email?: string; password?: string };
-    const email = body.email?.trim().toLowerCase();
+    const body = (await request.json()) as { login?: string; email?: string; password?: string };
+    const login = (body.login ?? body.email ?? "").trim();
     const password = body.password ?? "";
 
-    if (!email || !password || password.length > 128) {
+    if (!login || !password || password.length > 128) {
       return NextResponse.json(
         { error: "invalid-credentials" },
         { status: 401, headers: { "Cache-Control": "private, no-store" } },
       );
     }
+
+    const resolvedEmail = await resolveLoginToEmail(login);
+    if (resolvedEmail === null) {
+      return NextResponse.json(
+        { error: "account-not-found" },
+        { status: 404, headers: { "Cache-Control": "private, no-store" } },
+      );
+    }
+    if (!resolvedEmail) {
+      return NextResponse.json(
+        { error: "service-unavailable" },
+        { status: 503, headers: { "Cache-Control": "private, no-store" } },
+      );
+    }
+    const email = resolvedEmail;
 
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
     const supabaseKey =
@@ -55,8 +101,6 @@ export async function POST(request: NextRequest) {
       throw new Error("Supabase environment variables are missing.");
     }
 
-    // Abuse protection is defense-in-depth. If its admin key/RPC is unavailable,
-    // password authentication must still work.
     try {
       const admin = createAdminClient();
       const guardResult = await admin.rpc("consume_login_attempt", {
@@ -79,7 +123,6 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Authenticate without reading any stale browser session.
     const pendingCookies: PendingCookie[] = [];
     const supabase = createServerClient(supabaseUrl, supabaseKey, {
       cookies: {
@@ -112,9 +155,6 @@ export async function POST(request: NextRequest) {
       { headers: { "Cache-Control": "private, no-store" } },
     );
 
-    // Remove every stale auth cookie visible on this host and remove the old
-    // shared-domain variants. Install the fresh session as host-only cookies so
-    // Safari cannot send two cookies with the same Supabase name.
     const staleNames = new Set(
       request.cookies
         .getAll()
