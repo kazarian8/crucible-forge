@@ -44,8 +44,18 @@ export default function ExpertMusicianDevPage() {
       setIsError(true);
       return;
     }
-    if (!configured || usernameStatus !== "available") {
-      setMessage("Choose an available username first.");
+    if (!configured) {
+      setMessage("Crucible account services are temporarily unavailable.");
+      setIsError(true);
+      return;
+    }
+    if (!email.trim()) {
+      setMessage("Enter the invited email address first.");
+      setIsError(true);
+      return;
+    }
+    if (usernameStatus !== "available") {
+      setMessage(usernameStatus === "checking" ? "Wait for the username check to finish, then try again." : "Choose an available username first.");
       setIsError(true);
       return;
     }
@@ -119,7 +129,7 @@ export default function ExpertMusicianDevPage() {
           <label className="block"><span className="text-xs font-bold uppercase tracking-wider text-white/50">Password</span><input type={showPassword ? "text" : "password"} required minLength={12} value={password} onChange={(e) => setPassword(e.target.value)} placeholder="At least 12 characters" autoComplete="new-password" className="mt-2 w-full rounded-xl border border-white/10 bg-white/[0.04] px-4 py-4 outline-none focus:border-orange-300/50" /></label>
           <label className="block"><span className="text-xs font-bold uppercase tracking-wider text-white/50">Confirm password</span><input type={showPassword ? "text" : "password"} required minLength={12} value={confirmation} onChange={(e) => setConfirmation(e.target.value)} placeholder="Repeat your password" autoComplete="new-password" className="mt-2 w-full rounded-xl border border-white/10 bg-white/[0.04] px-4 py-4 outline-none focus:border-orange-300/50" /></label>
           <label className="flex cursor-pointer items-center gap-3 text-sm text-white/65"><input type="checkbox" checked={showPassword} onChange={(e) => setShowPassword(e.target.checked)} className="h-4 w-4 accent-orange-400" /><span>{showPassword ? "Hide password" : "Show password"}</span></label>
-          <button type="submit" disabled={!configured || !inviteToken || loading || !email || !password || !confirmation || usernameStatus !== "available"} className="w-full rounded-xl bg-gradient-to-r from-orange-600 to-amber-400 px-5 py-4 font-black text-black disabled:opacity-50">{loading ? "Creating account..." : "Create Expert Musician Dev account"}</button>
+          <button type="submit" disabled={loading} className="w-full rounded-xl bg-gradient-to-r from-orange-600 to-amber-400 px-5 py-4 font-black text-black disabled:opacity-50">{loading ? "Creating account..." : "Create Expert Musician Dev account"}</button>
         </form>
         {message ? <p role={isError ? "alert" : "status"} className={`mt-4 rounded-xl border p-3 text-sm ${isError ? "border-red-300/20 text-red-100" : "border-emerald-300/20 text-emerald-100"}`}>{message}</p> : null}
         <a href="/login?next=/sound-furnace" className="mt-6 block rounded-xl border border-white/10 px-5 py-3 text-center text-sm font-bold text-white/70">Already verified? Sign in</a>
