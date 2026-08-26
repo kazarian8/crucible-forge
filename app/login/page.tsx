@@ -10,7 +10,7 @@ function safeNext() {
 }
 
 export default function LoginPage() {
-  const [email, setEmail] = useState("");
+  const [login, setLogin] = useState("");
   const [password, setPassword] = useState("");
   const [message, setMessage] = useState("");
   const [verified, setVerified] = useState(false);
@@ -35,7 +35,7 @@ export default function LoginPage() {
         headers: { "Content-Type": "application/json" },
         cache: "no-store",
         body: JSON.stringify({
-          email: email.trim().toLowerCase(),
+          login: login.trim(),
           password,
         }),
       });
@@ -44,7 +44,7 @@ export default function LoginPage() {
       if (!response.ok) {
         const error = String(result.error || "");
         if (error === "account-not-found") {
-          setMessage("No account found with this email. Create an account instead.");
+          setMessage("No account found with that email or username.");
         } else if (error === "wrong-password") {
           setMessage("Incorrect password. Try again.");
         } else if (error === "email-not-verified") {
@@ -52,7 +52,7 @@ export default function LoginPage() {
         } else if (error === "rate-limited") {
           setMessage("Too many sign-in attempts. Wait 15 minutes and try again.");
         } else if (response.status === 401) {
-          setMessage("That email or password was not accepted.");
+          setMessage("That email, username, or password was not accepted.");
         } else {
           setMessage("We couldn’t complete sign-in. Please try again.");
         }
@@ -72,23 +72,23 @@ export default function LoginPage() {
       <section className="w-full max-w-md rounded-2xl border border-orange-500/40 bg-zinc-950 p-8">
         <h1 className="text-center text-3xl font-bold">Enter the Crucible</h1>
         <p className="mt-3 text-center text-sm leading-6 text-zinc-400">
-          Sign in with your verified email and the same password you created at signup.
+          Sign in with your verified email or username and your password.
         </p>
         {verified ? (
           <p role="status" className="mt-4 rounded-lg border border-emerald-400/30 bg-emerald-400/10 p-3 text-center text-sm text-emerald-200">
-            Email confirmed. Your account is enabled — sign in with your password.
+            Email confirmed. Your account is enabled — sign in below.
           </p>
         ) : null}
         <form onSubmit={handleSignIn} className="mt-7 space-y-4" noValidate>
           <label className="block">
-            <span className="text-xs font-bold uppercase tracking-wider text-zinc-400">Email</span>
+            <span className="text-xs font-bold uppercase tracking-wider text-zinc-400">Email or username</span>
             <input
-              type="email"
+              type="text"
               required
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
-              placeholder="Email address"
-              autoComplete="email"
+              value={login}
+              onChange={(event) => setLogin(event.target.value)}
+              placeholder="Email address or username"
+              autoComplete="username"
               className="mt-2 w-full rounded-lg border border-zinc-700 bg-zinc-900 px-4 py-3 outline-none focus:border-orange-500"
             />
           </label>
@@ -106,7 +106,7 @@ export default function LoginPage() {
           </label>
           <button
             type="submit"
-            disabled={loading || !email || !password}
+            disabled={loading || !login || !password}
             className="w-full rounded-lg bg-orange-600 py-3 font-bold hover:bg-orange-500 disabled:opacity-50"
           >
             {loading ? "Signing in..." : "Sign in"}
