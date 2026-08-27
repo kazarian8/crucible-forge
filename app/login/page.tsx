@@ -15,12 +15,15 @@ export default function LoginPage() {
   const [message, setMessage] = useState("");
   const [verified, setVerified] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [linkLoading, setLinkLoading] = useState(false);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     setVerified(params.get("verified") === "1");
     if (params.get("error") === "session") {
       setMessage("Your sign-in expired before Crucible could open. Please sign in again.");
+    } else if (params.get("error") === "service-unavailable") {
+      setMessage("Sign-in service is temporarily unavailable. Please try again.");
     }
   }, []);
 
@@ -46,15 +49,15 @@ export default function LoginPage() {
         if (error === "account-not-found") {
           setMessage("No account found with that email or username.");
         } else if (error === "wrong-password") {
-          setMessage("Incorrect password. Try again.");
+          setMessage("Incorrect password. Use the email sign-in link below if you need immediate access.");
         } else if (error === "email-not-verified") {
           setMessage("Verify your email before signing in.");
         } else if (error === "rate-limited") {
-          setMessage("Too many sign-in attempts. Wait 15 minutes and try again.");
+          setMessage("Too many sign-in attempts. Use the email sign-in link below or try again later.");
         } else if (response.status === 401) {
           setMessage("That email, username, or password was not accepted.");
         } else {
-          setMessage("We couldn’t complete sign-in. Please try again.");
+          setMessage("We couldn’t complete sign-in. Use the email sign-in link below.");
         }
         setLoading(false);
         return;
@@ -62,8 +65,39 @@ export default function LoginPage() {
 
       window.location.replace(safeNext());
     } catch {
-      setMessage("We couldn’t complete sign-in. Please try again.");
+      setMessage("We couldn’t complete sign-in. Use the email sign-in link below.");
       setLoading(false);
+    }
+  }
+
+  async function handleEmailLink() {
+    const email = login.trim().toLowerCase();
+    if (!email.includes("@")) {
+      setMessage("Enter your email address above, then tap Email me a sign-in link.");
+      return;
+    }
+
+    setLinkLoading(true);
+    setMessage("");
+    try {
+      const response = await fetch("/auth/magic-link", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        cache: "no-store",
+        body: JSON.stringify({ email, next: safeNext() }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok && result.error === "rate-limited") {
+        setMessage("Too many email-link requests. Please try again later.");
+      } else if (!response.ok) {
+        setMessage("We couldn’t send the sign-in link. Please try again.");
+      } else {
+        setMessage("Check your email and tap the secure Crucible sign-in link. No password required.");
+      }
+    } catch {
+      setMessage("We couldn’t send the sign-in link. Please try again.");
+    } finally {
+      setLinkLoading(false);
     }
   }
 
@@ -112,6 +146,25 @@ export default function LoginPage() {
             {loading ? "Signing in..." : "Sign in"}
           </button>
         </form>
+
+        <div className="my-5 flex items-center gap-3 text-xs uppercase tracking-widest text-zinc-600">
+          <span className="h-px flex-1 bg-zinc-800" />
+          or
+          <span className="h-px flex-1 bg-zinc-800" />
+        </div>
+
+        <button
+          type="button"
+          onClick={handleEmailLink}
+          disabled={linkLoading || !login}
+          className="w-full rounded-lg border border-orange-500/60 bg-orange-500/10 py-3 font-bold text-orange-200 hover:bg-orange-500/20 disabled:opacity-50"
+        >
+          {linkLoading ? "Sending secure link..." : "Email me a sign-in link"}
+        </button>
+        <p className="mt-2 text-center text-xs leading-5 text-zinc-500">
+          Use your account email. This signs you in securely without your password.
+        </p>
+
         {message ? (
           <p role="alert" className="mt-4 text-center text-sm text-red-200">{message}</p>
         ) : null}
