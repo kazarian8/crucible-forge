@@ -43,12 +43,12 @@ export default function SupportDock() {
 
   return (
     <>
-      <div className="fixed bottom-4 left-1/2 z-[90] flex -translate-x-1/2 overflow-hidden rounded-full border border-white/10 bg-black/90 shadow-2xl backdrop-blur md:left-auto md:right-5 md:translate-x-0">
-        <button type="button" onClick={() => setOpen(true)} className="flex items-center gap-2 px-4 py-3 text-xs font-black text-white/80 hover:bg-white/10">
-          <MessageCircleQuestion size={16} /> Ask Crucible
+      <div className="fixed bottom-[calc(env(safe-area-inset-bottom)+4.75rem)] left-1/2 z-[60] flex max-w-[calc(100vw-1rem)] -translate-x-1/2 overflow-hidden rounded-full border border-white/10 bg-black/90 shadow-2xl backdrop-blur md:bottom-4 md:left-auto md:right-5 md:max-w-none md:translate-x-0 md:z-[90]">
+        <button type="button" onClick={() => setOpen(true)} className="flex min-w-0 items-center gap-2 px-4 py-3 text-xs font-black text-white/80 hover:bg-white/10">
+          <MessageCircleQuestion size={16} className="shrink-0" /> <span className="truncate">Ask Crucible</span>
         </button>
-        <Link href="/contact" className="flex items-center gap-2 border-l border-white/10 px-4 py-3 text-xs font-black text-orange-200 hover:bg-white/10">
-          <UserRound size={16} /> Contact Justice
+        <Link href="/contact" className="flex min-w-0 items-center gap-2 border-l border-white/10 px-4 py-3 text-xs font-black text-orange-200 hover:bg-white/10">
+          <UserRound size={16} className="shrink-0" /> <span className="truncate">Contact Justice</span>
         </Link>
       </div>
 
