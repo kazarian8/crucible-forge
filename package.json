@@ -11,7 +11,7 @@
     "validate": "npm run typecheck && npm run lint && npm run build"
   },
   "dependencies": {
-    "@supabase/ssr": "^0.7.0",
+    "@supabase/ssr": "^0.12.5",
     "@supabase/supabase-js": "^2.0.0",
     "clsx": "^2.1.1",
     "lucide-react": "^0.468.0",
