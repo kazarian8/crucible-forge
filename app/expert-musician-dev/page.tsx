@@ -75,7 +75,7 @@ export default function ExpertMusicianDevPage() {
     setIsError(false);
 
     try {
-      const response = await fetch("/auth/signup", {
+      const response = await fetch("/auth/expert-signup", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         cache: "no-store",
@@ -83,28 +83,25 @@ export default function ExpertMusicianDevPage() {
           email: email.trim().toLowerCase(),
           password,
           username: username.trim(),
-          usernameFont: "default",
-          next: "/sound-furnace",
           website,
           startedAt: startedAt.current,
           inviteToken,
         }),
       });
       const result = await response.json().catch(() => ({}));
-      setLoading(false);
 
       if (!response.ok) {
+        setLoading(false);
         if (result.error === "invalid-invite") setMessage("This invite is invalid, expired, already used, or does not match this email.");
         else if (result.error === "email-in-use") setMessage("This email already has a Crucible account. Sign in instead.");
         else if (result.error === "username-taken") setMessage("That username was just taken. Pick another one.");
         else if (result.error === "invite-activation-failed") setMessage("The invite could not be activated. Please contact Crucible.");
-        else if (response.status === 429) setMessage("Too many attempts. Wait 15 minutes and try again.");
         else setMessage("Account creation is temporarily unavailable.");
         setIsError(true);
         return;
       }
 
-      setMessage("Verification email sent. Confirm it within 15 minutes, then sign in. Your Expert Musician Dev access will bypass payment and open Sound Furnace.");
+      window.location.replace(result.next || "/sound-furnace");
     } catch {
       setLoading(false);
       setMessage("Account creation is temporarily unavailable.");
@@ -119,7 +116,7 @@ export default function ExpertMusicianDevPage() {
       <section className="w-full max-w-md rounded-3xl border border-orange-300/20 bg-black/70 p-7">
         <p className="text-xs font-black uppercase tracking-[0.2em] text-orange-300">Private invitation</p>
         <h1 className="mt-4 text-3xl font-black">Expert Musician Dev Access</h1>
-        <p className="mt-3 text-sm leading-6 text-white/55">Create and verify this invited account. No card or payment information is required for this temporary testing role.</p>
+        <p className="mt-3 text-sm leading-6 text-white/55">Create this invited developer account. No card, payment, or verification email is required for this temporary testing role.</p>
         <form onSubmit={handleSubmit} className="mt-7 space-y-4">
           <div aria-hidden="true" className="absolute -left-[9999px] h-px w-px overflow-hidden">
             <label>Website<input tabIndex={-1} autoComplete="off" value={website} onChange={(e) => setWebsite(e.target.value)} /></label>
@@ -129,10 +126,10 @@ export default function ExpertMusicianDevPage() {
           <label className="block"><span className="text-xs font-bold uppercase tracking-wider text-white/50">Password</span><input type={showPassword ? "text" : "password"} required minLength={12} value={password} onChange={(e) => setPassword(e.target.value)} placeholder="At least 12 characters" autoComplete="new-password" className="mt-2 w-full rounded-xl border border-white/10 bg-white/[0.04] px-4 py-4 outline-none focus:border-orange-300/50" /></label>
           <label className="block"><span className="text-xs font-bold uppercase tracking-wider text-white/50">Confirm password</span><input type={showPassword ? "text" : "password"} required minLength={12} value={confirmation} onChange={(e) => setConfirmation(e.target.value)} placeholder="Repeat your password" autoComplete="new-password" className="mt-2 w-full rounded-xl border border-white/10 bg-white/[0.04] px-4 py-4 outline-none focus:border-orange-300/50" /></label>
           <label className="flex cursor-pointer items-center gap-3 text-sm text-white/65"><input type="checkbox" checked={showPassword} onChange={(e) => setShowPassword(e.target.checked)} className="h-4 w-4 accent-orange-400" /><span>{showPassword ? "Hide password" : "Show password"}</span></label>
-          <button type="submit" disabled={loading} className="w-full rounded-xl bg-gradient-to-r from-orange-600 to-amber-400 px-5 py-4 font-black text-black disabled:opacity-50">{loading ? "Creating account..." : "Create Expert Musician Dev account"}</button>
+          <button type="submit" disabled={loading} className="w-full rounded-xl bg-gradient-to-r from-orange-600 to-amber-400 px-5 py-4 font-black text-black disabled:opacity-50">{loading ? "Activating account..." : "Activate Expert Musician Dev account"}</button>
         </form>
         {message ? <p role={isError ? "alert" : "status"} className={`mt-4 rounded-xl border p-3 text-sm ${isError ? "border-red-300/20 text-red-100" : "border-emerald-300/20 text-emerald-100"}`}>{message}</p> : null}
-        <a href="/login?next=/sound-furnace" className="mt-6 block rounded-xl border border-white/10 px-5 py-3 text-center text-sm font-bold text-white/70">Already verified? Sign in</a>
+        <a href="/login?next=/sound-furnace" className="mt-6 block rounded-xl border border-white/10 px-5 py-3 text-center text-sm font-bold text-white/70">Already activated? Sign in</a>
       </section>
     </main>
   );
