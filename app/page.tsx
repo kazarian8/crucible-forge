@@ -1,7 +1,13 @@
 import Link from "next/link";
-import { AudioLines, LibraryBig, Music2, Radio, SlidersHorizontal, Sparkles } from "lucide-react";
+import { AudioLines, LibraryBig, Music2, Radio, SlidersHorizontal, Sparkles, Upload } from "lucide-react";
 
 const cards = [
+  {
+    title: "Upload & File DNA",
+    description: "Analyze a device file, save the private master, and publish it when you choose.",
+    href: "/star",
+    icon: Upload,
+  },
   {
     title: "Moments",
     description: "Post public updates, music drops, clips, and artist moments.",
@@ -61,7 +67,7 @@ export default function HomePage() {
             <h3 className="text-lg font-black">Your Crucible</h3>
             <span className="text-[10px] font-black uppercase tracking-[0.18em] text-white/30">5-tab mobile hub</span>
           </div>
-          <div className="grid gap-3 sm:grid-cols-3">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             {cards.map((card) => {
               const Icon = card.icon;
               return (

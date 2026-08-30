@@ -18,6 +18,7 @@ export default function WorkstationPage() {
           </div>
           <div className="flex items-center gap-2">
             {mixName ? <span className="hidden text-xs font-bold text-emerald-300 sm:inline">{mixName} ready for Forge</span> : null}
+            <Link href="/star" className="rounded-xl bg-orange-500 px-3 py-2 text-xs font-black text-black">Upload &amp; File DNA</Link>
             <Link href="/sound-furnace" className="rounded-xl border border-white/10 px-3 py-2 text-xs font-black text-white/70">Sound Furnace</Link>
           </div>
         </header>
