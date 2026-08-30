@@ -226,7 +226,7 @@ export async function analyzeAudioFile(file: Blob): Promise<{ analysis: FileDnaA
   try {
     const decoded = await context.decodeAudioData(bytes.slice(0));
     const filename = file instanceof File ? file.name : "audio";
-    const musicalContent = analyzeMusicalContent(decoded, filename);
+    let musicalContent = analyzeMusicalContent(decoded, filename);
     const stride = Math.max(1, Math.floor(decoded.length / 1_000_000));
     let peak = 0;
     let sumSquares = 0;
@@ -251,10 +251,29 @@ export async function analyzeAudioFile(file: Blob): Promise<{ analysis: FileDnaA
     const peakDb = db(peak);
     const rmsDb = db(rms);
     const silencePercent = (silent / Math.max(1, samples)) * 100;
+    const hasNoAudibleSignal = peak < 0.00001 || rms < 0.000001 || silencePercent >= 99.95;
+    if (hasNoAudibleSignal) {
+      musicalContent = {
+        contentType: "sample",
+        suggestedCategory: "sample",
+        contentTags: ["no audible signal"],
+        contentConfidence: 0,
+        estimatedBpm: null,
+        bpmConfidence: 0,
+        estimatedKey: null,
+        keyConfidence: 0,
+        transientRate: 0,
+        rhythmicity: 0,
+        tonality: 0,
+      };
+    }
     const notes: string[] = [];
     let score = 100;
 
-    if (decoded.duration < 0.02 || decoded.length < 2) {
+    if (hasNoAudibleSignal) {
+      score = 0;
+      notes.push("No audible waveform was found. Choose the original audio file instead of an empty, truncated, or cloud placeholder file.");
+    } else if (decoded.duration < 0.02 || decoded.length < 2) {
       score = 0;
       notes.push("The file decoded without enough audio samples to verify.");
     } else if (decoded.duration < 0.5) {
@@ -286,10 +305,10 @@ export async function analyzeAudioFile(file: Blob): Promise<{ analysis: FileDnaA
     }
 
     score = Math.max(0, Math.min(100, Math.round(score)));
-    const unusable = decoded.duration < 0.02 || decoded.length < 2;
+    const unusable = hasNoAudibleSignal || decoded.duration < 0.02 || decoded.length < 2;
     const status: FileDnaAnalysis["status"] = unusable ? "failed" : score >= 85 ? "verified" : "warning";
     if (notes.length === 0) notes.push("File decoded successfully with no major technical warnings.");
-    notes.push(`Detected ${musicalContent.contentType} · ${musicalContent.contentTags.join(" + ")} · ${musicalContent.contentConfidence}% classification confidence.`);
+    if (!hasNoAudibleSignal) notes.push(`Detected ${musicalContent.contentType} · ${musicalContent.contentTags.join(" + ")} · ${musicalContent.contentConfidence}% classification confidence.`);
     if (musicalContent.estimatedBpm) notes.push(`Estimated tempo ${musicalContent.estimatedBpm} BPM · ${musicalContent.bpmConfidence}% confidence.`);
     if (musicalContent.estimatedKey) notes.push(`Estimated key ${musicalContent.estimatedKey} · ${musicalContent.keyConfidence}% confidence.`);
 

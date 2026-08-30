@@ -1,10 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useEffect, useState } from "react";
-import { CheckCircle2, Gauge, Music2, Play, Send, ShieldCheck, Sparkles, Upload } from "lucide-react";
+import { FormEvent, useEffect, useRef, useState } from "react";
+import { CheckCircle2, Gauge, LibraryBig, Music2, Play, Send, ShieldCheck, Sparkles, Upload } from "lucide-react";
 import { createClient } from "../../lib/supabase/client";
 import { analyzeAudioFile, createWatermarkedPreview, type FileDnaAnalysis } from "../../lib/audio/file-dna";
+import { playForgeConfirmation } from "../../lib/audio/forge-confirm";
 import { storageAudioMimeType } from "../../lib/audio/mime";
 
 type StarFile = {
@@ -39,9 +40,14 @@ type StarFile = {
     estimated_key?: string | null;
     model_version?: string;
     feature_vector?: Record<string, unknown>;
+    artist_confirmed?: boolean;
+    confidence_source?: string;
+    learned_from_examples?: number;
   };
   created_at: string;
 };
+
+const STAR_FILE_COLUMNS = "id,title,original_filename,storage_path,category,bpm,musical_key,size_bytes,duration_seconds,sample_rate,channels,peak_dbfs,rms_dbfs,silence_percent,clipping_count,analysis_score,grade,verification_status,publish_status,description,price_cents,license_type,marketplace_item_id,analysis,created_at";
 
 export default function CrucibleStarPage() {
   const [files, setFiles] = useState<StarFile[]>([]);
@@ -65,19 +71,28 @@ export default function CrucibleStarPage() {
   const [correctedBpm, setCorrectedBpm] = useState("");
   const [correctedKey, setCorrectedKey] = useState("");
   const [correctedTags, setCorrectedTags] = useState("");
+  const [lastUploaded, setLastUploaded] = useState<StarFile | null>(null);
+  const [openDnaId, setOpenDnaId] = useState("");
+  const [confirmedIds, setConfirmedIds] = useState<Set<string>>(() => new Set());
+  const [confirmationGlowId, setConfirmationGlowId] = useState("");
+  const previewObjectUrls = useRef<string[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   async function load() {
     const sb = createClient();
     const { data } = await sb
       .from("star_music_files")
-      .select("id,title,original_filename,storage_path,category,bpm,musical_key,size_bytes,duration_seconds,sample_rate,channels,peak_dbfs,rms_dbfs,silence_percent,clipping_count,analysis_score,grade,verification_status,publish_status,description,price_cents,license_type,marketplace_item_id,analysis,created_at")
+      .select(STAR_FILE_COLUMNS)
       .order("created_at", { ascending: false })
-      .limit(50);
+      .limit(3);
     setFiles((data ?? []) as StarFile[]);
   }
 
   useEffect(() => {
     void load();
+    return () => {
+      for (const url of previewObjectUrls.current) URL.revokeObjectURL(url);
+    };
   }, []);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -130,8 +145,11 @@ export default function CrucibleStarPage() {
       const cleanName = audioFile.name.replace(/[^A-Za-z0-9._-]+/g, "-").slice(-120);
       const path = `${user.id}/${crypto.randomUUID()}-${cleanName}`;
       const storageMimeType = storageAudioMimeType(audioFile);
+      const uploadBody = audioFile.type === storageMimeType
+        ? audioFile
+        : new Blob([audioFile], { type: storageMimeType });
       setMessage("Uploading verified master to the private Star vault…");
-      const { error: uploadError } = await sb.storage.from("star-music").upload(path, audioFile, {
+      const { error: uploadError } = await sb.storage.from("star-music").upload(path, uploadBody, {
         cacheControl: "3600",
         upsert: false,
         contentType: storageMimeType,
@@ -139,7 +157,7 @@ export default function CrucibleStarPage() {
       if (uploadError) throw uploadError;
 
       const cents = Math.max(0, Math.round(Number(price || 0) * 100));
-      const { error: insertError } = await sb.from("star_music_files").insert({
+      const { data: insertedFile, error: insertError } = await sb.from("star_music_files").insert({
         user_id: user.id,
         title: title.trim() || audioFile.name.replace(/\.[^.]+$/, ""),
         original_filename: audioFile.name,
@@ -184,19 +202,20 @@ export default function CrucibleStarPage() {
           feature_vector: featureVector,
         },
         publish_status: analysis.status === "verified" ? "ready" : "draft",
-      });
+      }).select(STAR_FILE_COLUMNS).single();
       if (insertError) {
         await sb.storage.from("star-music").remove([path]);
         throw insertError;
       }
 
-      setMessage(`Uploaded as ${detectedCategory}. Detected ${analysis.contentType} · ${analysis.contentConfidence}% confidence · Grade ${analysis.grade} ${analysis.score}/100.`);
+      setMessage(`Saved privately as ${detectedCategory}. Detected ${analysis.contentType} · ${analysis.contentConfidence}% confidence · Grade ${analysis.grade} ${analysis.score}/100. Publishing is optional.`);
       setAudioFile(null);
       setTitle("");
       setDescription("");
       setBpm("");
       setMusicalKey("");
       setPrice("0");
+      setLastUploaded(insertedFile as StarFile);
       await load();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Star upload failed.");
@@ -207,10 +226,16 @@ export default function CrucibleStarPage() {
 
   async function play(item: StarFile) {
     if (playUrl[item.id]) return;
+    setMessage("Preparing authorized private preview…");
     const sb = createClient();
-    const { data, error } = await sb.storage.from("star-music").createSignedUrl(item.storage_path, 600);
-    if (error || !data?.signedUrl) return setMessage(error?.message || "Could not open audio preview.");
-    setPlayUrl((current) => ({ ...current, [item.id]: data.signedUrl }));
+    const { data, error } = await sb.storage.from("star-music").download(item.storage_path);
+    if (error || !data) return setMessage(error?.message || "Could not open audio preview.");
+    const normalizedMimeType = storageAudioMimeType({ name: item.original_filename, type: data.type });
+    const playableBlob = data.type === normalizedMimeType ? data : new Blob([data], { type: normalizedMimeType });
+    const objectUrl = URL.createObjectURL(playableBlob);
+    previewObjectUrls.current.push(objectUrl);
+    setPlayUrl((current) => ({ ...current, [item.id]: objectUrl }));
+    setMessage("Private preview ready.");
   }
 
   async function publish(item: StarFile) {
@@ -244,6 +269,7 @@ export default function CrucibleStarPage() {
       const result = await response.json() as { error?: string };
       if (!response.ok) throw new Error(result.error || "Marketplace publishing failed.");
       setMessage(`Published “${item.title}” to the Sound Library. The master remains in the private vault.`);
+      setLastUploaded((current) => current?.id === item.id ? { ...current, publish_status: "published" } : current);
       await load();
     } catch (error) {
       if (previewPath) await sb.storage.from("star-music").remove([previewPath]);
@@ -251,6 +277,22 @@ export default function CrucibleStarPage() {
     } finally {
       setPublishingId("");
     }
+  }
+
+  function uploadNew() {
+    setAudioFile(null);
+    setTitle("");
+    setDescription("");
+    setCategory("auto");
+    setBpm("");
+    setMusicalKey("");
+    setPrice("0");
+    setLicenseType("standard");
+    setMessage("");
+    setLastAnalysis(null);
+    setLastUploaded(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+    window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
   function beginCorrection(item: StarFile) {
@@ -265,6 +307,7 @@ export default function CrucibleStarPage() {
   async function saveDnaFeedback(item: StarFile, confirmed: boolean) {
     const dna = item.analysis;
     if (!dna?.content_type || !dna.model_version) return setMessage("This older upload needs to be re-analyzed before it can train File DNA.");
+    if (confirmed) playForgeConfirmation();
     setFeedbackBusyId(item.id);
     setMessage(confirmed ? "Saving your File DNA confirmation…" : "Saving your correction and teaching File DNA…");
     try {
@@ -297,7 +340,26 @@ export default function CrucibleStarPage() {
       }, { onConflict: "user_id,star_file_id,model_version" });
       if (feedbackError) throw feedbackError;
 
-      if (!confirmed) {
+      if (confirmed) {
+        const confirmedConfidence = Math.min(99, Math.max(Number(dna.content_confidence ?? 0) + 3, 90));
+        const confirmedAnalysis = {
+          ...dna,
+          content_confidence: confirmedConfidence,
+          artist_confirmed: true,
+          confidence_source: "signal+artist-confirmed",
+          learned_from_examples: Number(dna.learned_from_examples ?? 0) + 1,
+        };
+        const { error: updateError } = await sb.from("star_music_files").update({
+          analysis: confirmedAnalysis,
+          updated_at: new Date().toISOString(),
+        }).eq("id", item.id);
+        if (updateError) throw updateError;
+        setFiles((current) => current.map((file) => file.id === item.id ? { ...file, analysis: confirmedAnalysis } : file));
+        setLastUploaded((current) => current?.id === item.id ? { ...current, analysis: confirmedAnalysis } : current);
+        setConfirmedIds((current) => new Set(current).add(item.id));
+        setConfirmationGlowId(item.id);
+        window.setTimeout(() => setConfirmationGlowId((current) => current === item.id ? "" : current), 1500);
+      } else {
         const { error: updateError } = await sb.from("star_music_files").update({
           category: finalCategory,
           bpm: finalBpm,
@@ -308,8 +370,8 @@ export default function CrucibleStarPage() {
         if (updateError) throw updateError;
       }
       setCorrectingId("");
-      setMessage(confirmed ? "DNA confirmed. This example will improve similar future analyses." : "Correction saved. File DNA will learn from this labeled example.");
-      await load();
+      setMessage(confirmed ? "DNA confirmed and forged into Crucible intelligence. Classification confidence increased for this file and the example will improve similar future analyses." : "Correction saved. File DNA will learn from this labeled example.");
+      if (!confirmed) await load();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Could not save File DNA feedback.");
     } finally {
@@ -338,7 +400,7 @@ export default function CrucibleStarPage() {
               <Upload className="mb-2 text-orange-300" />
               <span className="text-sm font-black">{audioFile ? audioFile.name : "Choose WAV, MP3, FLAC, AAC, M4A or OGG"}</span>
               <span className="mt-1 text-xs text-white/35">Private upload · up to 250 MB</span>
-              <input className="hidden" type="file" accept="audio/*,.wav,.mp3,.flac,.aac,.m4a,.ogg" onChange={(e) => { const file = e.target.files?.[0] ?? null; setAudioFile(file); if (file && !title) setTitle(file.name.replace(/\.[^.]+$/, "")); }} />
+              <input ref={fileInputRef} className="hidden" type="file" accept="audio/*,.wav,.mp3,.flac,.aac,.m4a,.ogg" onChange={(e) => { const file = e.target.files?.[0] ?? null; setAudioFile(file); setLastUploaded(null); if (file && !title) setTitle(file.name.replace(/\.[^.]+$/, "")); }} />
             </label>
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
               <input required value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Title" className="rounded-xl border border-white/10 bg-black/30 px-3 py-3 text-sm" />
@@ -351,6 +413,7 @@ export default function CrucibleStarPage() {
             </div>
             <button disabled={busy || !audioFile} className="mt-4 inline-flex items-center gap-2 rounded-xl bg-orange-500 px-5 py-3 text-sm font-black text-black disabled:opacity-40"><ShieldCheck size={17} />{busy ? "Processing…" : "Analyze, verify & upload"}</button>
             {message ? <p className="mt-4 rounded-xl border border-orange-300/15 bg-orange-500/10 p-3 text-sm text-orange-100">{message}</p> : null}
+            {lastUploaded ? <div className="mt-4 rounded-2xl border border-emerald-300/15 bg-emerald-400/[0.04] p-4"><p className="text-[10px] font-black uppercase tracking-[.2em] text-emerald-200">Choose what happens next</p><h3 className="mt-1 font-black">{lastUploaded.title}</h3><p className="mt-1 text-xs text-white/45">It is private unless you explicitly publish it.</p><div className="mt-3 flex flex-wrap gap-2"><Link href="/local-library" className="inline-flex items-center gap-2 rounded-xl bg-emerald-300 px-3 py-2 text-xs font-black text-black"><LibraryBig size={14} />Keep in Private Library</Link>{lastUploaded.publish_status === "published" ? <Link href="/sound-library" className="inline-flex items-center gap-2 rounded-xl border border-orange-300/20 px-3 py-2 text-xs font-black text-orange-200"><CheckCircle2 size={14} />View published file</Link> : <button type="button" disabled={publishingId === lastUploaded.id} onClick={() => void publish(lastUploaded)} className="inline-flex items-center gap-2 rounded-xl border border-orange-300/20 px-3 py-2 text-xs font-black text-orange-200"><Send size={14} />{publishingId === lastUploaded.id ? "Publishing…" : "Publish to Marketplace"}</button>}<button type="button" onClick={uploadNew} className="inline-flex items-center gap-2 rounded-xl border border-white/10 px-3 py-2 text-xs font-black"><Upload size={14} />Upload New</button></div></div> : null}
           </form>
 
           <div className="rounded-3xl border border-white/10 bg-[#0d0a08] p-5">
@@ -359,20 +422,19 @@ export default function CrucibleStarPage() {
           </div>
         </section>
 
-        <section className="mt-5 rounded-3xl border border-white/10 bg-[#0d0a08] p-5">
-          <div className="flex items-center justify-between"><div><p className="text-[10px] font-black uppercase tracking-[.22em] text-orange-300">Private vault</p><h2 className="mt-1 text-xl font-black">Star uploads</h2></div><span className="text-xs text-white/35">{files.length} files</span></div>
+        <section id="private-library" className="mt-5 rounded-3xl border border-white/10 bg-[#0d0a08] p-5">
+          <div className="flex flex-wrap items-center justify-between gap-3"><div><p className="text-[10px] font-black uppercase tracking-[.22em] text-orange-300">Working view</p><h2 className="mt-1 text-xl font-black">Last three uploads</h2><p className="mt-1 text-xs text-white/40">Recent files stay private unless you choose Publish.</p></div><Link href="/local-library" className="rounded-xl border border-emerald-300/20 px-3 py-2 text-xs font-black text-emerald-200">Open full Private Library</Link></div>
           <div className="mt-4 space-y-3">
             {files.map((item) => (
               <article key={item.id} className="rounded-2xl border border-white/8 bg-black/20 p-4">
                 <div className="flex flex-wrap items-center justify-between gap-3"><div><h3 className="font-black">{item.title}</h3><p className="mt-1 text-xs text-white/35">{item.category}{item.bpm ? ` · ${item.bpm} BPM` : ""}{item.musical_key ? ` · ${item.musical_key}` : ""}{item.price_cents > 0 ? ` · $${(item.price_cents / 100).toFixed(2)}` : " · free"}</p></div><div className="flex items-center gap-2"><span className="rounded-full border border-white/10 px-2 py-1 text-[10px] font-black uppercase text-white/55">{item.verification_status}</span><span className="rounded-xl bg-orange-500 px-3 py-1 text-sm font-black text-black">{item.grade ?? "—"} {item.analysis_score ?? ""}</span></div></div>
-                {item.analysis?.content_type ? <div className="mt-3 rounded-xl border border-sky-300/15 bg-sky-400/[0.04] p-3"><p className="text-[10px] font-black uppercase tracking-wider text-sky-200">File DNA · {item.analysis.content_type} · {item.analysis.content_confidence ?? 0}%</p><p className="mt-1 text-xs text-white/45">{(item.analysis.content_tags ?? []).join(" + ") || "No content tags"}</p></div> : null}
-                <div className="mt-3 flex flex-wrap items-center gap-3 text-[11px] text-white/35"><span>{item.sample_rate ? `${item.sample_rate} Hz` : "rate n/a"}</span><span>{item.channels ? `${item.channels} ch` : "channels n/a"}</span><span>{item.duration_seconds ? `${Number(item.duration_seconds).toFixed(1)} sec` : "duration n/a"}</span><span>{(item.size_bytes / 1024 / 1024).toFixed(1)} MB</span><span>{item.publish_status}</span></div>
-                <div className="mt-3 flex flex-wrap gap-2"><button type="button" onClick={() => void play(item)} className="inline-flex items-center gap-2 rounded-xl border border-white/10 px-3 py-2 text-xs font-black"><Play size={14} />Private preview</button>{item.analysis?.content_type ? <><button type="button" disabled={feedbackBusyId === item.id} onClick={() => void saveDnaFeedback(item, true)} className="rounded-xl border border-emerald-300/20 px-3 py-2 text-xs font-black text-emerald-200">DNA is right</button><button type="button" onClick={() => beginCorrection(item)} className="rounded-xl border border-sky-300/20 px-3 py-2 text-xs font-black text-sky-200">Correct DNA</button></> : null}{item.marketplace_item_id || item.publish_status === "published" ? <Link href="/sound-library" className="inline-flex items-center gap-2 rounded-xl bg-emerald-400 px-3 py-2 text-xs font-black text-black"><CheckCircle2 size={14} />Published</Link> : <button type="button" disabled={publishingId === item.id || item.verification_status === "failed"} onClick={() => void publish(item)} className="inline-flex items-center gap-2 rounded-xl bg-orange-500 px-3 py-2 text-xs font-black text-black disabled:opacity-40"><Send size={14} />{publishingId === item.id ? "Publishing…" : "Publish to marketplace"}</button>}</div>
+                {openDnaId === item.id && item.analysis?.content_type ? <div className="mt-3 rounded-xl border border-sky-300/15 bg-sky-400/[0.04] p-3"><p className="text-[10px] font-black uppercase tracking-wider text-sky-200">File DNA · {item.analysis.content_type} · <span className="transition-all duration-500">{item.analysis.content_confidence ?? 0}%</span></p><p className="mt-1 text-xs text-white/45">{(item.analysis.content_tags ?? []).join(" + ") || "No content tags"}</p><div className="mt-3 flex flex-wrap items-center gap-3 text-[11px] text-white/35"><span>{item.sample_rate ? `${item.sample_rate} Hz` : "rate n/a"}</span><span>{item.channels ? `${item.channels} ch` : "channels n/a"}</span><span>{item.duration_seconds ? `${Number(item.duration_seconds).toFixed(1)} sec` : "duration n/a"}</span><span>{(item.size_bytes / 1024 / 1024).toFixed(1)} MB</span></div></div> : null}
+                <div className="mt-3 flex flex-wrap gap-2"><button type="button" onClick={() => void play(item)} className="inline-flex items-center gap-2 rounded-xl border border-white/10 px-3 py-2 text-xs font-black"><Play size={14} />Private preview</button>{item.analysis?.content_type ? <button type="button" onClick={() => setOpenDnaId(openDnaId === item.id ? "" : item.id)} className="rounded-xl border border-sky-300/20 px-3 py-2 text-xs font-black text-sky-200">{openDnaId === item.id ? "Hide DNA" : "View DNA"}</button> : null}{openDnaId === item.id && item.analysis?.content_type ? confirmedIds.has(item.id) || item.analysis.artist_confirmed ? <>{confirmationGlowId === item.id ? <span className="rounded-xl border border-emerald-200 bg-emerald-300 px-3 py-2 text-xs font-black text-black shadow-[0_0_24px_rgba(110,231,183,0.7)]">DNA confirmed · {item.analysis.content_confidence ?? 0}%</span> : <span className="rounded-xl border border-emerald-300/15 px-3 py-2 text-xs font-black text-emerald-200">DNA confirmed</span>}<button type="button" onClick={() => beginCorrection(item)} className="rounded-xl px-2 py-2 text-[10px] font-black text-white/35">Edit DNA</button></> : <><button type="button" disabled={feedbackBusyId === item.id} onClick={() => void saveDnaFeedback(item, true)} className="rounded-xl border border-emerald-300/20 px-3 py-2 text-xs font-black text-emerald-200">DNA is right</button><button type="button" onClick={() => beginCorrection(item)} className="rounded-xl border border-sky-300/20 px-3 py-2 text-xs font-black text-sky-200">Correct DNA</button></> : null}{item.marketplace_item_id || item.publish_status === "published" ? <Link href="/sound-library" className="inline-flex items-center gap-2 rounded-xl bg-emerald-400 px-3 py-2 text-xs font-black text-black"><CheckCircle2 size={14} />Published</Link> : <><span className="inline-flex items-center rounded-xl border border-emerald-300/15 bg-emerald-400/[0.05] px-3 py-2 text-xs font-black text-emerald-200">Private draft</span><button type="button" disabled={publishingId === item.id || item.verification_status === "failed"} onClick={() => void publish(item)} className="inline-flex items-center gap-2 rounded-xl border border-orange-300/20 px-3 py-2 text-xs font-black text-orange-200 disabled:opacity-40"><Send size={14} />{publishingId === item.id ? "Publishing…" : "Publish (optional)"}</button></>}</div>
                 {correctingId === item.id ? <div className="mt-3 grid gap-2 rounded-2xl border border-sky-300/15 bg-sky-400/[0.04] p-3 sm:grid-cols-2"><select aria-label="Corrected content type" value={correctedType} onChange={(event) => setCorrectedType(event.target.value)} className="rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm"><option value="one-shot">One-shot</option><option value="loop">Loop</option><option value="sample">Sample</option><option value="stem">Stem</option><option value="track">Track</option></select><select aria-label="Corrected category" value={correctedCategory} onChange={(event) => setCorrectedCategory(event.target.value)} className="rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm"><option value="beat">Beat</option><option value="loop">Loop</option><option value="sample">Sample</option><option value="one-shot">One-shot</option><option value="track">Track</option><option value="other">Other</option></select><input aria-label="Corrected BPM" value={correctedBpm} onChange={(event) => setCorrectedBpm(event.target.value)} inputMode="numeric" placeholder="Correct BPM" className="rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm"/><input aria-label="Corrected key" value={correctedKey} onChange={(event) => setCorrectedKey(event.target.value)} placeholder="Correct key" className="rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm"/><input aria-label="Corrected content tags" value={correctedTags} onChange={(event) => setCorrectedTags(event.target.value)} placeholder="vocals, drums, bass…" className="rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm sm:col-span-2"/><div className="flex gap-2 sm:col-span-2"><button type="button" disabled={feedbackBusyId === item.id} onClick={() => void saveDnaFeedback(item, false)} className="rounded-xl bg-sky-300 px-3 py-2 text-xs font-black text-black">Save correction</button><button type="button" onClick={() => setCorrectingId("")} className="rounded-xl border border-white/10 px-3 py-2 text-xs font-black">Cancel</button></div></div> : null}
-                {playUrl[item.id] ? <audio className="mt-3 w-full" controls src={playUrl[item.id]} /> : null}
+                {playUrl[item.id] ? <audio className="mt-3 w-full" controls autoPlay src={playUrl[item.id]} /> : null}
               </article>
             ))}
-            {files.length === 0 ? <p className="py-10 text-center text-sm text-white/30">No Star uploads yet.</p> : null}
+            {files.length === 0 ? <p className="py-10 text-center text-sm text-white/30">No analyzed files in your private library yet.</p> : null}
           </div>
         </section>
       </div>
