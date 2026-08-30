@@ -7,6 +7,7 @@ const SUBSCRIBE_ROUTE = "/subscribe";
 const DEFAULT_AFTER_LOGIN = "/sound-furnace";
 
 const PAID_PREFIXES = ["/furnace", "/prompt-reforge", "/sound-furnace", "/studio"];
+const STAR_HOSTS = new Set(["cruciblestar.com", "www.cruciblestar.com"]);
 
 function getSafeNextRoute(value: string | null) {
   return value?.startsWith("/") && !value.startsWith("//") ? value : DEFAULT_AFTER_LOGIN;
@@ -36,6 +37,16 @@ function redirectPreservingSession(request: NextRequest, response: NextResponse,
 
 export async function proxy(request: NextRequest) {
   const { pathname, searchParams } = request.nextUrl;
+  const hostname = request.headers.get("host")?.split(":")[0].toLowerCase();
+
+  // The Star domain is a separate product entry point backed by this same
+  // deployment. Keep its root URL stable without changing Forge routing.
+  if (hostname && STAR_HOSTS.has(hostname) && pathname === "/") {
+    const starUrl = request.nextUrl.clone();
+    starUrl.pathname = "/star";
+    return NextResponse.rewrite(starUrl);
+  }
+
   const paidRoute = PAID_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
   const authenticatedRoute = paidRoute || pathname === "/account" || pathname === SUBSCRIBE_ROUTE || pathname.startsWith("/billing/success");
   const authPageRoute = pathname === LOGIN_ROUTE || pathname === SIGNUP_ROUTE;

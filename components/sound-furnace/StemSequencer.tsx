@@ -13,6 +13,7 @@ import {
   Download,
   Drum,
   FileText,
+  FolderOpen,
   Layers3,
   LoaderCircle,
   Magnet,
@@ -21,14 +22,18 @@ import {
   Piano,
   Play,
   Plus,
+  Redo2,
+  Save,
   Scissors,
   Settings2,
   Trash2,
+  Undo2,
   WandSparkles,
   X,
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
+import { createClient } from "../../lib/supabase/client";
 
 const MAX_TRACKS = 16;
 const MAX_FILE_BYTES = 250 * 1024 * 1024;
@@ -97,9 +102,38 @@ type StemTrack = {
   fadeInSeconds: number;
   fadeOutSeconds: number;
   gainDb: number;
+  pan: number;
   muted: boolean;
   solo: boolean;
   effects: TrackEffects;
+};
+
+type SavedProject = {
+  id: string;
+  name: string;
+  updated_at: string;
+};
+
+type PersistedTrack = Omit<StemTrack, "buffer"> & {
+  audioPath: string;
+};
+
+type PersistedProjectData = {
+  schemaVersion: 1;
+  tracks: PersistedTrack[];
+  settings: {
+    projectBpm: number;
+    projectKey: MusicalNote;
+    swing: number;
+    timeSignature: string;
+    snapDivision: string;
+    countIn: boolean;
+    countInBars: number;
+    metronomeEnabled: boolean;
+    metronomeVolume: number;
+    projectNotes: string;
+    projectLyrics: string;
+  };
 };
 
 type StemSequencerProps = {
@@ -436,7 +470,7 @@ async function renderMix(tracks: StemTrack[]) {
   if (active.length === 0) throw new Error("Unmute at least one stem before mixing.");
 
   let sampleRate = 44100;
-  let channels = 1;
+  let channels = 2;
   for (const track of active) {
     sampleRate = Math.max(sampleRate, track.buffer.sampleRate);
     channels = Math.max(channels, Math.min(2, track.buffer.numberOfChannels));
@@ -462,6 +496,7 @@ async function renderMix(tracks: StemTrack[]) {
 
     const source = context.createBufferSource();
     const gain = context.createGain();
+    const panner = context.createStereoPanner();
     const startAt = seconds(track.startSeconds);
     const fadeIn = Math.min(seconds(track.fadeInSeconds), clipDuration / 2);
     const fadeOut = Math.min(seconds(track.fadeOutSeconds), clipDuration / 2);
@@ -479,9 +514,11 @@ async function renderMix(tracks: StemTrack[]) {
     }
 
     source.connect(gain);
+    gain.connect(panner);
+    panner.pan.value = Math.max(-1, Math.min(1, track.pan));
 
     if (!track.effects.enabled) {
-      gain.connect(context.destination);
+      panner.connect(context.destination);
     } else {
       const amount = Math.max(0, Math.min(1, track.effects.intensity / 100));
       const focus = context.createBiquadFilter();
@@ -489,7 +526,7 @@ async function renderMix(tracks: StemTrack[]) {
       focus.frequency.value = noteFrequency(track.effects.focusNote, track.effects.octave);
       focus.Q.value = 1.2 + amount * 5;
       focus.gain.value = amount * 7;
-      gain.connect(focus);
+      panner.connect(focus);
 
       const tone = context.createBiquadFilter();
       if (track.effects.preset === "warm") {
@@ -808,6 +845,9 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
   const recordingChunksRef = useRef<Blob[]>([]);
   const recordingTargetIdRef = useRef("");
   const recordingStartSecondsRef = useRef(0);
+  const undoStackRef = useRef<StemTrack[][]>([]);
+  const redoStackRef = useRef<StemTrack[][]>([]);
+  const historyTracksRef = useRef<StemTrack[]>([]);
   const clipDragRef = useRef<ClipDrag | null>(null);
   const clipLastTapRef = useRef<{ trackId: string; at: number } | null>(null);
   const clipArmedPointerRef = useRef<number | null>(null);
@@ -859,6 +899,12 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
   const [pianoCells, setPianoCells] = useState<Record<string, PianoCell>>({});
   const [noteLength, setNoteLength] = useState(1);
   const [noteVelocity, setNoteVelocity] = useState(80);
+  const [projectId, setProjectId] = useState("");
+  const [projectName, setProjectName] = useState("Untitled session");
+  const [savedProjects, setSavedProjects] = useState<SavedProject[]>([]);
+  const [selectedSavedProjectId, setSelectedSavedProjectId] = useState("");
+  const [projectBusy, setProjectBusy] = useState(false);
+  const [historyVersion, setHistoryVersion] = useState(0);
   const tapTimesRef = useRef<number[]>([]);
 
   useEffect(() => {
@@ -887,9 +933,15 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
     onTrackCountChange?.(tracks.length);
   }, [onTrackCountChange, tracks.length]);
 
+  useEffect(() => {
+    void refreshSavedProjects();
+  }, []);
+
   const duration = useMemo(() => projectDuration(tracks), [tracks]);
   const hasSolo = tracks.some((track) => track.solo);
   const selectedTrack = tracks.find((track) => track.id === selectedTrackId) ?? tracks[0] ?? null;
+  const canUndo = historyVersion >= 0 && undoStackRef.current.length > 0;
+  const canRedo = historyVersion >= 0 && redoStackRef.current.length > 0;
   const rulerDuration = Math.max(1, duration);
   const rulerMarks = useMemo(
     () => Array.from({ length: 9 }, (_, index) => (rulerDuration * index) / 8),
@@ -952,10 +1004,227 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
     try { if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId); } catch {}
   }
 
+  function commitTracks(update: StemTrack[] | ((current: StemTrack[]) => StemTrack[])) {
+    const current = historyTracksRef.current;
+    const next = typeof update === "function" ? update(current) : update;
+    if (next === current) return;
+    undoStackRef.current = [...undoStackRef.current, current].slice(-40);
+    redoStackRef.current = [];
+    historyTracksRef.current = next;
+    setTracks(next);
+    setHistoryVersion((version) => version + 1);
+    if (previewUrlRef.current) {
+      URL.revokeObjectURL(previewUrlRef.current);
+      previewUrlRef.current = "";
+      setPreviewUrl("");
+      setPlaying(false);
+    }
+  }
+
+  function resetTrackHistory(next: StemTrack[]) {
+    undoStackRef.current = [];
+    redoStackRef.current = [];
+    historyTracksRef.current = next;
+    setTracks(next);
+    setHistoryVersion((version) => version + 1);
+  }
+
+  function undoTrackEdit() {
+    const previous = undoStackRef.current.at(-1);
+    if (!previous) return;
+    undoStackRef.current = undoStackRef.current.slice(0, -1);
+    redoStackRef.current = [...redoStackRef.current, historyTracksRef.current].slice(-40);
+    historyTracksRef.current = previous;
+    setTracks(previous);
+    setHistoryVersion((version) => version + 1);
+    setStatus("Undid the last track edit.");
+  }
+
+  function redoTrackEdit() {
+    const next = redoStackRef.current.at(-1);
+    if (!next) return;
+    redoStackRef.current = redoStackRef.current.slice(0, -1);
+    undoStackRef.current = [...undoStackRef.current, historyTracksRef.current].slice(-40);
+    historyTracksRef.current = next;
+    setTracks(next);
+    setHistoryVersion((version) => version + 1);
+    setStatus("Redid the last track edit.");
+  }
+
   function replaceTrack(id: string, patch: Partial<StemTrack>) {
-    setTracks((current) =>
+    commitTracks((current) =>
       current.map((track) => (track.id === id ? { ...track, ...patch } : track)),
     );
+  }
+
+  async function refreshSavedProjects() {
+    try {
+      const supabase = createClient();
+      const { data: userData } = await supabase.auth.getUser();
+      if (!userData.user) return;
+      const { data, error: loadError } = await supabase
+        .from("music_projects")
+        .select("id,name,updated_at")
+        .order("updated_at", { ascending: false })
+        .limit(50);
+      if (loadError) throw loadError;
+      setSavedProjects((data ?? []) as SavedProject[]);
+    } catch {
+      // Project saving remains available after sign-in even if this optional
+      // initial list request fails or Supabase is not configured locally.
+    }
+  }
+
+  async function saveProject() {
+    if (tracks.length === 0) {
+      setError("Add or record at least one track before saving a project.");
+      return;
+    }
+    const cleanName = projectName.trim();
+    if (!cleanName) {
+      setError("Give this project a name before saving it.");
+      return;
+    }
+
+    setProjectBusy(true);
+    setError("");
+    setStatus("Saving the project and its private source audio…");
+    try {
+      const supabase = createClient();
+      const { data: userData, error: userError } = await supabase.auth.getUser();
+      if (userError) throw userError;
+      const user = userData.user;
+      if (!user) throw new Error("Sign in before saving a cloud project.");
+
+      const nextProjectId = projectId || crypto.randomUUID();
+      const persistedTracks: PersistedTrack[] = [];
+      for (const [index, track] of tracks.entries()) {
+        setStatus(`Saving private audio ${index + 1} of ${tracks.length}: ${track.name}…`);
+        const audioPath = `${user.id}/${nextProjectId}/${track.id}.wav`;
+        const { error: uploadError } = await supabase.storage
+          .from("daw-project-audio")
+          .upload(audioPath, encodeWav24(track.buffer), {
+            contentType: "audio/wav",
+            upsert: true,
+          });
+        if (uploadError) throw uploadError;
+        const { buffer: _buffer, ...metadata } = track;
+        void _buffer;
+        persistedTracks.push({ ...metadata, audioPath });
+      }
+
+      const projectData: PersistedProjectData = {
+        schemaVersion: 1,
+        tracks: persistedTracks,
+        settings: {
+          projectBpm,
+          projectKey,
+          swing,
+          timeSignature,
+          snapDivision,
+          countIn,
+          countInBars,
+          metronomeEnabled,
+          metronomeVolume,
+          projectNotes,
+          projectLyrics,
+        },
+      };
+      const { error: saveError } = await supabase.from("music_projects").upsert({
+        id: nextProjectId,
+        owner_id: user.id,
+        name: cleanName,
+        project_data: projectData,
+        updated_at: new Date().toISOString(),
+      });
+      if (saveError) throw saveError;
+
+      setProjectId(nextProjectId);
+      setSelectedSavedProjectId(nextProjectId);
+      setProjectName(cleanName);
+      await refreshSavedProjects();
+      setStatus(`Saved “${cleanName}” with ${tracks.length} private audio track${tracks.length === 1 ? "" : "s"}.`);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "The project could not be saved.");
+      setStatus("Project save stopped safely. Your open tracks were not removed.");
+    } finally {
+      setProjectBusy(false);
+    }
+  }
+
+  async function loadProject() {
+    const id = selectedSavedProjectId || projectId;
+    if (!id) {
+      setError("Choose a saved project to open.");
+      return;
+    }
+    setProjectBusy(true);
+    setError("");
+    setStatus("Opening the project and decoding its private audio…");
+    try {
+      const supabase = createClient();
+      const { data: userData, error: userError } = await supabase.auth.getUser();
+      if (userError) throw userError;
+      if (!userData.user) throw new Error("Sign in before opening a cloud project.");
+
+      const { data, error: projectError } = await supabase
+        .from("music_projects")
+        .select("id,name,project_data")
+        .eq("id", id)
+        .single();
+      if (projectError) throw projectError;
+      const projectData = data.project_data as PersistedProjectData;
+      if (projectData?.schemaVersion !== 1 || !Array.isArray(projectData.tracks)) {
+        throw new Error("This project uses an unsupported project format.");
+      }
+
+      const context = new AudioContext();
+      const loadedTracks: StemTrack[] = [];
+      try {
+        for (const [index, track] of projectData.tracks.entries()) {
+          setStatus(`Opening audio ${index + 1} of ${projectData.tracks.length}: ${track.name}…`);
+          const { data: audioBlob, error: audioError } = await supabase.storage
+            .from("daw-project-audio")
+            .download(track.audioPath);
+          if (audioError) throw audioError;
+          const buffer = await context.decodeAudioData((await audioBlob.arrayBuffer()).slice(0));
+          const { audioPath: _audioPath, ...metadata } = track;
+          void _audioPath;
+          loadedTracks.push({ ...metadata, pan: metadata.pan ?? 0, buffer });
+        }
+      } finally {
+        await context.close();
+      }
+
+      const settings = projectData.settings;
+      resetTrackHistory(loadedTracks);
+      setProjectId(data.id);
+      setSelectedSavedProjectId(data.id);
+      setProjectName(data.name);
+      setSelectedTrackId(loadedTracks[0]?.id ?? "");
+      setCadenceReferenceId(loadedTracks[0]?.id ?? "");
+      setCadenceProfiles({});
+      setCadenceSuggestions({});
+      setProjectBpm(settings.projectBpm);
+      setProjectKey(settings.projectKey);
+      setSwing(settings.swing);
+      setTimeSignature(settings.timeSignature);
+      setSnapDivision(settings.snapDivision);
+      setCountIn(settings.countIn);
+      setCountInBars(settings.countInBars);
+      setMetronomeEnabled(settings.metronomeEnabled);
+      setMetronomeVolume(settings.metronomeVolume);
+      setProjectNotes(settings.projectNotes);
+      setProjectLyrics(settings.projectLyrics);
+      setPreviewUrl("");
+      setPlayheadSeconds(0);
+      setStatus(`Opened “${data.name}” with ${loadedTracks.length} track${loadedTracks.length === 1 ? "" : "s"}.`);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "The project could not be opened.");
+      setStatus("Project open stopped safely. The current session was left unchanged.");
+    } finally {
+      setProjectBusy(false);
+    }
   }
 
   function tapTempo() {
@@ -1040,11 +1309,12 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
         fadeInSeconds: 0.005,
         fadeOutSeconds: 0.04,
         gainDb: 0,
+        pan: 0,
         muted: false,
         solo: false,
         effects: { enabled: false, preset: "clear", intensity: 50, focusNote: projectKey, octave: 3 },
       };
-      setTracks((current) => [...current, track]);
+      commitTracks((current) => [...current, track]);
       setSelectedTrackId(track.id);
       setCadenceReferenceId((current) => current || track.id);
       setInstrumentOpen(false);
@@ -1202,6 +1472,7 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
           fadeInSeconds: Math.min(0.02, (audible.end - audible.start) / 2),
           fadeOutSeconds: Math.min(0.04, (audible.end - audible.start) / 2),
           gainDb: 0,
+          pan: 0,
           muted: false,
           solo: false,
           effects: {
@@ -1216,7 +1487,7 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
 
         // Reveal each decoded stem immediately so mobile users see the
         // sequencer filling instead of waiting for the entire batch.
-        setTracks((current) => current.length >= MAX_TRACKS ? current : [...current, addition]);
+        commitTracks((current) => current.length >= MAX_TRACKS ? current : [...current, addition]);
         setSelectedTrackId((current) => current || addition.id);
         setCadenceReferenceId((current) => current || addition.id);
         await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
@@ -1253,10 +1524,10 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
       id: crypto.randomUUID(), name: `Vocal ${laneNumber}`, buffer,
       startSeconds: start, originalStartSeconds: start,
       trimStartSeconds: 0, trimEndSeconds: buffer.duration,
-      fadeInSeconds: 0, fadeOutSeconds: 0, gainDb: 0, muted: false, solo: false,
+      fadeInSeconds: 0, fadeOutSeconds: 0, gainDb: 0, pan: 0, muted: false, solo: false,
       effects: { enabled: false, preset: "clear", intensity: 50, focusNote: projectKey, octave: 3 },
     };
-    setTracks((current) => [...current, track]);
+    commitTracks((current) => [...current, track]);
     setSelectedTrackId(track.id);
     setCadenceReferenceId((current) => current || track.id);
     setStatus(`${track.name} lane added. It is highlighted and ready to record.`);
@@ -1302,7 +1573,7 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
             const buffer = await context.decodeAudioData((await blob.arrayBuffer()).slice(0));
             await context.close();
             const audible = detectAudibleRange(buffer);
-            setTracks((current) => current.map((track) => track.id === targetId ? {
+            commitTracks((current) => current.map((track) => track.id === targetId ? {
               ...track,
               name: VOCAL_TRACK_PATTERN.test(track.name) ? track.name : `Vocal · ${track.name}`,
               buffer, startSeconds: recordStart, originalStartSeconds: recordStart,
@@ -1337,7 +1608,7 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
   }
 
   function restoreOriginalTiming() {
-    setTracks((current) =>
+    commitTracks((current) =>
       current.map((track) => ({
         ...track,
         startSeconds: track.originalStartSeconds,
@@ -1377,7 +1648,7 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
   }
 
   function applyCadenceSuggestions() {
-    setTracks((current) =>
+    commitTracks((current) =>
       current.map((track) => {
         const suggestion = cadenceSuggestions[track.id];
         if (!suggestion || track.id === cadenceReferenceId) return track;
@@ -1525,8 +1796,73 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
           >
             Restore timestamps
           </button>
+          <button
+            type="button"
+            aria-label="Undo last track edit"
+            onClick={undoTrackEdit}
+            disabled={busy || !canUndo}
+            className="rounded-xl border border-white/10 p-2.5 text-white/65 disabled:opacity-30"
+          >
+            <Undo2 size={16} />
+          </button>
+          <button
+            type="button"
+            aria-label="Redo last track edit"
+            onClick={redoTrackEdit}
+            disabled={busy || !canRedo}
+            className="rounded-xl border border-white/10 p-2.5 text-white/65 disabled:opacity-30"
+          >
+            <Redo2 size={16} />
+          </button>
         </div>
       </div>
+
+      <section aria-label="Project save and open controls" className="mt-5 rounded-2xl border border-emerald-300/15 bg-emerald-400/[0.04] p-3">
+        <div className="grid gap-2 lg:grid-cols-[minmax(180px,1fr)_minmax(180px,1fr)_auto_auto]">
+          <label className="text-[9px] font-black uppercase tracking-wider text-white/40">
+            Project name
+            <input
+              value={projectName}
+              maxLength={120}
+              onChange={(event) => setProjectName(event.target.value)}
+              className="mt-1 w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2.5 text-sm font-bold normal-case tracking-normal text-white outline-none focus:border-emerald-300/50"
+            />
+          </label>
+          <label className="text-[9px] font-black uppercase tracking-wider text-white/40">
+            Saved projects
+            <select
+              aria-label="Saved projects"
+              value={selectedSavedProjectId}
+              onFocus={() => void refreshSavedProjects()}
+              onChange={(event) => setSelectedSavedProjectId(event.target.value)}
+              className="mt-1 w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2.5 text-sm font-bold normal-case tracking-normal text-white"
+            >
+              <option value="">Choose a project…</option>
+              {savedProjects.map((project) => (
+                <option key={project.id} value={project.id}>{project.name}</option>
+              ))}
+            </select>
+          </label>
+          <button
+            type="button"
+            onClick={() => void loadProject()}
+            disabled={projectBusy || !selectedSavedProjectId}
+            className="self-end rounded-xl border border-emerald-300/25 px-4 py-2.5 text-xs font-black text-emerald-100 disabled:opacity-35"
+          >
+            <FolderOpen className="mr-1 inline" size={15} /> Open
+          </button>
+          <button
+            type="button"
+            onClick={() => void saveProject()}
+            disabled={projectBusy || tracks.length === 0}
+            className="self-end rounded-xl bg-emerald-300 px-4 py-2.5 text-xs font-black text-emerald-950 disabled:opacity-35"
+          >
+            {projectBusy ? <LoaderCircle className="mr-1 inline animate-spin" size={15} /> : <Save className="mr-1 inline" size={15} />}
+            {projectId ? "Save changes" : "Save project"}
+          </button>
+        </div>
+        <p className="mt-2 text-[10px] leading-4 text-white/35">Projects and source audio are private to the signed-in account. Saving again updates this project.</p>
+      </section>
 
       <nav aria-label="Engineer workspace views" className="mx-auto mt-5 grid max-w-sm grid-cols-3 rounded-2xl border border-white/10 bg-black/45 p-1">
         <button type="button" aria-pressed={!lyricsOpen && !projectSettingsOpen} onClick={() => { setLyricsOpen(false); setProjectSettingsOpen(false); }} className={`grid place-items-center rounded-xl py-2.5 ${!lyricsOpen && !projectSettingsOpen ? "bg-white text-black" : "text-white/45"}`}><Layers3 size={19} /><span className="mt-1 text-[8px] font-black uppercase tracking-wider">Waveform</span></button>
@@ -1938,7 +2274,7 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
               type="button"
               aria-label={`Remove ${selectedTrack.name}`}
               onClick={() => {
-                setTracks((current) => current.filter((item) => item.id !== selectedTrack.id));
+                commitTracks((current) => current.filter((item) => item.id !== selectedTrack.id));
                 setSelectedTrackId("");
               }}
               className="rounded-lg border border-white/10 p-2 text-white/35 hover:text-red-300"
@@ -1946,7 +2282,7 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
               <Trash2 size={15} />
             </button>
           </div>
-          <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+          <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-7">
             {[
               ["Start", selectedTrack.startSeconds, 0, rulerDuration, (value: number) => ({ startSeconds: seconds(value) })],
               ["Trim in", selectedTrack.trimStartSeconds, 0, selectedTrack.trimEndSeconds, (value: number) => ({ trimStartSeconds: Math.min(selectedTrack.trimEndSeconds, seconds(value)) })],
@@ -1954,6 +2290,7 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
               ["Fade in", selectedTrack.fadeInSeconds, 0, trackDuration(selectedTrack) / 2, (value: number) => ({ fadeInSeconds: seconds(value) })],
               ["Fade out", selectedTrack.fadeOutSeconds, 0, trackDuration(selectedTrack) / 2, (value: number) => ({ fadeOutSeconds: seconds(value) })],
               ["Gain dB", selectedTrack.gainDb, -24, 12, (value: number) => ({ gainDb: value || 0 })],
+              ["Pan", selectedTrack.pan, -1, 1, (value: number) => ({ pan: Math.max(-1, Math.min(1, value || 0)) })],
             ].map(([label, value, min, max, patch]) => (
               <label key={label as string} className="text-[9px] font-bold uppercase tracking-wider text-white/35">
                 {label as string}
@@ -1961,7 +2298,7 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
                   type="number"
                   min={min as number}
                   max={max as number}
-                  step={label === "Gain dB" ? 0.5 : 0.01}
+                  step={label === "Gain dB" ? 0.5 : label === "Pan" ? 0.1 : 0.01}
                   value={value as number}
                   onChange={(event) => replaceTrack(selectedTrack.id, (patch as (value: number) => Partial<StemTrack>)(event.target.valueAsNumber))}
                   className="mt-1 w-full rounded-lg border border-white/10 bg-black/45 px-2 py-2 text-xs text-white"
