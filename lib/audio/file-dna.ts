@@ -66,9 +66,12 @@ export async function analyzeAudioFile(file: Blob): Promise<{ analysis: FileDnaA
     const notes: string[] = [];
     let score = 100;
 
-    if (decoded.duration < 0.5) {
+    if (decoded.duration < 0.02 || decoded.length < 2) {
       score = 0;
-      notes.push("Audio is too short to verify as a usable music file.");
+      notes.push("The file decoded without enough audio samples to verify.");
+    } else if (decoded.duration < 0.5) {
+      score -= 5;
+      notes.push("Very short audio detected. It can still be saved as a one-shot or short clip.");
     }
     if (clipping > 0) {
       const penalty = Math.min(30, Math.max(5, Math.round((clipping / Math.max(1, samples)) * 5000)));
@@ -95,7 +98,8 @@ export async function analyzeAudioFile(file: Blob): Promise<{ analysis: FileDnaA
     }
 
     score = Math.max(0, Math.min(100, Math.round(score)));
-    const status: FileDnaAnalysis["status"] = decoded.duration < 0.5 ? "failed" : score >= 85 ? "verified" : "warning";
+    const unusable = decoded.duration < 0.02 || decoded.length < 2;
+    const status: FileDnaAnalysis["status"] = unusable ? "failed" : score >= 85 ? "verified" : "warning";
     if (notes.length === 0) notes.push("File decoded successfully with no major technical warnings.");
 
     return {
