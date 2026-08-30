@@ -5,6 +5,7 @@ import { FormEvent, useEffect, useState } from "react";
 import { CheckCircle2, Gauge, Music2, Play, Send, ShieldCheck, Sparkles, Upload } from "lucide-react";
 import { createClient } from "../../lib/supabase/client";
 import { analyzeAudioFile, createWatermarkedPreview, type FileDnaAnalysis } from "../../lib/audio/file-dna";
+import { storageAudioMimeType } from "../../lib/audio/mime";
 
 type StarFile = {
   id: string;
@@ -128,11 +129,12 @@ export default function CrucibleStarPage() {
 
       const cleanName = audioFile.name.replace(/[^A-Za-z0-9._-]+/g, "-").slice(-120);
       const path = `${user.id}/${crypto.randomUUID()}-${cleanName}`;
+      const storageMimeType = storageAudioMimeType(audioFile);
       setMessage("Uploading verified master to the private Star vault…");
       const { error: uploadError } = await sb.storage.from("star-music").upload(path, audioFile, {
         cacheControl: "3600",
         upsert: false,
-        contentType: audioFile.type || undefined,
+        contentType: storageMimeType,
       });
       if (uploadError) throw uploadError;
 
@@ -142,7 +144,7 @@ export default function CrucibleStarPage() {
         title: title.trim() || audioFile.name.replace(/\.[^.]+$/, ""),
         original_filename: audioFile.name,
         storage_path: path,
-        mime_type: audioFile.type || "application/octet-stream",
+        mime_type: storageMimeType,
         size_bytes: audioFile.size,
         sha256: hash,
         category: detectedCategory,
