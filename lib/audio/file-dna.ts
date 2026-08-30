@@ -10,7 +10,193 @@ export type FileDnaAnalysis = {
   grade: "A" | "B" | "C" | "D" | "F";
   status: "verified" | "warning" | "failed";
   notes: string[];
+  contentType: "one-shot" | "loop" | "sample" | "stem" | "track";
+  suggestedCategory: "beat" | "loop" | "sample" | "one-shot" | "track" | "other";
+  contentTags: string[];
+  contentConfidence: number;
+  estimatedBpm: number | null;
+  bpmConfidence: number;
+  estimatedKey: string | null;
+  keyConfidence: number;
+  transientRate: number;
+  rhythmicity: number;
+  tonality: number;
+  modelVersion: "dna-signal-v2";
+  learnedFromExamples: number;
+  confidenceSource: "signal" | "signal+community";
 };
+
+type MusicalContent = Pick<FileDnaAnalysis,
+  | "contentType"
+  | "suggestedCategory"
+  | "contentTags"
+  | "contentConfidence"
+  | "estimatedBpm"
+  | "bpmConfidence"
+  | "estimatedKey"
+  | "keyConfidence"
+  | "transientRate"
+  | "rhythmicity"
+  | "tonality"
+>;
+
+const NOTE_NAMES = ["C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B"];
+const MAJOR_PROFILE = [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88];
+const MINOR_PROFILE = [6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17];
+
+function clampPercent(value: number) {
+  return Math.max(0, Math.min(99, Math.round(value)));
+}
+
+export function analyzeMusicalContent(buffer: AudioBuffer, filename: string): MusicalContent {
+  const source = buffer.getChannelData(0);
+  const analysisLength = Math.min(source.length, Math.floor(buffer.sampleRate * 180));
+  const frameSize = Math.min(2048, Math.max(32, analysisLength));
+  const hop = Math.max(16, Math.floor(frameSize / 2));
+  const envelope: number[] = [];
+  let zeroCrossings = 0;
+  let comparedSamples = 0;
+
+  for (let start = 0; start + frameSize <= analysisLength; start += hop) {
+    let energy = 0;
+    let previous = source[start] ?? 0;
+    for (let index = start; index < start + frameSize; index += 1) {
+      const value = source[index] ?? 0;
+      energy += value * value;
+      if ((value >= 0) !== (previous >= 0)) zeroCrossings += 1;
+      previous = value;
+      comparedSamples += 1;
+    }
+    envelope.push(Math.sqrt(energy / frameSize));
+  }
+
+  const rawOnsetEnvelope = envelope.map((value, index) => index === 0 ? 0 : Math.max(0, value - envelope[index - 1]));
+  const envelopeMean = envelope.reduce((sum, value) => sum + value, 0) / Math.max(1, envelope.length);
+  const onsetMean = rawOnsetEnvelope.reduce((sum, value) => sum + value, 0) / Math.max(1, rawOnsetEnvelope.length);
+  const onsetVariance = rawOnsetEnvelope.reduce((sum, value) => sum + ((value - onsetMean) ** 2), 0) / Math.max(1, rawOnsetEnvelope.length);
+  const onsetThreshold = Math.max(0.002, envelopeMean * 0.12, onsetMean + Math.sqrt(onsetVariance) * 1.25);
+  const onsetEnvelope = rawOnsetEnvelope.map((value) => value > onsetThreshold ? value : 0);
+  const transientCount = onsetEnvelope.filter((value) => value > 0).length;
+  const analyzedSeconds = analysisLength / buffer.sampleRate;
+  const transientRate = transientCount / Math.max(0.02, analyzedSeconds);
+  const framesPerSecond = buffer.sampleRate / hop;
+
+  let bestBpm: number | null = null;
+  let bestRhythmicity = 0;
+  const onsetPower = onsetEnvelope.reduce((sum, value) => sum + value * value, 0);
+  if (onsetEnvelope.length >= 8 && onsetPower > 1e-8 && transientRate >= 0.2) {
+    for (let bpm = 60; bpm <= 200; bpm += 1) {
+      const lag = Math.max(1, Math.round((framesPerSecond * 60) / bpm));
+      if (lag >= onsetEnvelope.length) continue;
+      let correlation = 0;
+      let leftPower = 0;
+      let rightPower = 0;
+      for (let index = lag; index < onsetEnvelope.length; index += 1) {
+        const left = onsetEnvelope[index];
+        const right = onsetEnvelope[index - lag];
+        correlation += left * right;
+        leftPower += left * left;
+        rightPower += right * right;
+      }
+      const normalized = correlation / Math.sqrt(Math.max(1e-12, leftPower * rightPower));
+      if (normalized > bestRhythmicity) {
+        bestRhythmicity = normalized;
+        bestBpm = bpm;
+      }
+    }
+  }
+  const bpmConfidence = clampPercent(bestRhythmicity * 105);
+  if (bestBpm && bestBpm < 75) bestBpm *= 2;
+  if (bpmConfidence < 18) bestBpm = null;
+
+  const chroma = Array.from({ length: 12 }, () => 0);
+  let bassEnergy = 0;
+  let tonalEnergy = 0;
+  const spectralFrame = Math.min(4096, analysisLength);
+  const windowCount = spectralFrame >= 64 ? Math.min(10, Math.max(1, Math.floor(analysisLength / spectralFrame))) : 0;
+  for (let windowIndex = 0; windowIndex < windowCount; windowIndex += 1) {
+    const start = windowCount === 1 ? 0 : Math.floor(((analysisLength - spectralFrame) * windowIndex) / (windowCount - 1));
+    for (let midi = 36; midi <= 95; midi += 1) {
+      const frequency = 440 * (2 ** ((midi - 69) / 12));
+      const coefficient = 2 * Math.cos((2 * Math.PI * frequency) / buffer.sampleRate);
+      let first = 0;
+      let second = 0;
+      for (let sampleIndex = 0; sampleIndex < spectralFrame; sampleIndex += 1) {
+        const next = (source[start + sampleIndex] ?? 0) + coefficient * first - second;
+        second = first;
+        first = next;
+      }
+      const power = Math.max(0, second * second + first * first - coefficient * first * second);
+      chroma[midi % 12] += power;
+      tonalEnergy += power;
+      if (midi < 52) bassEnergy += power;
+    }
+  }
+
+  const chromaMean = chroma.reduce((sum, value) => sum + value, 0) / 12;
+  const chromaPeak = Math.max(...chroma);
+  const tonality = chromaMean > 0 ? chromaPeak / chromaMean : 0;
+  const keyCandidates: Array<{ name: string; score: number }> = [];
+  for (let root = 0; root < 12; root += 1) {
+    const major = MAJOR_PROFILE.reduce((sum, weight, index) => sum + weight * chroma[(root + index) % 12], 0);
+    const minor = MINOR_PROFILE.reduce((sum, weight, index) => sum + weight * chroma[(root + index) % 12], 0);
+    keyCandidates.push({ name: `${NOTE_NAMES[root]} major`, score: major }, { name: `${NOTE_NAMES[root]} minor`, score: minor });
+  }
+  keyCandidates.sort((left, right) => right.score - left.score);
+  const keyMargin = keyCandidates[0]?.score > 0 ? (keyCandidates[0].score - (keyCandidates[1]?.score ?? 0)) / keyCandidates[0].score : 0;
+  const activePitchClasses = chroma.filter((value) => value >= chromaPeak * 0.15).length;
+  const rawKeyConfidence = clampPercent(Math.max(0, tonality - 1) * 22 + keyMargin * 220);
+  const keyConfidence = activePitchClasses >= 3 ? rawKeyConfidence : Math.min(15, rawKeyConfidence);
+  const estimatedKey = keyConfidence >= 18 ? keyCandidates[0]?.name ?? null : null;
+
+  const lowerName = filename.toLowerCase();
+  const tags = new Set<string>();
+  if ((transientRate >= 1.2 && bestRhythmicity >= 0.08) || /drum|beat|perc|kick|snare|hat/.test(lowerName)) tags.add("drums/percussion");
+  if ((tonalEnergy > 0 && bassEnergy / tonalEnergy >= 0.19) || /bass|808/.test(lowerName)) tags.add("bass");
+  if (tonality >= 1.3) tags.add("melodic/tonal");
+  const averageZeroCrossingRate = zeroCrossings / Math.max(1, comparedSamples);
+  const voiceLike = tonality >= 1.2 && averageZeroCrossingRate >= 0.015 && averageZeroCrossingRate <= 0.22 && transientRate < 5 && buffer.duration > 0.5;
+  if (voiceLike || /vocal|vox|voice|acapella|verse|hook/.test(lowerName)) tags.add("possible vocals");
+  if (tags.size === 0) tags.add("mixed audio");
+
+  const beatCount = bestBpm ? (buffer.duration * bestBpm) / 60 : 0;
+  const nearWholeBeat = bestBpm ? Math.abs(beatCount - Math.round(beatCount)) <= 0.18 : false;
+  let contentType: MusicalContent["contentType"];
+  let contentConfidence: number;
+  if (buffer.duration < 1.5) {
+    contentType = "one-shot";
+    contentConfidence = 96;
+  } else if (/loop/.test(lowerName) || (buffer.duration <= 20 && nearWholeBeat && bpmConfidence >= 22)) {
+    contentType = "loop";
+    contentConfidence = /loop/.test(lowerName) ? 88 : clampPercent(48 + bpmConfidence * 0.45);
+  } else if (/stem|vocal|vox|drum|bass|instrumental/.test(lowerName) && buffer.duration >= 4) {
+    contentType = "stem";
+    contentConfidence = 82;
+  } else if (buffer.duration >= 45 || tags.size >= 3) {
+    contentType = "track";
+    contentConfidence = buffer.duration >= 45 ? 82 : 68;
+  } else {
+    contentType = "sample";
+    contentConfidence = 64;
+  }
+
+  let suggestedCategory: MusicalContent["suggestedCategory"] = contentType === "stem" ? "sample" : contentType;
+  if (/beat|instrumental/.test(lowerName) || (tags.has("drums/percussion") && contentType === "track")) suggestedCategory = "beat";
+
+  return {
+    contentType,
+    suggestedCategory,
+    contentTags: Array.from(tags),
+    contentConfidence,
+    estimatedBpm: bestBpm,
+    bpmConfidence,
+    estimatedKey,
+    keyConfidence,
+    transientRate,
+    rhythmicity: bestRhythmicity,
+    tonality,
+  };
+}
 
 function db(value: number) {
   return 20 * Math.log10(Math.max(value, 1e-9));
@@ -39,6 +225,8 @@ export async function analyzeAudioFile(file: Blob): Promise<{ analysis: FileDnaA
   const context = new AudioContextCtor();
   try {
     const decoded = await context.decodeAudioData(bytes.slice(0));
+    const filename = file instanceof File ? file.name : "audio";
+    const musicalContent = analyzeMusicalContent(decoded, filename);
     const stride = Math.max(1, Math.floor(decoded.length / 1_000_000));
     let peak = 0;
     let sumSquares = 0;
@@ -101,6 +289,9 @@ export async function analyzeAudioFile(file: Blob): Promise<{ analysis: FileDnaA
     const unusable = decoded.duration < 0.02 || decoded.length < 2;
     const status: FileDnaAnalysis["status"] = unusable ? "failed" : score >= 85 ? "verified" : "warning";
     if (notes.length === 0) notes.push("File decoded successfully with no major technical warnings.");
+    notes.push(`Detected ${musicalContent.contentType} · ${musicalContent.contentTags.join(" + ")} · ${musicalContent.contentConfidence}% classification confidence.`);
+    if (musicalContent.estimatedBpm) notes.push(`Estimated tempo ${musicalContent.estimatedBpm} BPM · ${musicalContent.bpmConfidence}% confidence.`);
+    if (musicalContent.estimatedKey) notes.push(`Estimated key ${musicalContent.estimatedKey} · ${musicalContent.keyConfidence}% confidence.`);
 
     return {
       hash,
@@ -116,6 +307,10 @@ export async function analyzeAudioFile(file: Blob): Promise<{ analysis: FileDnaA
         grade: gradeFor(score),
         status,
         notes,
+        ...musicalContent,
+        modelVersion: "dna-signal-v2",
+        learnedFromExamples: 0,
+        confidenceSource: "signal",
       },
     };
   } finally {
