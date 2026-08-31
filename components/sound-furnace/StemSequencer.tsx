@@ -12,6 +12,7 @@ import {
   CircleStop,
   Download,
   Drum,
+  FastForward,
   FileText,
   FolderOpen,
   Layers3,
@@ -23,6 +24,7 @@ import {
   Play,
   Plus,
   Redo2,
+  Rewind,
   Save,
   Scissors,
   Settings2,
@@ -857,6 +859,7 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
   const [busy, setBusy] = useState(false);
   const [playing, setPlaying] = useState(false);
   const [previewUrl, setPreviewUrl] = useState("");
+  const [previewSourceId, setPreviewSourceId] = useState("");
   const [compareIds, setCompareIds] = useState<string[]>([]);
   const [cadenceReferenceId, setCadenceReferenceId] = useState("");
   const [cadenceStrength, setCadenceStrength] = useState(65);
@@ -913,6 +916,12 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
 
   useEffect(
     () => () => {
+      const player = previewRef.current;
+      if (player) {
+        player.pause();
+        player.removeAttribute("src");
+        player.load();
+      }
       if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
       recordingStreamRef.current?.getTracks().forEach((track) => track.stop());
     },
@@ -940,6 +949,7 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
   const duration = useMemo(() => projectDuration(tracks), [tracks]);
   const hasSolo = tracks.some((track) => track.solo);
   const selectedTrack = tracks.find((track) => track.id === selectedTrackId) ?? tracks[0] ?? null;
+  const previewTrack = tracks.find((track) => track.id === previewSourceId) ?? null;
   const canUndo = historyVersion >= 0 && undoStackRef.current.length > 0;
   const canRedo = historyVersion >= 0 && redoStackRef.current.length > 0;
   const rulerDuration = Math.max(1, duration);
@@ -1004,6 +1014,51 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
     try { if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId); } catch {}
   }
 
+  function stopAndClearPreview() {
+    const player = previewRef.current;
+    if (player) {
+      player.pause();
+      player.removeAttribute("src");
+      player.load();
+    }
+    if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
+    previewUrlRef.current = "";
+    setPreviewUrl("");
+    setPreviewSourceId("");
+    setPlaying(false);
+    setPlayheadSeconds(0);
+  }
+
+  function loadPreviewBlob(blob: Blob, sourceId: string) {
+    const player = previewRef.current;
+    if (player) {
+      player.pause();
+      player.removeAttribute("src");
+    }
+    if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
+    const url = URL.createObjectURL(blob);
+    previewUrlRef.current = url;
+    setPreviewUrl(url);
+    setPreviewSourceId(sourceId);
+    setPlaying(false);
+    setPlayheadSeconds(0);
+    if (player) {
+      player.src = url;
+      player.load();
+    }
+    return url;
+  }
+
+  function seekPreview(deltaSeconds: number) {
+    const player = previewRef.current;
+    if (!player || !previewUrlRef.current) return;
+    const limit = Number.isFinite(player.duration) ? player.duration : duration;
+    const next = Math.max(0, Math.min(limit, player.currentTime + deltaSeconds));
+    player.currentTime = next;
+    setPlayheadSeconds(next);
+    setStatus(deltaSeconds < 0 ? "Rewound 10 seconds." : "Fast-forwarded 10 seconds.");
+  }
+
   function commitTracks(update: StemTrack[] | ((current: StemTrack[]) => StemTrack[])) {
     const current = historyTracksRef.current;
     const next = typeof update === "function" ? update(current) : update;
@@ -1013,12 +1068,7 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
     historyTracksRef.current = next;
     setTracks(next);
     setHistoryVersion((version) => version + 1);
-    if (previewUrlRef.current) {
-      URL.revokeObjectURL(previewUrlRef.current);
-      previewUrlRef.current = "";
-      setPreviewUrl("");
-      setPlaying(false);
-    }
+    stopAndClearPreview();
   }
 
   function resetTrackHistory(next: StemTrack[]) {
@@ -1055,6 +1105,27 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
     commitTracks((current) =>
       current.map((track) => (track.id === id ? { ...track, ...patch } : track)),
     );
+  }
+
+  function removeTrack(id: string) {
+    const removed = historyTracksRef.current.find((track) => track.id === id);
+    const remaining = historyTracksRef.current.filter((track) => track.id !== id);
+    commitTracks(remaining);
+    setSelectedTrackId((current) => current === id ? (remaining[0]?.id ?? "") : current);
+    setCompareIds((current) => current.filter((item) => item !== id));
+    setEffectsTrackId((current) => current === id ? "" : current);
+    setCadenceReferenceId((current) => current === id ? (remaining[0]?.id ?? "") : current);
+    setCadenceProfiles((current) => {
+      const next = { ...current };
+      delete next[id];
+      return next;
+    });
+    setCadenceSuggestions((current) => {
+      const next = { ...current };
+      delete next[id];
+      return next;
+    });
+    setStatus(removed ? `Deleted ${removed.name}. Playback stopped and its player was cleared.` : "Track deleted.");
   }
 
   async function refreshSavedProjects() {
@@ -1428,9 +1499,7 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
         { ...track, startSeconds: 0, muted: false, solo: false },
       ]);
       const blob = encodeWav24(rendered);
-      if (previewUrl) URL.revokeObjectURL(previewUrl);
-      setPreviewUrl(URL.createObjectURL(blob));
-      setPlaying(false);
+      loadPreviewBlob(blob, track.id);
       setStatus(`${track.name} is loaded in the comparison player.`);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "That stem could not be prepared.");
@@ -1673,10 +1742,7 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
     try {
       const mixed = await renderMix(tracks);
       const blob = encodeWav24(mixed);
-      if (previewUrl) URL.revokeObjectURL(previewUrl);
-      const url = URL.createObjectURL(blob);
-      setPreviewUrl(url);
-      setPlaying(false);
+      loadPreviewBlob(blob, "mix");
 
       if (sendToForge) {
         onMixReady(mixed, "crucible-stem-mix.wav");
@@ -1692,43 +1758,49 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
     }
   }
 
-  async function togglePreview() {
-    let player = previewRef.current;
+  async function togglePreview(sourceToPlay: "mix" | StemTrack = "mix") {
+    const player = previewRef.current;
     if (!player) {
-      player = new Audio();
-      previewRef.current = player;
+      setError("The workstation player is not ready yet.");
+      return;
     }
-    player.ontimeupdate = () => {
-      if (loopEnabledRef.current && loopEndRef.current > loopStartRef.current && player && player.currentTime >= loopEndRef.current) {
-        player.currentTime = loopStartRef.current;
-      }
-      if (player) setPlayheadSeconds(player.currentTime);
-    };
-    player.onended = () => { setPlaying(false); setPlayheadSeconds(0); };
-    if (playing) {
+
+    const sourceId = sourceToPlay === "mix" ? "mix" : sourceToPlay.id;
+    if (playing && previewSourceId === sourceId) {
       player.pause();
       setPlaying(false);
       setPlayheadSeconds(player.currentTime);
-      setStatus("Timeline paused.");
+      setStatus(sourceToPlay === "mix" ? "Timeline paused." : `${sourceToPlay.name} paused.`);
       return;
     }
+
     setError("");
     try {
-      let url = previewUrl;
-      if (!url) {
+      let url = previewUrlRef.current;
+      if (!url || previewSourceId !== sourceId) {
         setBusy(true);
-        setStatus("Preparing Engineer Mode playback…");
-        const mixed = await renderMix(tracks);
-        const blob = encodeWav24(mixed);
-        url = URL.createObjectURL(blob);
-        setPreviewUrl(url);
+        setStatus(sourceToPlay === "mix"
+          ? "Preparing Engineer Mode playback…"
+          : `Preparing ${sourceToPlay.name}…`);
+        const rendered = sourceToPlay === "mix"
+          ? await renderMix(tracks)
+          : await renderMix([{ ...sourceToPlay, startSeconds: 0, muted: false, solo: false }]);
+        url = loadPreviewBlob(encodeWav24(rendered), sourceId);
       }
-      if (player.src !== url) player.src = url;
-      const startAt = loopEnabled && playheadSeconds >= loopEndSeconds ? loopStartSeconds : playheadSeconds;
-      player.currentTime = Math.max(0, Math.min(startAt, duration));
+
+      if (player.src !== url) {
+        player.src = url;
+        player.load();
+      }
+      const sourceDuration = sourceToPlay === "mix" ? duration : trackDuration(sourceToPlay);
+      const useLoop = sourceToPlay === "mix" && loopEnabled && loopEndSeconds > loopStartSeconds;
+      const startAt = useLoop && playheadSeconds >= loopEndSeconds ? loopStartSeconds : playheadSeconds;
+      player.currentTime = Math.max(0, Math.min(startAt, sourceDuration));
       await player.play();
       setPlaying(true);
-      setStatus(loopEnabled ? "Engineer Mode timeline playing — loop active." : "Engineer Mode timeline playing.");
+      setStatus(sourceToPlay === "mix"
+        ? (useLoop ? "Engineer Mode timeline playing — loop active." : "Engineer Mode timeline playing.")
+        : `${sourceToPlay.name} playing by itself.`);
     } catch (caught) {
       setPlaying(false);
       setError(caught instanceof Error ? caught.message : "Engineer Mode playback could not start on this device.");
@@ -2043,6 +2115,24 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
               >
                 {playing ? <Pause size={16} fill="currentColor" /> : <Play size={16} fill="currentColor" />}
               </button>
+              <button
+                type="button"
+                onClick={() => seekPreview(-10)}
+                disabled={!previewUrl}
+                aria-label="Rewind 10 seconds"
+                className="grid size-8 place-items-center rounded-lg bg-white/8 text-white/60 disabled:opacity-25"
+              >
+                <Rewind size={14} />
+              </button>
+              <button
+                type="button"
+                onClick={() => seekPreview(10)}
+                disabled={!previewUrl}
+                aria-label="Fast-forward 10 seconds"
+                className="grid size-8 place-items-center rounded-lg bg-white/8 text-white/60 disabled:opacity-25"
+              >
+                <FastForward size={14} />
+              </button>
               <p className="font-mono text-sm font-black tabular-nums text-orange-100">{formatTime(playheadSeconds)}</p>
               <button
                 type="button"
@@ -2270,17 +2360,43 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
               <p className="text-[9px] font-black uppercase tracking-[0.18em] text-orange-300/70">Selected track inspector</p>
               <h3 className="truncate text-sm font-black text-white/85">{selectedTrack.name}</h3>
             </div>
-            <button
-              type="button"
-              aria-label={`Remove ${selectedTrack.name}`}
-              onClick={() => {
-                commitTracks((current) => current.filter((item) => item.id !== selectedTrack.id));
-                setSelectedTrackId("");
-              }}
-              className="rounded-lg border border-white/10 p-2 text-white/35 hover:text-red-300"
-            >
-              <Trash2 size={15} />
-            </button>
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                aria-label={`Rewind ${selectedTrack.name} 10 seconds`}
+                onClick={() => seekPreview(-10)}
+                disabled={previewSourceId !== selectedTrack.id}
+                className="rounded-lg border border-white/10 p-2 text-white/55 disabled:opacity-25"
+              >
+                <Rewind size={15} />
+              </button>
+              <button
+                type="button"
+                aria-label={playing && previewSourceId === selectedTrack.id ? `Pause ${selectedTrack.name}` : `Play ${selectedTrack.name}`}
+                onClick={() => void togglePreview(selectedTrack)}
+                disabled={busy}
+                className="rounded-lg border border-orange-300/25 bg-orange-400/10 p-2 text-orange-100 disabled:opacity-35"
+              >
+                {playing && previewSourceId === selectedTrack.id ? <Pause size={15} /> : <Play size={15} />}
+              </button>
+              <button
+                type="button"
+                aria-label={`Fast-forward ${selectedTrack.name} 10 seconds`}
+                onClick={() => seekPreview(10)}
+                disabled={previewSourceId !== selectedTrack.id}
+                className="rounded-lg border border-white/10 p-2 text-white/55 disabled:opacity-25"
+              >
+                <FastForward size={15} />
+              </button>
+              <button
+                type="button"
+                aria-label={`Delete ${selectedTrack.name}`}
+                onClick={() => removeTrack(selectedTrack.id)}
+                className="rounded-lg border border-red-300/15 p-2 text-white/35 hover:text-red-300"
+              >
+                <Trash2 size={15} />
+              </button>
+            </div>
           </div>
           <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-7">
             {[
@@ -2392,32 +2508,60 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
         </div>
 
         <div className="flex flex-wrap gap-2">
+          <audio
+            ref={previewRef}
+            src={previewUrl || undefined}
+            onTimeUpdate={(event) => {
+              const player = event.currentTarget;
+              if (
+                previewSourceId === "mix" &&
+                loopEnabledRef.current &&
+                loopEndRef.current > loopStartRef.current &&
+                player.currentTime >= loopEndRef.current
+              ) {
+                player.currentTime = loopStartRef.current;
+              }
+              setPlayheadSeconds(player.currentTime);
+            }}
+            onEnded={() => {
+              setPlaying(false);
+              setPlayheadSeconds(0);
+            }}
+            preload="metadata"
+            className="hidden"
+          />
           {previewUrl ? (
             <>
-              <audio
-                ref={previewRef}
-                src={previewUrl}
-                onTimeUpdate={(event) => setPlayheadSeconds(event.currentTarget.currentTime)}
-                onEnded={() => {
-                  setPlaying(false);
-                  setPlayheadSeconds(0);
-                }}
-                preload="metadata"
-              />
               <button
                 type="button"
-                onClick={() => void togglePreview()}
+                onClick={() => seekPreview(-10)}
+                aria-label="Rewind 10 seconds"
+                className="grid size-10 place-items-center rounded-xl border border-white/10 text-white/60"
+              >
+                <Rewind size={14} />
+              </button>
+              <button
+                type="button"
+                onClick={() => void togglePreview(previewTrack ?? "mix")}
                 className="flex items-center gap-2 rounded-xl border border-white/10 px-4 py-2.5 text-xs font-bold text-white/70"
               >
                 {playing ? <Pause size={14} /> : <Play size={14} />}
-                {playing ? "Pause mix" : "Play mix"}
+                {playing ? "Pause" : `Play ${previewTrack ? "stem" : "mix"}`}
+              </button>
+              <button
+                type="button"
+                onClick={() => seekPreview(10)}
+                aria-label="Fast-forward 10 seconds"
+                className="grid size-10 place-items-center rounded-xl border border-white/10 text-white/60"
+              >
+                <FastForward size={14} />
               </button>
               <a
                 href={previewUrl}
-                download="crucible-stem-mix-24bit.wav"
+                download={previewTrack ? `${previewTrack.name.replace(/\.[^.]+$/, "")}-preview.wav` : "crucible-stem-mix-24bit.wav"}
                 className="flex items-center gap-2 rounded-xl border border-white/10 px-4 py-2.5 text-xs font-bold text-white/70"
               >
-                <Download size={14} /> 24-bit mix
+                <Download size={14} /> {previewTrack ? "Stem WAV" : "24-bit mix"}
               </a>
             </>
           ) : null}
