@@ -1,18 +1,22 @@
 "use client";
 
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { FormEvent, useState } from "react";
 import { MessageCircleQuestion, UserRound, X } from "lucide-react";
 
 type ChatMessage = { role: "user" | "assistant"; content: string };
 
 export default function SupportDock() {
+  const pathname = usePathname();
   const [open, setOpen] = useState(false);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([
     { role: "assistant", content: "Yo — Ask Crucible is here. What do you need help with?" },
   ]);
+
+  if (pathname === "/workstation") return null;
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();

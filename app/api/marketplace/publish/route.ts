@@ -20,6 +20,8 @@ type StarMusicFile = {
   musical_key: string | null;
   price_cents: number;
   license_type: string;
+  analysis_score: number | null;
+  grade: string | null;
   verification_status: string;
   publish_status: string;
   marketplace_item_id: string | null;
@@ -36,7 +38,7 @@ export async function POST(request: Request) {
 
     const { data, error } = await supabase
       .from("star_music_files")
-      .select("id,user_id,title,description,category,storage_path,bpm,musical_key,price_cents,license_type,verification_status,publish_status,marketplace_item_id")
+      .select("id,user_id,title,description,category,storage_path,bpm,musical_key,price_cents,license_type,analysis_score,grade,verification_status,publish_status,marketplace_item_id")
       .eq("id", body.starFileId)
       .eq("user_id", user.id)
       .single();
@@ -75,6 +77,8 @@ export async function POST(request: Request) {
       bpm: file.bpm,
       musical_key: file.musical_key,
       license_type: file.license_type,
+      crucible_score: file.analysis_score,
+      crucible_grade: file.grade,
       is_published: true,
       watermark_label: "CRUCIBLE PREVIEW · PROTECTED MASTER",
     }).select("id").single();

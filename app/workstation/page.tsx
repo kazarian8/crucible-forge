@@ -8,21 +8,27 @@ export default function WorkstationPage() {
   const [mixName, setMixName] = useState("");
 
   return (
-    <main className="min-h-screen bg-[#050403] px-3 py-4 text-white sm:px-6 sm:py-8">
-      <div className="mx-auto max-w-[1600px]">
-        <header className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-orange-300/15 bg-[#0d0a08] px-4 py-3">
-          <div>
-            <p className="text-[10px] font-black uppercase tracking-[0.22em] text-orange-300">Crucible</p>
-            <h1 className="text-2xl font-black">Workstation</h1>
-            <p className="mt-1 text-xs text-white/45">Full 16-track engineer workspace.</p>
+    <main className="min-h-screen bg-[#050505] text-white">
+      <header className="sticky top-0 z-40 border-b border-white/10 bg-[#090909]/95 backdrop-blur-xl">
+        <div className="flex min-h-14 items-center justify-between gap-3 px-3 sm:px-5">
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="grid size-8 shrink-0 place-items-center rounded-lg bg-orange-500 font-black text-black">C</div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <h1 className="truncate text-sm font-black tracking-tight">Crucible Workstation</h1>
+              </div>
+              <p className="truncate text-[10px] text-white/35">Engineer + artist session</p>
+            </div>
           </div>
-          <div className="flex items-center gap-2">
-            {mixName ? <span className="hidden text-xs font-bold text-emerald-300 sm:inline">{mixName} ready for Forge</span> : null}
-            <Link href="/star" className="rounded-xl bg-orange-500 px-3 py-2 text-xs font-black text-black">Upload &amp; File DNA</Link>
-            <Link href="/sound-furnace" className="rounded-xl border border-white/10 px-3 py-2 text-xs font-black text-white/70">Sound Furnace</Link>
+          <div className="flex items-center gap-1.5">
+            {mixName ? <span className="hidden max-w-52 truncate text-[10px] font-bold text-emerald-300 lg:inline">{mixName} ready</span> : null}
+            <Link href="/star" className="rounded-lg bg-orange-500 px-3 py-2 text-[10px] font-black text-black">File DNA</Link>
+            <Link href="/sound-furnace" className="rounded-lg border border-white/10 px-3 py-2 text-[10px] font-black text-white/65">Mastering</Link>
           </div>
-        </header>
+        </div>
+      </header>
 
+      <div className="p-2 sm:p-3">
         <StemSequencer
           onMixReady={(_buffer, name) => setMixName(name)}
         />

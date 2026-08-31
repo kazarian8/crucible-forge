@@ -891,6 +891,8 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
   const [metronomeVolume, setMetronomeVolume] = useState(70);
   const [metronomeEnabled, setMetronomeEnabled] = useState(true);
   const [projectSettingsOpen, setProjectSettingsOpen] = useState(false);
+  const [projectPanelOpen, setProjectPanelOpen] = useState(false);
+  const [cadenceOpen, setCadenceOpen] = useState(false);
   const [timeSignature, setTimeSignature] = useState("4/4");
   const [rulerMode, setRulerMode] = useState<"clock" | "bars">("bars");
   const [snapDivision, setSnapDivision] = useState("1/16");
@@ -1826,19 +1828,42 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
   }
 
   return (
-    <section className="mt-3 rounded-[22px] border border-orange-300/20 bg-[#0d0a08] p-3 shadow-[0_30px_100px_rgba(0,0,0,.45)] sm:mt-10 sm:rounded-[28px] sm:p-7">
-      <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-start">
-        <div>
-          <p className="flex items-center gap-2 text-xs font-black uppercase tracking-[0.2em] text-orange-300">
-            <Layers3 size={16} /> 16-track preparation
+    <section className="min-h-[calc(100vh-4.5rem)] overflow-hidden rounded-xl border border-white/10 bg-[#0b0b0b] pb-20 shadow-[0_24px_80px_rgba(0,0,0,.5)] md:pb-0">
+      <audio
+        ref={previewRef}
+        onPlay={() => setPlaying(true)}
+        onPause={() => setPlaying(false)}
+        onTimeUpdate={(event) => {
+          const player = event.currentTarget;
+          if (
+            previewSourceId === "mix" &&
+            loopEnabledRef.current &&
+            loopEndRef.current > loopStartRef.current &&
+            player.currentTime >= loopEndRef.current
+          ) {
+            player.currentTime = loopStartRef.current;
+          }
+          setPlayheadSeconds(player.currentTime);
+        }}
+        onEnded={() => {
+          setPlaying(false);
+          setPlayheadSeconds(0);
+        }}
+        preload="metadata"
+        className="hidden"
+      />
+      <div className="flex flex-col justify-between gap-3 border-b border-white/10 bg-[#101010] p-3 xl:flex-row xl:items-center">
+        <div className="min-w-0">
+          <p className="flex items-center gap-2 text-[9px] font-black uppercase tracking-[0.2em] text-orange-300/80">
+            <Layers3 size={13} /> Live arrangement
           </p>
-          <h2 className="mt-2 text-3xl font-black">Stem Sequencer</h2>
-          <p className="mt-2 max-w-2xl text-sm leading-6 text-white/48">
-            Clean the edges, align the parts, balance the stems, then send one controlled mix into the mastering Forge.
-          </p>
+          <div className="mt-1 flex min-w-0 items-center gap-3">
+            <h2 className="truncate text-lg font-black">{projectName || "Untitled session"}</h2>
+            <span className="shrink-0 font-mono text-[10px] text-white/35">{tracks.length}/{MAX_TRACKS} tracks · {formatTime(duration)}</span>
+          </div>
         </div>
 
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap items-center gap-1.5">
           <input
             ref={fileInputRef}
             type="file"
@@ -1847,11 +1872,22 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
             onChange={handleFiles}
             className="sr-only"
           />
+          <details className="group relative sm:hidden">
+            <summary className="flex cursor-pointer list-none items-center gap-1.5 rounded-lg bg-orange-500 px-3 py-2 text-[10px] font-black text-black">
+              <Plus size={14} /> Track
+            </summary>
+            <div className="absolute right-0 top-10 z-50 grid min-w-44 gap-1 rounded-xl border border-white/10 bg-[#171717] p-1.5 shadow-2xl">
+              <button type="button" onClick={() => fileInputRef.current?.click()} className="rounded-lg px-3 py-2 text-left text-[10px] font-black text-white/75 hover:bg-white/10">Import audio</button>
+              <button type="button" onClick={() => void addVocalLane()} disabled={tracks.length >= MAX_TRACKS || recording} className="rounded-lg px-3 py-2 text-left text-[10px] font-black text-white/75 hover:bg-white/10 disabled:opacity-30">New vocal track</button>
+              <button type="button" onClick={() => { setInstrumentOpen(true); setProjectSettingsOpen(false); setLyricsOpen(false); setCadenceOpen(false); }} disabled={tracks.length >= MAX_TRACKS} className="rounded-lg px-3 py-2 text-left text-[10px] font-black text-white/75 hover:bg-white/10 disabled:opacity-30">Drums / instrument</button>
+              <button type="button" onClick={() => { setCadenceOpen(true); setInstrumentOpen(false); setProjectSettingsOpen(false); setLyricsOpen(false); }} disabled={tracks.length === 0} className="rounded-lg px-3 py-2 text-left text-[10px] font-black text-white/75 hover:bg-white/10 disabled:opacity-30">Smart cadence</button>
+            </div>
+          </details>
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
             disabled={busy || tracks.length >= MAX_TRACKS}
-            className="flex items-center gap-2 rounded-xl bg-orange-500 px-4 py-2.5 text-xs font-black text-black disabled:opacity-40"
+            className="hidden items-center gap-2 rounded-lg bg-orange-500 px-3 py-2 text-[10px] font-black text-black disabled:opacity-40 sm:flex"
           >
             <Plus size={15} /> Add stems
           </button>
@@ -1859,7 +1895,7 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
             type="button"
             onClick={() => void addVocalLane()}
             disabled={busy || tracks.length >= MAX_TRACKS || recording}
-            className="flex items-center gap-2 rounded-xl border border-red-300/20 bg-red-400/[0.06] px-4 py-2.5 text-xs font-black text-red-100 disabled:opacity-40"
+            className="hidden items-center gap-2 rounded-lg border border-red-300/20 bg-red-400/[0.06] px-3 py-2 text-[10px] font-black text-red-100 disabled:opacity-40 sm:flex"
           >
             <Mic size={15} /> Add vocal lane
           </button>
@@ -1869,9 +1905,10 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
               setInstrumentOpen((open) => !open);
               setProjectSettingsOpen(false);
               setLyricsOpen(false);
+              setCadenceOpen(false);
             }}
             disabled={busy || tracks.length >= MAX_TRACKS}
-            className={`flex items-center gap-2 rounded-xl border px-4 py-2.5 text-xs font-black disabled:opacity-40 ${instrumentOpen ? "border-orange-300 bg-orange-400 text-black" : "border-orange-300/20 bg-orange-400/[0.06] text-orange-100"}`}
+            className={`hidden items-center gap-2 rounded-lg border px-3 py-2 text-[10px] font-black disabled:opacity-40 sm:flex ${instrumentOpen ? "border-orange-300 bg-orange-400 text-black" : "border-orange-300/20 bg-orange-400/[0.06] text-orange-100"}`}
           >
             <Drum size={15} /> Add instrument track
           </button>
@@ -1879,7 +1916,7 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
             type="button"
             onClick={restoreOriginalTiming}
             disabled={busy || tracks.length === 0}
-            className="rounded-xl border border-white/10 px-4 py-2.5 text-xs font-bold text-white/65 disabled:opacity-40"
+            className="hidden rounded-lg border border-white/10 px-3 py-2 text-[10px] font-bold text-white/65 disabled:opacity-40 lg:block"
           >
             Restore timestamps
           </button>
@@ -1888,7 +1925,7 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
             aria-label="Undo last track edit"
             onClick={undoTrackEdit}
             disabled={busy || !canUndo}
-            className="rounded-xl border border-white/10 p-2.5 text-white/65 disabled:opacity-30"
+            className="hidden rounded-xl border border-white/10 p-2.5 text-white/65 disabled:opacity-30 md:block"
           >
             <Undo2 size={16} />
           </button>
@@ -1897,14 +1934,30 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
             aria-label="Redo last track edit"
             onClick={redoTrackEdit}
             disabled={busy || !canRedo}
-            className="rounded-xl border border-white/10 p-2.5 text-white/65 disabled:opacity-30"
+            className="hidden rounded-xl border border-white/10 p-2.5 text-white/65 disabled:opacity-30 md:block"
           >
             <Redo2 size={16} />
+          </button>
+          <button
+            type="button"
+            aria-pressed={projectPanelOpen}
+            onClick={() => setProjectPanelOpen((open) => !open)}
+            className={`flex items-center gap-1.5 rounded-lg border px-3 py-2 text-[10px] font-black ${projectPanelOpen ? "border-emerald-300/40 bg-emerald-300 text-emerald-950" : "border-white/10 text-white/60"}`}
+          >
+            <FolderOpen size={14} /> Projects
+          </button>
+          <button
+            type="button"
+            onClick={() => void saveProject()}
+            disabled={projectBusy || tracks.length === 0}
+            className="flex items-center gap-1.5 rounded-lg border border-emerald-300/20 bg-emerald-400/10 px-3 py-2 text-[10px] font-black text-emerald-100 disabled:opacity-30"
+          >
+            <Save size={14} /> Save
           </button>
         </div>
       </div>
 
-      <section aria-label="Project save and open controls" className="mt-5 rounded-2xl border border-emerald-300/15 bg-emerald-400/[0.04] p-3">
+      {projectPanelOpen ? <section aria-label="Project save and open controls" className="border-b border-emerald-300/15 bg-emerald-400/[0.04] p-3">
         <div className="grid gap-2 lg:grid-cols-[minmax(180px,1fr)_minmax(180px,1fr)_auto_auto]">
           <label className="text-[9px] font-black uppercase tracking-wider text-white/40">
             Project name
@@ -1949,27 +2002,18 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
           </button>
         </div>
         <p className="mt-2 text-[10px] leading-4 text-white/35">Projects and source audio are private to the signed-in account. Saving again updates this project.</p>
-      </section>
+      </section> : null}
 
-      <nav aria-label="Engineer workspace views" className="mx-auto mt-5 grid max-w-sm grid-cols-3 rounded-2xl border border-white/10 bg-black/45 p-1">
-        <button type="button" aria-pressed={!lyricsOpen && !projectSettingsOpen} onClick={() => { setLyricsOpen(false); setProjectSettingsOpen(false); }} className={`grid place-items-center rounded-xl py-2.5 ${!lyricsOpen && !projectSettingsOpen ? "bg-white text-black" : "text-white/45"}`}><Layers3 size={19} /><span className="mt-1 text-[8px] font-black uppercase tracking-wider">Waveform</span></button>
-        <button type="button" aria-pressed={lyricsOpen} onClick={() => { setLyricsOpen(true); setProjectSettingsOpen(false); setInstrumentOpen(false); }} className={`grid place-items-center rounded-xl py-2.5 ${lyricsOpen ? "bg-white text-black" : "text-white/45"}`}><FileText size={19} /><span className="mt-1 text-[8px] font-black uppercase tracking-wider">Lyrics</span></button>
-        <button type="button" aria-pressed={projectSettingsOpen} onClick={() => { setProjectSettingsOpen(true); setLyricsOpen(false); setInstrumentOpen(false); }} className={`grid place-items-center rounded-xl py-2.5 ${projectSettingsOpen ? "bg-white text-black" : "text-white/45"}`}><Settings2 size={19} /><span className="mt-1 text-[8px] font-black uppercase tracking-wider">Settings</span></button>
+      <nav aria-label="Engineer workspace views" className="flex items-center gap-1 border-b border-white/10 bg-black/30 px-3 py-2">
+        <button type="button" aria-pressed={!lyricsOpen && !projectSettingsOpen && !cadenceOpen} onClick={() => { setLyricsOpen(false); setProjectSettingsOpen(false); setCadenceOpen(false); }} className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[9px] font-black uppercase tracking-wider ${!lyricsOpen && !projectSettingsOpen && !cadenceOpen ? "bg-white text-black" : "text-white/45"}`}><Layers3 size={14} />Timeline</button>
+        <button type="button" aria-pressed={lyricsOpen} onClick={() => { setLyricsOpen(true); setProjectSettingsOpen(false); setInstrumentOpen(false); setCadenceOpen(false); }} className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[9px] font-black uppercase tracking-wider ${lyricsOpen ? "bg-white text-black" : "text-white/45"}`}><FileText size={14} />Lyrics</button>
+        <button type="button" aria-pressed={cadenceOpen} disabled={tracks.length === 0} onClick={() => { setCadenceOpen(true); setLyricsOpen(false); setProjectSettingsOpen(false); setInstrumentOpen(false); }} className={`hidden items-center gap-1.5 rounded-md px-3 py-1.5 text-[9px] font-black uppercase tracking-wider disabled:opacity-25 sm:flex ${cadenceOpen ? "bg-white text-black" : "text-white/45"}`}><WandSparkles size={14} />Cadence</button>
+        <button type="button" aria-pressed={projectSettingsOpen} onClick={() => { setProjectSettingsOpen(true); setLyricsOpen(false); setInstrumentOpen(false); setCadenceOpen(false); }} className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[9px] font-black uppercase tracking-wider ${projectSettingsOpen ? "bg-white text-black" : "text-white/45"}`}><Settings2 size={14} />Settings</button>
+        <div className="ml-auto hidden items-center gap-3 font-mono text-[9px] text-white/35 sm:flex">
+          <span>{projectBpm} BPM</span><span>{timeSignature}</span><span>{projectKey}</span><span>{activeTracks(tracks).length} active</span>
+        </div>
       </nav>
 
-      <div className={`mt-5 grid grid-cols-2 gap-2 sm:grid-cols-4 ${lyricsOpen || projectSettingsOpen ? "hidden" : ""}`}>
-        {[
-          ["Tracks", `${tracks.length} / ${MAX_TRACKS}`],
-          ["Timeline", formatTime(duration)],
-          ["Trim gate", `${SILENCE_THRESHOLD_DB} dB`],
-          ["Active", `${activeTracks(tracks).length}`],
-        ].map(([label, value]) => (
-          <div key={label} className="rounded-xl border border-white/8 bg-black/30 p-3">
-            <p className="text-[9px] font-bold uppercase tracking-wider text-white/35">{label}</p>
-            <p className="mt-1 text-sm font-black text-white/80">{value}</p>
-          </div>
-        ))}
-      </div>
 
       {projectSettingsOpen ? (
         <section className="mt-5 overflow-hidden rounded-2xl border border-violet-300/20 bg-[#0b0d12]">
@@ -2051,7 +2095,7 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
         </section>
       ) : null}
 
-      {instrumentOpen && !lyricsOpen && !projectSettingsOpen ? (
+      {instrumentOpen && !lyricsOpen && !projectSettingsOpen && !cadenceOpen ? (
         <section className="mt-5 overflow-hidden rounded-2xl border border-orange-300/20 bg-[#0b0b0c]">
           <div className="flex items-center justify-between border-b border-white/10 p-3">
             <div className="flex rounded-xl bg-white/[0.06] p-1">
@@ -2108,18 +2152,29 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
         </section>
       ) : null}
 
-      {!lyricsOpen && !projectSettingsOpen ? <>
+      {!lyricsOpen && !projectSettingsOpen && !cadenceOpen ? <>
       {tracks.length === 0 ? (
-        <button
-          type="button"
-          onClick={() => fileInputRef.current?.click()}
-          className="mt-5 flex min-h-36 w-full items-center justify-center rounded-2xl border border-dashed border-orange-400/25 bg-orange-500/[0.035] text-sm font-bold text-orange-100/65"
-        >
-          <Scissors className="mr-2" size={18} /> Drop in synchronized stems or choose up to 16 files
-        </button>
+        <div className="min-h-[calc(100vh-12rem)] bg-[#070707]">
+          <div className="flex h-12 items-center gap-2 border-b border-white/10 bg-black/60 px-3">
+            <button type="button" disabled aria-label="Play sequence" className="grid size-8 place-items-center rounded-full bg-white/10 text-white/25"><Play size={14} fill="currentColor" /></button>
+            <button type="button" disabled aria-label="Rewind 10 seconds" className="grid size-8 place-items-center rounded-md bg-white/5 text-white/20"><Rewind size={13} /></button>
+            <button type="button" disabled aria-label="Fast-forward 10 seconds" className="grid size-8 place-items-center rounded-md bg-white/5 text-white/20"><FastForward size={13} /></button>
+            <span className="min-w-20 font-mono text-sm font-black tabular-nums text-orange-100/70">0:00.0</span>
+            <span className="ml-auto hidden font-mono text-[9px] text-white/30 sm:block">{projectBpm} BPM · {timeSignature} · {projectKey}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            className="group m-3 flex min-h-[420px] w-[calc(100%-1.5rem)] flex-col items-center justify-center border border-dashed border-orange-400/20 bg-[linear-gradient(rgba(255,255,255,.025)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,.025)_1px,transparent_1px)] bg-[size:48px_48px] text-center"
+          >
+            <span className="grid size-14 place-items-center rounded-full border border-orange-300/25 bg-orange-400/10 text-orange-200 transition group-hover:scale-105 group-hover:bg-orange-400 group-hover:text-black"><Scissors size={22} /></span>
+            <span className="mt-4 text-sm font-black text-white/80">Add stems to begin the session</span>
+            <span className="mt-1 text-xs text-white/35">WAV, MP3, FLAC, AIFF, M4A, AAC, WebM or OGG · up to 16 tracks</span>
+          </button>
+        </div>
       ) : (
-        <div className="mt-5 overflow-hidden rounded-2xl border border-white/10 bg-[#080706]">
-          <div className="flex items-center justify-between border-b border-white/10 bg-black/55 px-3 py-2">
+        <div className="overflow-hidden bg-[#080706]">
+          <div className="flex min-h-12 items-center justify-between border-b border-white/10 bg-black/65 px-3 py-2">
             <div className="flex items-center gap-2">
               <button
                 type="button"
@@ -2234,7 +2289,7 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
                   const clipLeft = (track.startSeconds / rulerDuration) * 100;
                   const clipWidth = Math.max(1.5, (trackDuration(track) / rulerDuration) * 100);
                   return (
-                    <article key={track.id} className={`grid h-[96px] grid-cols-[170px_1fr] border-b border-white/[0.07] last:border-b-0 ${inactive ? "opacity-45" : ""}`}>
+                    <article key={track.id} className={`grid h-[88px] grid-cols-[190px_1fr] border-b border-white/[0.07] last:border-b-0 ${inactive ? "opacity-45" : ""}`}>
                       <div className={`border-r px-2 py-2 ${selected ? "border-orange-400/50 bg-orange-500/10" : "border-white/10 bg-black/35"}`}>
                         <button type="button" onClick={() => setSelectedTrackId(track.id)} className="block w-full text-left">
                           <span className="text-[9px] font-black uppercase tracking-wider text-orange-300/70">{String(index + 1).padStart(2, "0")}</span>
@@ -2440,8 +2495,8 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
         </section>
       ) : null}
 
-      {tracks.length > 0 ? (
-        <section className="mt-4 rounded-2xl border border-violet-300/20 bg-violet-400/[0.045] p-4">
+      {tracks.length > 0 && cadenceOpen ? (
+        <section className="min-h-[calc(100vh-12rem)] bg-violet-400/[0.045] p-4">
           <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-end">
             <div className="max-w-xl">
               <p className="text-[10px] font-black uppercase tracking-[0.2em] text-violet-200/75">Smart Cadence Quantize</p>
@@ -2523,29 +2578,6 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
         </div>
 
         <div className="flex flex-wrap gap-2">
-          <audio
-            ref={previewRef}
-            onPlay={() => setPlaying(true)}
-            onPause={() => setPlaying(false)}
-            onTimeUpdate={(event) => {
-              const player = event.currentTarget;
-              if (
-                previewSourceId === "mix" &&
-                loopEnabledRef.current &&
-                loopEndRef.current > loopStartRef.current &&
-                player.currentTime >= loopEndRef.current
-              ) {
-                player.currentTime = loopStartRef.current;
-              }
-              setPlayheadSeconds(player.currentTime);
-            }}
-            onEnded={() => {
-              setPlaying(false);
-              setPlayheadSeconds(0);
-            }}
-            preload="metadata"
-            className="hidden"
-          />
           {previewUrl ? (
             <>
               <button
@@ -2602,6 +2634,16 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
         </div>
       </div>
       </> : null}
+
+      <nav aria-label="Mobile workstation transport" className="fixed inset-x-0 bottom-0 z-[80] grid grid-cols-7 items-center border-t border-white/10 bg-black/95 px-2 pt-2 pb-[max(env(safe-area-inset-bottom),0.5rem)] backdrop-blur-xl md:hidden">
+        <button type="button" aria-label="Project settings" aria-pressed={projectSettingsOpen} onClick={() => { setProjectSettingsOpen((open) => !open); setLyricsOpen(false); setInstrumentOpen(false); setCadenceOpen(false); }} className={`mx-auto grid size-10 place-items-center rounded-full ${projectSettingsOpen ? "bg-white text-black" : "text-white/55"}`}><Settings2 size={19} /></button>
+        <button type="button" aria-label="Undo last track edit" onClick={undoTrackEdit} disabled={!canUndo || busy} className="mx-auto grid size-10 place-items-center text-white/55 disabled:opacity-20"><Undo2 size={20} /></button>
+        <button type="button" aria-label="Rewind 10 seconds" onClick={() => seekPreview(-10)} disabled={!previewUrl} className="mx-auto grid size-10 place-items-center text-white disabled:opacity-20"><Rewind size={21} /></button>
+        <button type="button" aria-label={recording ? "Stop recording" : "Record selected track"} onClick={recording ? stopVocalRecording : () => void startVocalRecording()} disabled={!selectedTrack || busy} className={`mx-auto grid size-14 place-items-center rounded-full disabled:opacity-30 ${recording ? "bg-white text-red-600" : "bg-red-600 text-white"}`}>{recording ? <CircleStop size={23} fill="currentColor" /> : <Mic size={23} />}</button>
+        <button type="button" aria-label={playing ? "Pause sequence" : "Play sequence"} onClick={() => toggleTransport()} disabled={tracks.length === 0 || busy} className="mx-auto grid size-10 place-items-center text-white disabled:opacity-20">{playing ? <Pause size={24} fill="currentColor" /> : <Play size={24} fill="currentColor" />}</button>
+        <button type="button" aria-label="Redo last track edit" onClick={redoTrackEdit} disabled={!canRedo || busy} className="mx-auto grid size-10 place-items-center text-white/55 disabled:opacity-20"><Redo2 size={20} /></button>
+        <button type="button" aria-label="Add track" onClick={() => fileInputRef.current?.click()} disabled={tracks.length >= MAX_TRACKS || busy} className="mx-auto grid size-10 place-items-center rounded-full bg-white/10 text-white disabled:opacity-20"><Plus size={21} /></button>
+      </nav>
     </section>
   );
 }
