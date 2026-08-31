@@ -2525,7 +2525,6 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
         <div className="flex flex-wrap gap-2">
           <audio
             ref={previewRef}
-            src={previewUrl || undefined}
             onPlay={() => setPlaying(true)}
             onPause={() => setPlaying(false)}
             onTimeUpdate={(event) => {
