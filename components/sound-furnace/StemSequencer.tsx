@@ -1059,6 +1059,24 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
     setStatus(deltaSeconds < 0 ? "Rewound 10 seconds." : "Fast-forwarded 10 seconds.");
   }
 
+  function pausePreview() {
+    const player = previewRef.current;
+    if (!player) return;
+    player.pause();
+    setPlaying(false);
+    setPlayheadSeconds(player.currentTime);
+    setStatus(previewTrack ? `${previewTrack.name} paused.` : "Timeline paused.");
+  }
+
+  function toggleTransport(sourceToPlay: "mix" | StemTrack = "mix") {
+    const player = previewRef.current;
+    if (player && !player.paused) {
+      pausePreview();
+      return;
+    }
+    void togglePreview(sourceToPlay);
+  }
+
   function commitTracks(update: StemTrack[] | ((current: StemTrack[]) => StemTrack[])) {
     const current = historyTracksRef.current;
     const next = typeof update === "function" ? update(current) : update;
@@ -1766,11 +1784,8 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
     }
 
     const sourceId = sourceToPlay === "mix" ? "mix" : sourceToPlay.id;
-    if (playing && previewSourceId === sourceId) {
-      player.pause();
-      setPlaying(false);
-      setPlayheadSeconds(player.currentTime);
-      setStatus(sourceToPlay === "mix" ? "Timeline paused." : `${sourceToPlay.name} paused.`);
+    if (!player.paused && previewSourceId === sourceId) {
+      pausePreview();
       return;
     }
 
@@ -2108,7 +2123,7 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
             <div className="flex items-center gap-2">
               <button
                 type="button"
-                onClick={() => void togglePreview()}
+                onClick={() => toggleTransport()}
                 disabled={busy || tracks.length === 0}
                 aria-label={playing ? "Pause sequence" : "Play sequence"}
                 className="grid size-9 place-items-center rounded-full bg-orange-500 text-black disabled:opacity-30"
@@ -2373,7 +2388,7 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
               <button
                 type="button"
                 aria-label={playing && previewSourceId === selectedTrack.id ? `Pause ${selectedTrack.name}` : `Play ${selectedTrack.name}`}
-                onClick={() => void togglePreview(selectedTrack)}
+                onClick={() => toggleTransport(selectedTrack)}
                 disabled={busy}
                 className="rounded-lg border border-orange-300/25 bg-orange-400/10 p-2 text-orange-100 disabled:opacity-35"
               >
@@ -2511,6 +2526,8 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
           <audio
             ref={previewRef}
             src={previewUrl || undefined}
+            onPlay={() => setPlaying(true)}
+            onPause={() => setPlaying(false)}
             onTimeUpdate={(event) => {
               const player = event.currentTarget;
               if (
@@ -2542,7 +2559,7 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
               </button>
               <button
                 type="button"
-                onClick={() => void togglePreview(previewTrack ?? "mix")}
+                onClick={() => toggleTransport(previewTrack ?? "mix")}
                 className="flex items-center gap-2 rounded-xl border border-white/10 px-4 py-2.5 text-xs font-bold text-white/70"
               >
                 {playing ? <Pause size={14} /> : <Play size={14} />}
