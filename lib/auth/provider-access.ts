@@ -27,10 +27,11 @@ async function hasExpertMusicianDevAccess(userId: string) {
     const admin = createAdminClient();
     const { data, error } = await admin
       .from("expert_musician_dev_access")
-      .select("enabled")
+      .select("enabled,invite_expires_at")
       .eq("user_id", userId)
       .eq("enabled", true)
-      .maybeSingle<{ enabled: boolean }>();
+      .gt("invite_expires_at", new Date().toISOString())
+      .maybeSingle<{ enabled: boolean; invite_expires_at: string }>();
     return !error && Boolean(data?.enabled);
   } catch {
     return false;
