@@ -951,6 +951,8 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
   const duration = useMemo(() => projectDuration(tracks), [tracks]);
   const hasSolo = tracks.some((track) => track.solo);
   const selectedTrack = tracks.find((track) => track.id === selectedTrackId) ?? tracks[0] ?? null;
+  const selectedRecordTrack = selectedTrack && VOCAL_TRACK_PATTERN.test(selectedTrack.name) ? selectedTrack : null;
+  const canStartRecording = Boolean(selectedRecordTrack) || tracks.length < MAX_TRACKS;
   const previewTrack = tracks.find((track) => track.id === previewSourceId) ?? null;
   const canUndo = historyVersion >= 0 && undoStackRef.current.length > 0;
   const canRedo = historyVersion >= 0 && redoStackRef.current.length > 0;
@@ -1623,69 +1625,133 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
   }
 
   async function startVocalRecording() {
-    const target = selectedTrack;
-    if (!target) {
-      setError("Highlight a sequencer lane before recording.");
-      setStatus("Choose the lane you want to record onto.");
+    if (!canStartRecording) {
+      setError("All 16 tracks are full. Delete a track or select an existing vocal lane before recording.");
+      setStatus("Recording did not start.");
       return;
     }
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+      setError("This browser cannot access microphone recording. Open Crucible Forge directly in Safari and allow Microphone access.");
+      setStatus("Recording is unavailable in this browser.");
+      return;
+    }
+
     setError("");
-    recordingTargetIdRef.current = target.id;
-    recordingStartSecondsRef.current = playheadSeconds;
+    setStatus("Requesting microphone access…");
+    let stream: MediaStream | null = null;
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
-      });
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+        });
+      } catch (caught) {
+        if (caught instanceof DOMException && caught.name === "OverconstrainedError") {
+          stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        } else {
+          throw caught;
+        }
+      }
+
+      const targetId = selectedRecordTrack?.id ?? crypto.randomUUID();
+      const laneNumber = tracks.filter((track) => VOCAL_TRACK_PATTERN.test(track.name)).length + 1;
+      const targetName = selectedRecordTrack?.name ?? `Vocal ${laneNumber}`;
       const preferredType = ["audio/mp4", "audio/webm;codecs=opus", "audio/webm"]
         .find((type) => MediaRecorder.isTypeSupported(type));
       const recorder = preferredType ? new MediaRecorder(stream, { mimeType: preferredType }) : new MediaRecorder(stream);
+
       recorderRef.current = recorder;
       recordingStreamRef.current = stream;
       recordingChunksRef.current = [];
+      recordingTargetIdRef.current = targetId;
       recorder.ondataavailable = (event) => {
         if (event.data.size > 0) recordingChunksRef.current.push(event.data);
       };
-      recorder.onstop = () => {
-        const type = recorder.mimeType || preferredType || "audio/webm";
-        const blob = new Blob(recordingChunksRef.current, { type });
-        const targetId = recordingTargetIdRef.current;
-        const recordStart = recordingStartSecondsRef.current;
-        stream.getTracks().forEach((track) => track.stop());
+      recorder.onerror = () => {
+        stream?.getTracks().forEach((track) => track.stop());
         recordingStreamRef.current = null;
         recorderRef.current = null;
         recordingTargetIdRef.current = "";
         setRecording(false);
-        setStatus("Recording captured. Loading it onto the highlighted lane…");
+        setError("The microphone stopped unexpectedly. Check iPhone Microphone permission for Crucible Forge and try again.");
+        setStatus("Recording stopped before a take was captured.");
+      };
+      recorder.onstop = () => {
+        const chunks = [...recordingChunksRef.current];
+        const type = recorder.mimeType || preferredType || "audio/webm";
+        const blob = new Blob(chunks, { type });
+        const recordStart = recordingStartSecondsRef.current;
+        stream?.getTracks().forEach((track) => track.stop());
+        recordingStreamRef.current = null;
+        recorderRef.current = null;
+        recordingTargetIdRef.current = "";
+        recordingChunksRef.current = [];
+        setRecording(false);
+
+        if (blob.size === 0) {
+          setError("No microphone audio was captured. Check iPhone Microphone permission for Crucible Forge and try again.");
+          setStatus("The empty take was not added to the timeline.");
+          return;
+        }
+
+        setStatus("Recording captured. Building the waveform on the vocal lane…");
         void (async () => {
           try {
             const context = new AudioContext();
             const buffer = await context.decodeAudioData((await blob.arrayBuffer()).slice(0));
             await context.close();
             const audible = detectAudibleRange(buffer);
-            commitTracks((current) => current.map((track) => track.id === targetId ? {
-              ...track,
-              name: VOCAL_TRACK_PATTERN.test(track.name) ? track.name : `Vocal · ${track.name}`,
-              buffer, startSeconds: recordStart, originalStartSeconds: recordStart,
-              trimStartSeconds: audible.start, trimEndSeconds: audible.end,
+            const trackPatch = {
+              buffer,
+              startSeconds: recordStart,
+              originalStartSeconds: recordStart,
+              trimStartSeconds: audible.start,
+              trimEndSeconds: audible.end,
               fadeInSeconds: Math.min(0.02, Math.max(0, (audible.end - audible.start) / 2)),
               fadeOutSeconds: Math.min(0.04, Math.max(0, (audible.end - audible.start) / 2)),
-            } : track));
+            };
+            commitTracks((current) => {
+              if (current.some((track) => track.id === targetId)) {
+                return current.map((track) => track.id === targetId ? { ...track, ...trackPatch } : track);
+              }
+              return [...current, {
+                id: targetId,
+                name: targetName,
+                ...trackPatch,
+                gainDb: 0,
+                pan: 0,
+                muted: false,
+                solo: false,
+                effects: { enabled: false, preset: "clear", intensity: 50, focusNote: projectKey, octave: 3 },
+              }];
+            });
             setSelectedTrackId(targetId);
+            setCadenceReferenceId((current) => current || targetId);
             setCadenceProfiles({});
             setCadenceSuggestions({});
-            setStatus("Recorded directly onto the highlighted lane. The vocal waveform is shown in red.");
+            setStatus(`${targetName} recorded and aligned to ${formatTime(recordStart)} on the timeline.`);
           } catch {
-            setError("The recording was captured but could not be decoded into the lane.");
-            setStatus("The selected lane was left unchanged.");
+            setError("The take was captured but this browser could not decode it into a waveform.");
+            setStatus("The timeline was left unchanged.");
           }
         })();
       };
-      recorder.start(250);
+
+      const player = previewRef.current;
+      const recordStart = player && !player.paused ? player.currentTime : playheadSeconds;
+      recordingStartSecondsRef.current = Math.max(0, Math.min(recordStart, rulerDuration));
+      recorder.start();
       setRecording(true);
-      setStatus(`Recording onto ${target.name}…`);
-    } catch {
+      setStatus(`Recording ${targetName} now — tap Stop when the take is finished.`);
+    } catch (caught) {
+      stream?.getTracks().forEach((track) => track.stop());
+      recordingStreamRef.current = null;
+      recorderRef.current = null;
       recordingTargetIdRef.current = "";
-      setError("Microphone access is required to record onto the selected lane.");
+      setRecording(false);
+      const denied = caught instanceof DOMException && ["NotAllowedError", "SecurityError"].includes(caught.name);
+      setError(denied
+        ? "Microphone access is blocked. On iPhone, open Settings → Safari → Microphone, allow access, then reload Crucible Forge."
+        : "The microphone could not start on this device.");
       setStatus("Recording did not start.");
     }
   }
@@ -2207,8 +2273,8 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
               <button
                 type="button"
                 onClick={recording ? stopVocalRecording : () => void startVocalRecording()}
-                disabled={busy || !selectedTrack}
-                aria-label={recording ? "Stop recording" : `Record onto ${selectedTrack?.name ?? "selected lane"}`}
+                disabled={!recording && (busy || !canStartRecording)}
+                aria-label={recording ? "Stop recording" : selectedRecordTrack ? `Record onto ${selectedRecordTrack.name}` : "Record a new vocal track"}
                 className={`flex items-center gap-1.5 rounded-lg px-3 py-2 text-[9px] font-black uppercase tracking-wider disabled:opacity-35 ${recording ? "bg-red-500 text-white" : "border border-red-300/25 bg-red-400/[0.08] text-red-100"}`}
               >
                 {recording ? <CircleStop size={13} fill="currentColor" /> : <Mic size={13} />}
@@ -2639,7 +2705,7 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
         <button type="button" aria-label="Project settings" aria-pressed={projectSettingsOpen} onClick={() => { setProjectSettingsOpen((open) => !open); setLyricsOpen(false); setInstrumentOpen(false); setCadenceOpen(false); }} className={`mx-auto grid size-10 place-items-center rounded-full ${projectSettingsOpen ? "bg-white text-black" : "text-white/55"}`}><Settings2 size={19} /></button>
         <button type="button" aria-label="Undo last track edit" onClick={undoTrackEdit} disabled={!canUndo || busy} className="mx-auto grid size-10 place-items-center text-white/55 disabled:opacity-20"><Undo2 size={20} /></button>
         <button type="button" aria-label="Rewind 10 seconds" onClick={() => seekPreview(-10)} disabled={!previewUrl} className="mx-auto grid size-10 place-items-center text-white disabled:opacity-20"><Rewind size={21} /></button>
-        <button type="button" aria-label={recording ? "Stop recording" : "Record selected track"} onClick={recording ? stopVocalRecording : () => void startVocalRecording()} disabled={!selectedTrack || busy} className={`mx-auto grid size-14 place-items-center rounded-full disabled:opacity-30 ${recording ? "bg-white text-red-600" : "bg-red-600 text-white"}`}>{recording ? <CircleStop size={23} fill="currentColor" /> : <Mic size={23} />}</button>
+        <button type="button" aria-label={recording ? "Stop recording" : "Record selected track"} onClick={recording ? stopVocalRecording : () => void startVocalRecording()} disabled={!recording && (busy || !canStartRecording)} className={`mx-auto grid size-14 place-items-center rounded-full disabled:opacity-30 ${recording ? "bg-white text-red-600" : "bg-red-600 text-white"}`}>{recording ? <CircleStop size={23} fill="currentColor" /> : <Mic size={23} />}</button>
         <button type="button" aria-label={playing ? "Pause sequence" : "Play sequence"} onClick={() => toggleTransport()} disabled={tracks.length === 0 || busy} className="mx-auto grid size-10 place-items-center text-white disabled:opacity-20">{playing ? <Pause size={24} fill="currentColor" /> : <Play size={24} fill="currentColor" />}</button>
         <button type="button" aria-label="Redo last track edit" onClick={redoTrackEdit} disabled={!canRedo || busy} className="mx-auto grid size-10 place-items-center text-white/55 disabled:opacity-20"><Redo2 size={20} /></button>
         <button type="button" aria-label="Add track" onClick={() => fileInputRef.current?.click()} disabled={tracks.length >= MAX_TRACKS || busy} className="mx-auto grid size-10 place-items-center rounded-full bg-white/10 text-white disabled:opacity-20"><Plus size={21} /></button>
