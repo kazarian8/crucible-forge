@@ -1872,11 +1872,11 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
             onChange={handleFiles}
             className="sr-only"
           />
-          <details className="group relative sm:hidden">
+          <details className="group relative z-[60] sm:hidden">
             <summary className="flex cursor-pointer list-none items-center gap-1.5 rounded-lg bg-orange-500 px-3 py-2 text-[10px] font-black text-black">
               <Plus size={14} /> Track
             </summary>
-            <div className="absolute right-0 top-10 z-50 grid min-w-44 gap-1 rounded-xl border border-white/10 bg-[#171717] p-1.5 shadow-2xl">
+            <div className="absolute left-0 top-10 z-[60] grid w-52 max-w-[calc(100vw-2rem)] gap-1 rounded-xl border border-white/10 bg-[#171717] p-1.5 shadow-2xl">
               <button type="button" onClick={() => fileInputRef.current?.click()} className="rounded-lg px-3 py-2 text-left text-[10px] font-black text-white/75 hover:bg-white/10">Import audio</button>
               <button type="button" onClick={() => void addVocalLane()} disabled={tracks.length >= MAX_TRACKS || recording} className="rounded-lg px-3 py-2 text-left text-[10px] font-black text-white/75 hover:bg-white/10 disabled:opacity-30">New vocal track</button>
               <button type="button" onClick={() => { setInstrumentOpen(true); setProjectSettingsOpen(false); setLyricsOpen(false); setCadenceOpen(false); }} disabled={tracks.length >= MAX_TRACKS} className="rounded-lg px-3 py-2 text-left text-[10px] font-black text-white/75 hover:bg-white/10 disabled:opacity-30">Drums / instrument</button>
@@ -2245,7 +2245,7 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
               onPointerUpCapture={handleTimelinePointerEnd}
               onPointerCancelCapture={handleTimelinePointerEnd}
             >
-              <div className="grid grid-cols-[170px_1fr] border-b border-white/10 bg-[#0d0b0a]">
+              <div className="grid grid-cols-[190px_1fr] border-b border-white/10 bg-[#0d0b0a]">
                 <div className="border-r border-white/10 px-3 py-2 text-[9px] font-black uppercase tracking-wider text-white/30">Tracks</div>
                 <div
                   className={`relative h-9 ${loopEnabled ? "cursor-crosshair" : ""}`}
@@ -2280,7 +2280,7 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
               <div className="relative">
                 <div
                   className="pointer-events-none absolute bottom-0 top-0 z-20 w-px bg-orange-300 shadow-[0_0_10px_rgba(253,186,116,.8)]"
-                  style={{ left: `calc(170px + (100% - 170px) * ${Math.min(1, playheadSeconds / rulerDuration)})` }}
+                  style={{ left: `calc(190px + (100% - 190px) * ${Math.min(1, playheadSeconds / rulerDuration)})` }}
                 />
                 {tracks.map((track, index) => {
                   const waveColor = WAVE_COLORS[index % WAVE_COLORS.length];
