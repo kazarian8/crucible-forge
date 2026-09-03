@@ -847,6 +847,9 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
   const recordingChunksRef = useRef<Blob[]>([]);
   const recordingTargetIdRef = useRef("");
   const recordingStartSecondsRef = useRef(0);
+  const recordingMonitorContextRef = useRef<AudioContext | null>(null);
+  const recordingAnimationRef = useRef<number | null>(null);
+  const recordingStartedAtRef = useRef(0);
   const undoStackRef = useRef<StemTrack[][]>([]);
   const redoStackRef = useRef<StemTrack[][]>([]);
   const historyTracksRef = useRef<StemTrack[]>([]);
@@ -871,6 +874,8 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
   const [playheadSeconds, setPlayheadSeconds] = useState(0);
   const [effectsTrackId, setEffectsTrackId] = useState("");
   const [recording, setRecording] = useState(false);
+  const [recordingElapsedSeconds, setRecordingElapsedSeconds] = useState(0);
+  const [recordingLevel, setRecordingLevel] = useState(0);
   const [snapEnabled, setSnapEnabled] = useState(true);
   const [loopEnabled, setLoopEnabled] = useState(false);
   const [loopStartSeconds, setLoopStartSeconds] = useState(0);
@@ -926,6 +931,8 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
       }
       if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
       recordingStreamRef.current?.getTracks().forEach((track) => track.stop());
+      if (recordingAnimationRef.current !== null) cancelAnimationFrame(recordingAnimationRef.current);
+      if (recordingMonitorContextRef.current?.state !== "closed") void recordingMonitorContextRef.current?.close();
     },
     [],
   );
@@ -1624,6 +1631,51 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
     setStatus(`${track.name} lane added. It is highlighted and ready to record.`);
   }
 
+  function stopRecordingMonitor() {
+    if (recordingAnimationRef.current !== null) {
+      cancelAnimationFrame(recordingAnimationRef.current);
+      recordingAnimationRef.current = null;
+    }
+    const monitor = recordingMonitorContextRef.current;
+    recordingMonitorContextRef.current = null;
+    if (monitor && monitor.state !== "closed") void monitor.close();
+    setRecordingLevel(0);
+    setRecordingElapsedSeconds(0);
+  }
+
+  function startRecordingMonitor(stream: MediaStream) {
+    const context = new AudioContext();
+    const source = context.createMediaStreamSource(stream);
+    const analyser = context.createAnalyser();
+    analyser.fftSize = 256;
+    analyser.smoothingTimeConstant = 0.72;
+    source.connect(analyser);
+    recordingMonitorContextRef.current = context;
+    recordingStartedAtRef.current = performance.now();
+    setRecordingElapsedSeconds(0);
+    setRecordingLevel(0);
+    void context.resume();
+
+    const samples = new Uint8Array(analyser.fftSize);
+    let lastUiUpdate = 0;
+    const updateMeter = (now: number) => {
+      if (now - lastUiUpdate >= 80) {
+        analyser.getByteTimeDomainData(samples);
+        let sum = 0;
+        for (const sample of samples) {
+          const centered = (sample - 128) / 128;
+          sum += centered * centered;
+        }
+        const rms = Math.sqrt(sum / samples.length);
+        setRecordingLevel(Math.min(1, rms * 5));
+        setRecordingElapsedSeconds((now - recordingStartedAtRef.current) / 1000);
+        lastUiUpdate = now;
+      }
+      recordingAnimationRef.current = requestAnimationFrame(updateMeter);
+    };
+    recordingAnimationRef.current = requestAnimationFrame(updateMeter);
+  }
+
   async function startVocalRecording() {
     if (!canStartRecording) {
       setError("All 16 tracks are full. Delete a track or select an existing vocal lane before recording.");
@@ -1671,6 +1723,7 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
         recordingStreamRef.current = null;
         recorderRef.current = null;
         recordingTargetIdRef.current = "";
+        stopRecordingMonitor();
         setRecording(false);
         setError("The microphone stopped unexpectedly. Check iPhone Microphone permission for Crucible Forge and try again.");
         setStatus("Recording stopped before a take was captured.");
@@ -1685,6 +1738,7 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
         recorderRef.current = null;
         recordingTargetIdRef.current = "";
         recordingChunksRef.current = [];
+        stopRecordingMonitor();
         setRecording(false);
 
         if (blob.size === 0) {
@@ -1740,6 +1794,7 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
       const recordStart = player && !player.paused ? player.currentTime : playheadSeconds;
       recordingStartSecondsRef.current = Math.max(0, Math.min(recordStart, rulerDuration));
       recorder.start();
+      startRecordingMonitor(stream);
       setRecording(true);
       setStatus(`Recording ${targetName} now — tap Stop when the take is finished.`);
     } catch (caught) {
@@ -1747,6 +1802,7 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
       recordingStreamRef.current = null;
       recorderRef.current = null;
       recordingTargetIdRef.current = "";
+      stopRecordingMonitor();
       setRecording(false);
       const denied = caught instanceof DOMException && ["NotAllowedError", "SecurityError"].includes(caught.name);
       setError(denied
@@ -2278,7 +2334,12 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
                 className={`flex items-center gap-1.5 rounded-lg px-3 py-2 text-[9px] font-black uppercase tracking-wider disabled:opacity-35 ${recording ? "bg-red-500 text-white" : "border border-red-300/25 bg-red-400/[0.08] text-red-100"}`}
               >
                 {recording ? <CircleStop size={13} fill="currentColor" /> : <Mic size={13} />}
-                {recording ? "Stop" : "Record"}
+                {recording ? `Stop ${formatTime(recordingElapsedSeconds)}` : "Record"}
+                {recording ? (
+                  <span className="h-1.5 w-12 overflow-hidden rounded-full bg-black/35" aria-label="Live microphone level">
+                    <span className="block h-full rounded-full bg-red-200 transition-[width] duration-75" style={{ width: `${Math.max(5, recordingLevel * 100)}%` }} />
+                  </span>
+                ) : null}
               </button>
             </div>
             <div className="flex items-center gap-1.5">
@@ -2702,6 +2763,15 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
       </> : null}
 
       <nav aria-label="Mobile workstation transport" className="fixed inset-x-0 bottom-0 z-[80] grid grid-cols-7 items-center border-t border-white/10 bg-black/95 px-2 pt-2 pb-[max(env(safe-area-inset-bottom),0.5rem)] backdrop-blur-xl md:hidden">
+        {recording ? (
+          <div className="pointer-events-none absolute -top-10 left-1/2 flex -translate-x-1/2 items-center gap-2 rounded-full border border-red-300/30 bg-red-600 px-3 py-1.5 text-[10px] font-black text-white shadow-[0_0_22px_rgba(220,38,38,.55)]" role="status" aria-live="polite">
+            <span className="size-2 animate-pulse rounded-full bg-white" />
+            REC {formatTime(recordingElapsedSeconds)}
+            <span className="h-1.5 w-14 overflow-hidden rounded-full bg-black/30">
+              <span className="block h-full rounded-full bg-white transition-[width] duration-75" style={{ width: `${Math.max(5, recordingLevel * 100)}%` }} />
+            </span>
+          </div>
+        ) : null}
         <button type="button" aria-label="Project settings" aria-pressed={projectSettingsOpen} onClick={() => { setProjectSettingsOpen((open) => !open); setLyricsOpen(false); setInstrumentOpen(false); setCadenceOpen(false); }} className={`mx-auto grid size-10 place-items-center rounded-full ${projectSettingsOpen ? "bg-white text-black" : "text-white/55"}`}><Settings2 size={19} /></button>
         <button type="button" aria-label="Undo last track edit" onClick={undoTrackEdit} disabled={!canUndo || busy} className="mx-auto grid size-10 place-items-center text-white/55 disabled:opacity-20"><Undo2 size={20} /></button>
         <button type="button" aria-label="Rewind 10 seconds" onClick={() => seekPreview(-10)} disabled={!previewUrl} className="mx-auto grid size-10 place-items-center text-white disabled:opacity-20"><Rewind size={21} /></button>
