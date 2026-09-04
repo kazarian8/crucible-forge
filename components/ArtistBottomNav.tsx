@@ -16,7 +16,7 @@ const items: readonly NavItem[] = [
   { label: "Moments", href: "/moments", icon: Radio },
   { label: "Workstation", href: "/workstation", icon: SlidersHorizontal, center: true },
   { label: "Market", href: "/sound-library", icon: Music2 },
-  { label: "Library", href: "/local-library", icon: LibraryBig },
+  { label: "My Tracks", href: "/local-library", icon: LibraryBig },
 ];
 
 export default function ArtistBottomNav() {
