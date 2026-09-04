@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
-import { ChevronDown, ChevronUp, Dna, LibraryBig, Play, ShieldCheck, Upload } from "lucide-react";
+import { ChevronDown, ChevronUp, Dna, LibraryBig, Play, Send, ShieldCheck, Upload, XCircle } from "lucide-react";
 import { playForgeConfirmation } from "../../lib/audio/forge-confirm";
 import { storageAudioMimeType } from "../../lib/audio/mime";
 import { createClient } from "../../lib/supabase/client";
@@ -52,6 +52,8 @@ export default function LocalLibraryPage() {
   const [confirmedIds, setConfirmedIds] = useState<Set<string>>(() => new Set());
   const [confirmationGlowId, setConfirmationGlowId] = useState("");
   const [playUrl, setPlayUrl] = useState<Record<string, string>>({});
+  const [publishingId, setPublishingId] = useState("");
+  const [unpublishingId, setUnpublishingId] = useState("");
   const previewObjectUrls = useRef<string[]>([]);
 
   async function load() {
@@ -82,6 +84,46 @@ export default function LocalLibraryPage() {
     previewObjectUrls.current.push(objectUrl);
     setPlayUrl((current) => ({ ...current, [item.id]: objectUrl }));
     setMessage("Private preview ready.");
+  }
+
+  async function publish(item: StarItem) {
+    setPublishingId(item.id);
+    setMessage("Publishing from your private library…");
+    try {
+      const response = await fetch("/api/marketplace/publish", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ starFileId: item.id, previewPath: null }),
+      });
+      const result = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(result.error || "Publish failed.");
+      setItems((current) => current.map((file) => file.id === item.id ? { ...file, publish_status: "published" } : file));
+      setMessage(`“${item.title}” is published. Your private copy is still saved here.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Publish failed.");
+    } finally {
+      setPublishingId("");
+    }
+  }
+
+  async function unpublish(item: StarItem) {
+    setUnpublishingId(item.id);
+    setMessage("Removing the public listing while keeping your private copy…");
+    try {
+      const response = await fetch("/api/marketplace/unpublish", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ starFileId: item.id }),
+      });
+      const result = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(result.error || "Unpublish failed.");
+      setItems((current) => current.map((file) => file.id === item.id ? { ...file, publish_status: "ready" } : file));
+      setMessage(`“${item.title}” is private again.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Unpublish failed.");
+    } finally {
+      setUnpublishingId("");
+    }
   }
 
   async function confirmDna(item: StarItem) {
@@ -144,7 +186,25 @@ export default function LocalLibraryPage() {
             return <article key={item.id} className="p-4">
               {item.artwork_url ? <div className="mb-4 aspect-[16/6] rounded-xl bg-cover bg-center" style={{ backgroundImage: `url(${item.artwork_url})` }} /> : null}
               <div className="flex items-start justify-between gap-3"><div className="min-w-0"><div className="flex items-center gap-2"><ShieldCheck size={14} className="shrink-0 text-emerald-300" /><p className="truncate font-black">{item.title}</p></div><p className="mt-1 truncate pl-[22px] text-xs text-white/40">{item.category}{item.duration_seconds != null ? ` · ${Number(item.duration_seconds).toFixed(2)} sec` : ""} · private</p></div><span className="shrink-0 rounded-lg bg-orange-500 px-2.5 py-1 text-xs font-black text-black">{item.grade ?? "—"} {item.analysis_score ?? ""}</span></div>
-              <div className="mt-3 flex flex-wrap gap-2"><button type="button" onClick={() => void play(item)} className="inline-flex items-center gap-2 rounded-xl border border-white/10 px-3 py-2 text-xs font-black"><Play size={14} />Preview</button><button type="button" aria-expanded={dnaOpen} onClick={() => setOpenDnaId(dnaOpen ? "" : item.id)} className="inline-flex items-center gap-2 rounded-xl border border-sky-300/20 px-3 py-2 text-xs font-black text-sky-200"><Dna size={14} />{dnaOpen ? "Hide DNA" : "View DNA"}{dnaOpen ? <ChevronUp size={13} /> : <ChevronDown size={13} />}</button><Link href="/star#private-library" className="rounded-xl border border-orange-300/20 px-3 py-2 text-xs font-black text-orange-200">{item.publish_status === "published" ? "Published" : "Publish options"}</Link></div>
+              <div className="mt-3 flex flex-wrap gap-2"><button type="button" onClick={() => void play(item)} className="inline-flex items-center gap-2 rounded-xl border border-white/10 px-3 py-2 text-xs font-black"><Play size={14} />Preview</button><button type="button" aria-expanded={dnaOpen} onClick={() => setOpenDnaId(dnaOpen ? "" : item.id)} className="inline-flex items-center gap-2 rounded-xl border border-sky-300/20 px-3 py-2 text-xs font-black text-sky-200"><Dna size={14} />{dnaOpen ? "Hide DNA" : "View DNA"}{dnaOpen ? <ChevronUp size={13} /> : <ChevronDown size={13} />}</button>{item.publish_status === "published" ? (
+                <button
+                  type="button"
+                  disabled={unpublishingId === item.id}
+                  onClick={() => void unpublish(item)}
+                  className="inline-flex items-center gap-2 rounded-xl bg-red-500 px-3 py-2 text-xs font-black text-white disabled:opacity-40"
+                >
+                  <XCircle size={14} />{unpublishingId === item.id ? "Unpublishing…" : "Unpublish"}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  disabled={publishingId === item.id || item.verification_status === "failed"}
+                  onClick={() => void publish(item)}
+                  className="inline-flex items-center gap-2 rounded-xl bg-emerald-400 px-3 py-2 text-xs font-black text-black disabled:opacity-40"
+                >
+                  <Send size={14} />{publishingId === item.id ? "Publishing…" : "Publish"}
+                </button>
+              )}</div>
               {playUrl[item.id] ? <audio className="mt-3 w-full" controls autoPlay src={playUrl[item.id]} /> : null}
               {dnaOpen ? <div className="mt-3 rounded-2xl border border-sky-300/15 bg-sky-400/[0.04] p-3"><div className="flex flex-wrap items-center justify-between gap-2"><div><p className="text-[10px] font-black uppercase tracking-wider text-sky-200">File DNA · {item.analysis?.content_type ?? "unanalyzed"}</p><p className="mt-1 text-xs text-white/45">{(item.analysis?.content_tags ?? []).join(" + ") || "No content tags"}</p></div><span className="text-sm font-black text-sky-200 transition-all duration-500">{item.analysis?.content_confidence ?? 0}%</span></div><div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4"><Metric label="Tempo" value={item.bpm ? `${item.bpm} BPM` : "Not detected"} /><Metric label="Key" value={item.musical_key || "Not detected"} /><Metric label="Peak" value={item.peak_dbfs == null ? "—" : `${Number(item.peak_dbfs).toFixed(1)} dBFS`} /><Metric label="RMS" value={item.rms_dbfs == null ? "—" : `${Number(item.rms_dbfs).toFixed(1)} dBFS`} /><Metric label="Silence" value={item.silence_percent == null ? "—" : `${Number(item.silence_percent).toFixed(1)}%`} /><Metric label="Sample rate" value={item.sample_rate ? `${item.sample_rate} Hz` : "—"} /><Metric label="Channels" value={item.channels ? String(item.channels) : "—"} /><Metric label="Size" value={`${(item.size_bytes / 1024 / 1024).toFixed(2)} MB`} /></div>{dnaConfirmed ? <span className={`mt-3 inline-flex rounded-xl border px-3 py-2 text-xs font-black transition-all duration-500 ${confirmationGlowId === item.id ? "border-emerald-200 bg-emerald-300 text-black shadow-[0_0_24px_rgba(110,231,183,0.7)]" : "border-emerald-300/15 text-emerald-200"}`}>{confirmationGlowId === item.id ? `DNA confirmed · ${item.analysis?.content_confidence ?? 0}%` : "DNA confirmed"}</span> : <button type="button" disabled={feedbackBusyId === item.id} onClick={() => void confirmDna(item)} className="mt-3 rounded-xl border border-emerald-300/20 px-3 py-2 text-xs font-black text-emerald-200">{feedbackBusyId === item.id ? "Forging confirmation…" : "Confirm DNA"}</button>}</div> : null}
             </article>;
