@@ -21,7 +21,7 @@ function hashToken(token: string) {
 
 async function resolveInvite(token: string) {
   const tokenHash = hashToken(token);
-  const invites = await adminRequest<InviteRow[]>(`project_collaboration_invites?token_hash=eq.${tokenHash}&revoked_at=is.null&select=id,track_id,owner_id,revoked_at,expires_at`, { method: "GET" });
+  const invites = await adminRequest<InviteRow[]>(`track_collaboration_invites?token_hash=eq.${tokenHash}&revoked_at=is.null&select=id,track_id,owner_id,revoked_at,expires_at`, { method: "GET" });
   const invite = invites[0] ?? null;
   if (!invite) return null;
   if (invite.expires_at && Date.parse(invite.expires_at) <= Date.now()) return null;
@@ -37,11 +37,7 @@ export async function GET(_request: NextRequest, context: { params: Promise<{ to
   const resolved = await resolveInvite(token);
   if (!resolved) return NextResponse.json({ error: "This collaboration link is invalid or has been disabled." }, { status: 404 });
   const user = await currentUser();
-  return NextResponse.json({
-    authenticated: Boolean(user),
-    track: { id: resolved.track.id, title: resolved.track.title, artwork_url: resolved.track.artwork_url },
-    owner: resolved.owner,
-  });
+  return NextResponse.json({ authenticated: Boolean(user), track: { id: resolved.track.id, title: resolved.track.title, artwork_url: resolved.track.artwork_url }, owner: resolved.owner });
 }
 
 export async function POST(_request: NextRequest, context: { params: Promise<{ token: string }> }) {
@@ -52,15 +48,10 @@ export async function POST(_request: NextRequest, context: { params: Promise<{ t
   if (!resolved) return NextResponse.json({ error: "This collaboration link is invalid or has been disabled." }, { status: 404 });
 
   if (resolved.track.user_id !== user.id) {
-    await adminRequest("project_collaborators?on_conflict=track_id,user_id", {
+    await adminRequest("track_collaborators?on_conflict=track_id,user_id", {
       method: "POST",
       headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
-      body: JSON.stringify({
-        track_id: resolved.track.id,
-        user_id: user.id,
-        invited_by: resolved.track.user_id,
-        role: "editor",
-      }),
+      body: JSON.stringify({ track_id: resolved.track.id, user_id: user.id, invited_by: resolved.track.user_id, role: "editor" }),
     });
   }
 
