@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { Download, ExternalLink, Globe2, History, LockKeyhole, MoreHorizontal, Music2, SlidersHorizontal } from "lucide-react";
+import { Copy, Download, ExternalLink, Globe2, History, Link2, LockKeyhole, MoreHorizontal, Music2, SlidersHorizontal, Users } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { createClient } from "../../../lib/supabase/client";
 
@@ -31,8 +31,14 @@ type TrackVersion = {
   created_at: string;
 };
 
-const DISTROKID_URL =
-  process.env.NEXT_PUBLIC_DISTROKID_AFFILIATE_URL?.trim() || "https://distrokid.com/";
+type Person = { id: string; username: string | null; display_name: string | null; avatar_url: string | null };
+type CollaborationInfo = {
+  owner: Person;
+  collaborators: Array<{ user_id: string; role: string; joined_at: string; profile: Person }>;
+  canInvite: boolean;
+};
+
+const DISTROKID_URL = process.env.NEXT_PUBLIC_DISTROKID_AFFILIATE_URL?.trim() || "https://distrokid.com/";
 
 function displayDate(value: string) {
   return new Intl.DateTimeFormat(undefined, {
@@ -44,14 +50,20 @@ function displayDate(value: string) {
   }).format(new Date(value));
 }
 
+function personName(person: Person) {
+  return person.display_name || person.username || "Artist";
+}
+
 export default function TrackProjectPage() {
   const params = useParams<{ id: string }>();
   const trackId = params.id;
   const [track, setTrack] = useState<Track | null>(null);
   const [versions, setVersions] = useState<TrackVersion[]>([]);
+  const [collaboration, setCollaboration] = useState<CollaborationInfo | null>(null);
   const [tab, setTab] = useState<"versions" | "distribution">("versions");
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
+  const [inviteLoading, setInviteLoading] = useState(false);
 
   const load = useCallback(async () => {
     if (!trackId) return;
@@ -73,18 +85,44 @@ export default function TrackProjectPage() {
     if (trackError || !trackData) {
       setTrack(null);
       setVersions([]);
+      setCollaboration(null);
       setMessage("This private track could not be opened.");
     } else {
       setTrack(trackData as Track);
       setVersions((versionData ?? []) as TrackVersion[]);
       setMessage(versionError ? "The track opened, but its version history could not be loaded." : "");
+      fetch(`/api/collaboration?trackId=${encodeURIComponent(trackId)}`, { cache: "no-store" })
+        .then(async (response) => response.ok ? response.json() : null)
+        .then((result) => setCollaboration(result as CollaborationInfo | null))
+        .catch(() => setCollaboration(null));
     }
     setLoading(false);
   }, [trackId]);
 
-  useEffect(() => {
-    void load();
-  }, [load]);
+  useEffect(() => { void load(); }, [load]);
+
+  async function copyInviteLink() {
+    if (!trackId) return;
+    setInviteLoading(true);
+    setMessage("");
+    try {
+      const response = await fetch("/api/collaboration", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        cache: "no-store",
+        body: JSON.stringify({ trackId }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(String(result.error || "Could not create an invite link."));
+      if (!navigator.clipboard?.writeText) throw new Error("Copy is unavailable in this browser. Open this project in Safari or Chrome and try again.");
+      await navigator.clipboard.writeText(String(result.inviteUrl));
+      setMessage("Collaboration link copied. Anyone you send it to can sign up, accept, and join this private project.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not copy the collaboration link.");
+    } finally {
+      setInviteLoading(false);
+    }
+  }
 
   async function downloadVersion(version: Pick<TrackVersion, "storage_path" | "original_filename">) {
     setMessage("Preparing private download…");
@@ -104,9 +142,7 @@ export default function TrackProjectPage() {
     }
   }
 
-  if (loading) {
-    return <main className="min-h-screen bg-[#f7f7f5] p-8 text-zinc-900"><p>Opening project…</p></main>;
-  }
+  if (loading) return <main className="min-h-screen bg-[#f7f7f5] p-8 text-zinc-900"><p>Opening project…</p></main>;
 
   if (!track) {
     return (
@@ -131,6 +167,7 @@ export default function TrackProjectPage() {
     created_at: track.created_at,
   };
   const history = versions.slice(1);
+  const people = collaboration ? [collaboration.owner, ...collaboration.collaborators.map((item) => item.profile)] : [];
 
   return (
     <main className="min-h-screen bg-[#f7f7f5] pb-28 text-zinc-950">
@@ -144,19 +181,36 @@ export default function TrackProjectPage() {
           <MoreHorizontal size={28} className="text-zinc-700" />
         </header>
 
+        <section className="mt-6 rounded-3xl bg-white p-5 shadow-sm" aria-label="Project collaborators">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <div className="flex items-center gap-2"><Users size={18} /><h2 className="font-black">Collaborators</h2></div>
+              <p className="mt-1 text-xs text-zinc-500">Owner first, then everyone who accepted the project invite.</p>
+            </div>
+            {collaboration?.canInvite ? (
+              <button type="button" onClick={() => void copyInviteLink()} disabled={inviteLoading} className="inline-flex items-center gap-2 rounded-2xl bg-zinc-100 px-4 py-3 text-sm font-black disabled:opacity-50">
+                {inviteLoading ? <Link2 size={17} /> : <Copy size={17} />}{inviteLoading ? "Creating link…" : "Copy Invite Link"}
+              </button>
+            ) : null}
+          </div>
+          <div className="mt-4 flex flex-wrap items-center gap-3">
+            {people.map((person, index) => (
+              <div key={`${person.id}-${index}`} className="flex items-center gap-2" title={index === 0 ? `${personName(person)} — project owner` : personName(person)}>
+                <div className={`grid size-12 place-items-center overflow-hidden rounded-full bg-zinc-200 bg-cover bg-center ${index === 0 ? "ring-2 ring-[#ff2d19] ring-offset-2" : ""}`} style={person.avatar_url ? { backgroundImage: `url(${person.avatar_url})` } : undefined}>
+                  {!person.avatar_url ? <Users size={18} className="text-zinc-500" /> : null}
+                </div>
+                <div className="max-w-32 min-w-0"><p className="truncate text-sm font-black">{personName(person)}</p><p className="text-[11px] text-zinc-400">{index === 0 ? "Owner" : "Collaborator"}</p></div>
+              </div>
+            ))}
+            {collaboration && people.length === 1 ? <p className="text-sm text-zinc-400">Send the invite link. Their profile picture appears here beside yours after they accept.</p> : null}
+          </div>
+        </section>
+
         <nav className="mt-6 grid grid-cols-2 rounded-2xl bg-zinc-200/70 p-1" aria-label="Project sections">
-          <button
-            type="button"
-            onClick={() => setTab("versions")}
-            className={`rounded-xl px-3 py-3 text-sm font-black ${tab === "versions" ? "bg-white shadow-sm" : "text-zinc-500"}`}
-          >
+          <button type="button" onClick={() => setTab("versions")} className={`rounded-xl px-3 py-3 text-sm font-black ${tab === "versions" ? "bg-white shadow-sm" : "text-zinc-500"}`}>
             <History className="mr-2 inline" size={16} />Versions
           </button>
-          <button
-            type="button"
-            onClick={() => setTab("distribution")}
-            className={`rounded-xl px-3 py-3 text-sm font-black ${tab === "distribution" ? "bg-white shadow-sm" : "text-zinc-500"}`}
-          >
+          <button type="button" onClick={() => setTab("distribution")} className={`rounded-xl px-3 py-3 text-sm font-black ${tab === "distribution" ? "bg-white shadow-sm" : "text-zinc-500"}`}>
             <Globe2 className="mr-2 inline" size={16} />Distribute to 40+ Platforms
           </button>
         </nav>
@@ -165,39 +219,19 @@ export default function TrackProjectPage() {
           <>
             <section className="mt-7">
               <h2 className="text-xl font-black">Current Version</h2>
-              <VersionRow
-                version={current}
-                current
-                title={track.title}
-                onDownload={() => void downloadVersion(current)}
-              />
+              <VersionRow version={current} current title={track.title} onDownload={() => void downloadVersion(current)} />
               <div className="mt-4 flex flex-wrap gap-3">
-                <Link href="/sound-furnace" className="inline-flex items-center gap-2 rounded-2xl bg-[#ff2d19] px-5 py-3 font-black text-white">
-                  <SlidersHorizontal size={18} />Studio
-                </Link>
-                <button type="button" onClick={() => void downloadVersion(current)} className="inline-flex items-center gap-2 rounded-2xl bg-zinc-200 px-5 py-3 font-black">
-                  <Download size={18} />Download
-                </button>
-                <button type="button" onClick={() => setTab("distribution")} className="inline-flex items-center gap-2 rounded-2xl bg-emerald-500 px-5 py-3 font-black text-white">
-                  <Globe2 size={18} />Distribute
-                </button>
+                <Link href="/sound-furnace" className="inline-flex items-center gap-2 rounded-2xl bg-[#ff2d19] px-5 py-3 font-black text-white"><SlidersHorizontal size={18} />Studio</Link>
+                <button type="button" onClick={() => void downloadVersion(current)} className="inline-flex items-center gap-2 rounded-2xl bg-zinc-200 px-5 py-3 font-black"><Download size={18} />Download</button>
+                <button type="button" onClick={() => setTab("distribution")} className="inline-flex items-center gap-2 rounded-2xl bg-emerald-500 px-5 py-3 font-black text-white"><Globe2 size={18} />Distribute</button>
               </div>
             </section>
 
             <section className="mt-10">
               <h2 className="text-xl font-black">Version History</h2>
               <div className="mt-3 divide-y divide-zinc-200">
-                {history.map((version) => (
-                  <VersionRow
-                    key={version.id}
-                    version={version}
-                    title={track.title}
-                    onDownload={() => void downloadVersion(version)}
-                  />
-                ))}
-                {history.length === 0 ? (
-                  <p className="rounded-2xl bg-white p-5 text-sm text-zinc-500">Your next saved or mastered session will appear here. The current version is already protected.</p>
-                ) : null}
+                {history.map((version) => <VersionRow key={version.id} version={version} title={track.title} onDownload={() => void downloadVersion(version)} />)}
+                {history.length === 0 ? <p className="rounded-2xl bg-white p-5 text-sm text-zinc-500">Your next saved or mastered session will appear here. The current version is already protected.</p> : null}
               </div>
             </section>
           </>
@@ -205,20 +239,9 @@ export default function TrackProjectPage() {
           <section className="mt-7 rounded-3xl bg-white p-6 shadow-sm">
             <div className="grid size-14 place-items-center rounded-2xl bg-emerald-500 text-white"><Globe2 size={26} /></div>
             <h2 className="mt-5 text-2xl font-black">Distribute to 40+ Platforms</h2>
-            <p className="mt-2 max-w-xl text-sm leading-6 text-zinc-500">
-              Send this finished track to DistroKid to manage delivery to Spotify, Apple Music, TikTok, YouTube Music, and other supported stores.
-            </p>
-            <a
-              href={DISTROKID_URL}
-              target="_blank"
-              rel="sponsored noopener noreferrer"
-              className="mt-6 inline-flex items-center gap-2 rounded-2xl bg-[#ff2d19] px-5 py-3 font-black text-white"
-            >
-              Continue to DistroKid <ExternalLink size={17} />
-            </a>
-            <p className="mt-4 text-xs leading-5 text-zinc-400">
-              Distribution is completed on DistroKid. Crucible does not mark a release distributed until a distributor confirms it.
-            </p>
+            <p className="mt-2 max-w-xl text-sm leading-6 text-zinc-500">Send this finished track to DistroKid to manage delivery to Spotify, Apple Music, TikTok, YouTube Music, and other supported stores.</p>
+            <a href={DISTROKID_URL} target="_blank" rel="sponsored noopener noreferrer" className="mt-6 inline-flex items-center gap-2 rounded-2xl bg-[#ff2d19] px-5 py-3 font-black text-white">Continue to DistroKid <ExternalLink size={17} /></a>
+            <p className="mt-4 text-xs leading-5 text-zinc-400">Distribution is completed on DistroKid. Crucible does not mark a release distributed until a distributor confirms it.</p>
             <div className="mt-6 rounded-2xl border border-dashed border-zinc-200 p-4 text-sm font-bold text-zinc-400">More distribution options coming later.</div>
           </section>
         )}
@@ -229,23 +252,10 @@ export default function TrackProjectPage() {
   );
 }
 
-function VersionRow({
-  version,
-  current = false,
-  title,
-  onDownload,
-}: {
-  version: TrackVersion;
-  current?: boolean;
-  title: string;
-  onDownload: () => void;
-}) {
+function VersionRow({ version, current = false, title, onDownload }: { version: TrackVersion; current?: boolean; title: string; onDownload: () => void }) {
   return (
     <article className={`mt-3 flex items-center gap-3 rounded-2xl p-3 ${current ? "bg-white shadow-sm" : ""}`}>
-      <div
-        className="grid size-20 shrink-0 place-items-center overflow-hidden rounded-xl bg-gradient-to-br from-orange-500 to-zinc-900 bg-cover bg-center text-white"
-        style={version.artwork_url ? { backgroundImage: `url(${version.artwork_url})` } : undefined}
-      >
+      <div className="grid size-20 shrink-0 place-items-center overflow-hidden rounded-xl bg-gradient-to-br from-orange-500 to-zinc-900 bg-cover bg-center text-white" style={version.artwork_url ? { backgroundImage: `url(${version.artwork_url})` } : undefined}>
         {!version.artwork_url ? <Music2 size={24} /> : null}
       </div>
       <div className="min-w-0 flex-1">
@@ -259,9 +269,7 @@ function VersionRow({
         <p className="sr-only">{title}, version {version.version_number}</p>
       </div>
       <details className="relative">
-        <summary className="list-none cursor-pointer rounded-full p-2 text-zinc-500" aria-label={`Version ${version.version_number} menu`}>
-          <MoreHorizontal size={22} />
-        </summary>
+        <summary className="list-none cursor-pointer rounded-full p-2 text-zinc-500" aria-label={`Version ${version.version_number} menu`}><MoreHorizontal size={22} /></summary>
         <div className="absolute right-0 z-10 mt-1 w-36 rounded-xl border border-zinc-200 bg-white p-1 shadow-xl">
           <button type="button" onClick={onDownload} className="w-full rounded-lg px-3 py-2 text-left text-sm font-bold hover:bg-zinc-100">Download</button>
         </div>
