@@ -4,7 +4,10 @@ import {
   getBillingConfig,
   getStripeClient,
 } from "../../../../lib/billing/stripe";
-import { hasPaidAccess } from "../../../../lib/auth/provider-access";
+import {
+  hasExpertMusicianDevAccess,
+  hasPaidAccess,
+} from "../../../../lib/auth/provider-access";
 
 export const runtime = "nodejs";
 
@@ -24,6 +27,11 @@ export async function POST(request: Request) {
       { error: "Verify your email before starting the trial." },
       { status: 403 },
     );
+  }
+
+  const developerAccess = await hasExpertMusicianDevAccess(user.id);
+  if (developerAccess) {
+    return NextResponse.json({ url: "/sound-furnace" });
   }
 
   const { data: subscription } = await supabase
