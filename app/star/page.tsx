@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { FormEvent, useEffect, useRef, useState } from "react";
-import { CheckCircle2, Gauge, ImagePlus, LibraryBig, Music2, Play, Send, ShieldCheck, Sparkles, Upload } from "lucide-react";
+import { CheckCircle2, Gauge, ImagePlus, LibraryBig, Music2, Play, Send, ShieldCheck, Sparkles, Upload, WandSparkles } from "lucide-react";
 import { createClient } from "../../lib/supabase/client";
 import { analyzeAudioFile, createWatermarkedPreview, type FileDnaAnalysis } from "../../lib/audio/file-dna";
 import { playForgeConfirmation } from "../../lib/audio/forge-confirm";
@@ -49,12 +49,16 @@ type StarFile = {
 };
 
 const STAR_FILE_COLUMNS = "id,title,original_filename,storage_path,artwork_url,category,bpm,musical_key,size_bytes,duration_seconds,sample_rate,channels,peak_dbfs,rms_dbfs,silence_percent,clipping_count,analysis_score,grade,verification_status,publish_status,description,price_cents,license_type,marketplace_item_id,analysis,created_at";
+const TRACK_ARTWORK_CREDIT_COST = 8;
 
 export default function CrucibleStarPage() {
   const [files, setFiles] = useState<StarFile[]>([]);
   const [audioFile, setAudioFile] = useState<File | null>(null);
   const [artworkFile, setArtworkFile] = useState<File | null>(null);
   const [artworkPreview, setArtworkPreview] = useState("");
+  const [artworkPrompt, setArtworkPrompt] = useState("");
+  const [artworkGenerating, setArtworkGenerating] = useState(false);
+  const [artworkMessage, setArtworkMessage] = useState("");
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [category, setCategory] = useState("auto");
@@ -108,6 +112,47 @@ export default function CrucibleStarPage() {
   function chooseArtwork(file: File | null) {
     setArtworkFile(file);
     setArtworkPreview(file ? URL.createObjectURL(file) : "");
+  }
+
+  async function generateArtwork() {
+    const prompt = artworkPrompt.trim();
+    if (prompt.length < 3) {
+      setArtworkMessage("Describe the cover you want first.");
+      return;
+    }
+
+    setArtworkGenerating(true);
+    setArtworkMessage("OpenAI is creating your cover…");
+    try {
+      const response = await fetch("/api/track-artwork", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt, confirmedCost: TRACK_ARTWORK_CREDIT_COST }),
+      });
+      const data = await response.json() as {
+        image?: string;
+        error?: string;
+        creditBalance?: number;
+      };
+      if (!response.ok || !data.image) {
+        throw new Error(data.error || "The cover could not be generated.");
+      }
+
+      const imageResponse = await fetch(data.image);
+      const blob = await imageResponse.blob();
+      const file = new File([blob], `ai-cover-${Date.now()}.png`, { type: "image/png" });
+      chooseArtwork(file);
+      if (artworkInputRef.current) artworkInputRef.current.value = "";
+      setArtworkMessage(
+        typeof data.creditBalance === "number"
+          ? `Cover ready and selected · ${data.creditBalance} credits remaining.`
+          : "Cover ready and selected. Upload the track to save it.",
+      );
+    } catch (error) {
+      setArtworkMessage(error instanceof Error ? error.message : "The cover could not be generated.");
+    } finally {
+      setArtworkGenerating(false);
+    }
   }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -258,6 +303,8 @@ export default function CrucibleStarPage() {
       setAudioFile(null);
       setArtworkFile(null);
       setArtworkPreview("");
+      setArtworkPrompt("");
+      setArtworkMessage("");
       if (artworkInputRef.current) artworkInputRef.current.value = "";
       setTitle("");
       setDescription("");
@@ -332,6 +379,8 @@ export default function CrucibleStarPage() {
     setAudioFile(null);
     setArtworkFile(null);
     setArtworkPreview("");
+    setArtworkPrompt("");
+    setArtworkMessage("");
     if (artworkInputRef.current) artworkInputRef.current.value = "";
     setTitle("");
     setDescription("");
@@ -454,25 +503,55 @@ export default function CrucibleStarPage() {
               <span className="mt-1 text-xs text-white/35">Private upload · up to 250 MB</span>
               <input ref={fileInputRef} className="hidden" type="file" accept="audio/*,.wav,.mp3,.flac,.aac,.m4a,.ogg" onChange={(e) => { const file = e.target.files?.[0] ?? null; setAudioFile(file); setLastUploaded(null); if (file && !title) setTitle(file.name.replace(/\.[^.]+$/, "")); }} />
             </label>
-            <label className="mt-4 flex cursor-pointer items-center gap-4 rounded-2xl border border-dashed border-white/15 bg-black/20 p-4">
-              <div
-                className="grid size-20 shrink-0 place-items-center overflow-hidden rounded-xl bg-white/[0.04] bg-cover bg-center text-white/35"
-                style={artworkPreview ? { backgroundImage: `url(${artworkPreview})` } : undefined}
-              >
-                {!artworkPreview ? <ImagePlus size={26} /> : null}
+            <div className="mt-4 grid gap-3 md:grid-cols-2">
+              <label className="flex cursor-pointer items-center gap-4 rounded-2xl border border-dashed border-white/15 bg-black/20 p-4">
+                <div
+                  className="grid size-20 shrink-0 place-items-center overflow-hidden rounded-xl bg-white/[0.04] bg-cover bg-center text-white/35"
+                  style={artworkPreview ? { backgroundImage: `url(${artworkPreview})` } : undefined}
+                >
+                  {!artworkPreview ? <ImagePlus size={26} /> : null}
+                </div>
+                <div>
+                  <span className="block text-sm font-black">{artworkFile ? artworkFile.name : "Upload custom picture"}</span>
+                  <span className="mt-1 block text-xs text-white/35">JPG, PNG or WebP · up to 10 MB</span>
+                </div>
+                <input
+                  ref={artworkInputRef}
+                  className="hidden"
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  onChange={(event) => {
+                    chooseArtwork(event.target.files?.[0] ?? null);
+                    setArtworkMessage("");
+                  }}
+                />
+              </label>
+
+              <div className="rounded-2xl border border-orange-300/15 bg-orange-500/[0.05] p-4">
+                <div className="flex items-center gap-2">
+                  <WandSparkles size={18} className="text-orange-300" />
+                  <p className="text-sm font-black">Generate cover with OpenAI</p>
+                </div>
+                <textarea
+                  aria-label="AI cover prompt"
+                  value={artworkPrompt}
+                  maxLength={700}
+                  onChange={(event) => setArtworkPrompt(event.target.value)}
+                  placeholder="Example: molten chrome wings over a dark city, cinematic, orange glow"
+                  className="mt-3 min-h-20 w-full resize-y rounded-xl border border-white/10 bg-black/30 p-3 text-sm placeholder:text-white/25"
+                />
+                <button
+                  type="button"
+                  disabled={artworkGenerating || artworkPrompt.trim().length < 3}
+                  onClick={() => void generateArtwork()}
+                  className="mt-2 inline-flex items-center gap-2 rounded-xl bg-orange-500 px-3 py-2 text-xs font-black text-black disabled:opacity-40"
+                >
+                  <WandSparkles size={14} />
+                  {artworkGenerating ? "Generating…" : artworkPreview ? `Regenerate · ${TRACK_ARTWORK_CREDIT_COST} credits` : `Generate · ${TRACK_ARTWORK_CREDIT_COST} credits`}
+                </button>
+                {artworkMessage ? <p aria-live="polite" className="mt-2 text-xs leading-5 text-orange-100/75">{artworkMessage}</p> : null}
               </div>
-              <div>
-                <span className="block text-sm font-black">{artworkFile ? artworkFile.name : "Choose custom track picture"}</span>
-                <span className="mt-1 block text-xs text-white/35">Optional cover artwork · JPG, PNG or WebP · up to 10 MB</span>
-              </div>
-              <input
-                ref={artworkInputRef}
-                className="hidden"
-                type="file"
-                accept="image/jpeg,image/png,image/webp"
-                onChange={(event) => chooseArtwork(event.target.files?.[0] ?? null)}
-              />
-            </label>
+            </div>
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
               <input required value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Title" className="rounded-xl border border-white/10 bg-black/30 px-3 py-3 text-sm" />
               <select value={category} onChange={(e) => setCategory(e.target.value)} className="rounded-xl border border-white/10 bg-black/30 px-3 py-3 text-sm"><option value="auto">Auto-detect category</option><option value="beat">Beat</option><option value="loop">Loop</option><option value="sample">Sample</option><option value="one-shot">One-shot</option><option value="preset">Preset</option><option value="track">Track</option><option value="other">Other</option></select>
