@@ -669,17 +669,34 @@ export default function SoundFurnacePage() {
     }, 50);
   }
 
-  function togglePlayback(kind: "source" | "result") {
+  async function togglePlayback(kind: "source" | "result") {
     const current = kind === "source" ? sourceAudioRef.current : resultAudioRef.current;
     const other = kind === "source" ? resultAudioRef.current : sourceAudioRef.current;
     if (!current) return;
-    other?.pause();
+
     if (playing === kind && !current.paused) {
       current.pause();
       setPlaying(null);
-    } else {
-      void current.play();
+      return;
+    }
+
+    const switchTime = other && Number.isFinite(other.currentTime) ? other.currentTime : current.currentTime;
+    other?.pause();
+    if (Number.isFinite(switchTime) && switchTime >= 0) {
+      try {
+        current.currentTime = Math.min(
+          switchTime,
+          Number.isFinite(current.duration) && current.duration > 0 ? Math.max(0, current.duration - 0.02) : switchTime,
+        );
+      } catch {}
+    }
+
+    try {
+      await current.play();
       setPlaying(kind);
+    } catch {
+      setError(`Could not play the ${kind === "source" ? "original" : "forged"} audio on this device. Tap the player once and try again.`);
+      setPlaying(null);
     }
   }
 
@@ -826,7 +843,7 @@ export default function SoundFurnacePage() {
             <div className="mt-6 space-y-6">
               <div className="rounded-2xl border border-white/8 bg-black/25 p-4">
                 <Waveform samples={sourceSamples} color="rgba(255,255,255,.48)" label="Original" />
-                <audio ref={sourceAudioRef} src={sourceUrl} onEnded={() => setPlaying(null)} preload="metadata" />
+                <audio ref={sourceAudioRef} src={sourceUrl} onEnded={() => setPlaying(null)} preload="auto" playsInline />
                 <button type="button" onClick={() => togglePlayback("source")} className="mt-3 flex items-center gap-2 rounded-lg border border-white/10 px-4 py-2 text-xs font-bold text-white/70">
                   {playing === "source" ? <Square size={13} fill="currentColor" /> : <Play size={13} fill="currentColor" />} {playing === "source" ? "Stop original" : "Play original"}
                 </button>
@@ -835,7 +852,7 @@ export default function SoundFurnacePage() {
               {result ? (
                 <div className="rounded-2xl border border-orange-400/25 bg-orange-500/[0.045] p-4">
                   <Waveform samples={result.samples} color="rgba(251,146,60,.82)" label="Crucible forge" />
-                  <audio ref={resultAudioRef} src={result.url} onEnded={() => setPlaying(null)} preload="metadata" />
+                  <audio ref={resultAudioRef} src={result.url} onEnded={() => setPlaying(null)} preload="auto" playsInline />
                   <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                     <button type="button" onClick={() => togglePlayback("result")} className="flex items-center justify-center gap-2 rounded-lg border border-orange-300/20 px-4 py-2 text-xs font-bold text-orange-100">
                       {playing === "result" ? <Square size={13} fill="currentColor" /> : <Play size={13} fill="currentColor" />} {playing === "result" ? "Stop forge" : "Play forge"}
