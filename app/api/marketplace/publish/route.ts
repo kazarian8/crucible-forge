@@ -16,6 +16,7 @@ type StarMusicFile = {
   description: string | null;
   category: string;
   storage_path: string;
+  artwork_url: string | null;
   bpm: number | null;
   musical_key: string | null;
   price_cents: number;
@@ -38,7 +39,7 @@ export async function POST(request: Request) {
 
     const { data, error } = await supabase
       .from("star_music_files")
-      .select("id,user_id,title,description,category,storage_path,bpm,musical_key,price_cents,license_type,analysis_score,grade,verification_status,publish_status,marketplace_item_id")
+      .select("id,user_id,title,description,category,storage_path,artwork_url,bpm,musical_key,price_cents,license_type,analysis_score,grade,verification_status,publish_status,marketplace_item_id")
       .eq("id", body.starFileId)
       .eq("user_id", user.id)
       .single();
@@ -71,6 +72,7 @@ export async function POST(request: Request) {
       description: file.description,
       category: marketplaceCategory,
       file_url: `star-music:${file.storage_path}`,
+      artwork_url: file.artwork_url,
       preview_url: previewPath ? `star-music:${previewPath}` : null,
       price_cents: file.price_cents,
       free_download: !paid,
