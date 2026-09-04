@@ -12,6 +12,7 @@ type StarItem = {
   title: string;
   original_filename: string;
   storage_path: string;
+  artwork_url: string | null;
   category: string;
   bpm: number | null;
   musical_key: string | null;
@@ -41,7 +42,7 @@ type StarItem = {
   created_at: string;
 };
 
-const STAR_COLUMNS = "id,title,original_filename,storage_path,category,bpm,musical_key,size_bytes,duration_seconds,sample_rate,channels,peak_dbfs,rms_dbfs,silence_percent,analysis_score,grade,verification_status,publish_status,analysis,created_at";
+const STAR_COLUMNS = "id,title,original_filename,storage_path,artwork_url,category,bpm,musical_key,size_bytes,duration_seconds,sample_rate,channels,peak_dbfs,rms_dbfs,silence_percent,analysis_score,grade,verification_status,publish_status,analysis,created_at";
 
 export default function LocalLibraryPage() {
   const [items, setItems] = useState<StarItem[]>([]);
@@ -141,6 +142,7 @@ export default function LocalLibraryPage() {
             const dnaOpen = openDnaId === item.id;
             const dnaConfirmed = confirmedIds.has(item.id) || Boolean(item.analysis?.artist_confirmed);
             return <article key={item.id} className="p-4">
+              {item.artwork_url ? <div className="mb-4 aspect-[16/6] rounded-xl bg-cover bg-center" style={{ backgroundImage: `url(${item.artwork_url})` }} /> : null}
               <div className="flex items-start justify-between gap-3"><div className="min-w-0"><div className="flex items-center gap-2"><ShieldCheck size={14} className="shrink-0 text-emerald-300" /><p className="truncate font-black">{item.title}</p></div><p className="mt-1 truncate pl-[22px] text-xs text-white/40">{item.category}{item.duration_seconds != null ? ` · ${Number(item.duration_seconds).toFixed(2)} sec` : ""} · private</p></div><span className="shrink-0 rounded-lg bg-orange-500 px-2.5 py-1 text-xs font-black text-black">{item.grade ?? "—"} {item.analysis_score ?? ""}</span></div>
               <div className="mt-3 flex flex-wrap gap-2"><button type="button" onClick={() => void play(item)} className="inline-flex items-center gap-2 rounded-xl border border-white/10 px-3 py-2 text-xs font-black"><Play size={14} />Preview</button><button type="button" aria-expanded={dnaOpen} onClick={() => setOpenDnaId(dnaOpen ? "" : item.id)} className="inline-flex items-center gap-2 rounded-xl border border-sky-300/20 px-3 py-2 text-xs font-black text-sky-200"><Dna size={14} />{dnaOpen ? "Hide DNA" : "View DNA"}{dnaOpen ? <ChevronUp size={13} /> : <ChevronDown size={13} />}</button><Link href="/star#private-library" className="rounded-xl border border-orange-300/20 px-3 py-2 text-xs font-black text-orange-200">{item.publish_status === "published" ? "Published" : "Publish options"}</Link></div>
               {playUrl[item.id] ? <audio className="mt-3 w-full" controls autoPlay src={playUrl[item.id]} /> : null}
