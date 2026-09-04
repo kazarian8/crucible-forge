@@ -88,11 +88,23 @@ export default function CrucibleStarPage() {
 
   async function load() {
     const sb = createClient();
-    const { data } = await sb
+    const { data: { user } } = await sb.auth.getUser();
+    if (!user) {
+      setFiles([]);
+      return;
+    }
+    const { data, error } = await sb
       .from("star_music_files")
       .select(STAR_FILE_COLUMNS)
+      .eq("user_id", user.id)
+      .is("archived_at", null)
       .order("created_at", { ascending: false })
       .limit(3);
+    if (error) {
+      console.error("Could not load recent Star files", error);
+      setFiles([]);
+      return;
+    }
     setFiles((data ?? []) as StarFile[]);
   }
 
