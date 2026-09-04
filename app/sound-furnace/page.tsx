@@ -591,12 +591,7 @@ export default function SoundFurnacePage() {
         samples: waveformSamples(forged),
       });
       playForgeFinish();
-      try {
-        await separateIntoStems(file, buffer);
-      } catch (caught) {
-        setError(caught instanceof Error ? caught.message : "Stem separation could not finish.");
-        setStatus("Forge complete and downloadable. Stem separation can be retried.");
-      }
+      setStatus("Forge complete. Your 24-bit master is ready to audition or download.");
     } catch {
       setError("The forge could not finish this track in your browser. Try closing other tabs or using a smaller file.");
       setStatus("Forge stopped safely. Your original file was not changed.");
@@ -755,7 +750,7 @@ export default function SoundFurnacePage() {
               {busy ? <LoaderCircle className="animate-spin" size={19} /> : <Flame size={19} />}
               {busy
                 ? "Working locally…"
-                : `Forge master + 6 stems · ${CREDIT_PRICES.stemSeparation} coins`}
+                : "Forge 24-bit master"}
             </button>
 
             <p className="mt-4 text-center text-xs text-white/40" aria-live="polite">{status}</p>
