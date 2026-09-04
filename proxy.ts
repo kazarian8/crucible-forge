@@ -93,11 +93,25 @@ export async function proxy(request: NextRequest) {
 
   let entitled = false;
   if (userId && authenticatedRoute) {
-    const { data: subscription } = await supabase.from("pro_subscriptions").select("status,current_period_end,trial_end").eq("user_id", userId).maybeSingle();
     const now = Date.now();
+    const [{ data: subscription }, { data: developerAccess }] = await Promise.all([
+      supabase
+        .from("pro_subscriptions")
+        .select("status,current_period_end,trial_end")
+        .eq("user_id", userId)
+        .maybeSingle(),
+      supabase
+        .from("expert_musician_dev_access")
+        .select("enabled,invite_expires_at")
+        .eq("user_id", userId)
+        .eq("enabled", true)
+        .gt("invite_expires_at", new Date(now).toISOString())
+        .maybeSingle(),
+    ]);
     const trialValid = subscription?.status === "trialing" && Boolean(subscription.trial_end) && new Date(subscription!.trial_end as string).getTime() > now;
     const activeValid = subscription?.status === "active" && Boolean(subscription.current_period_end) && new Date(subscription!.current_period_end as string).getTime() > now;
-    entitled = trialValid || activeValid;
+    const developerValid = Boolean(developerAccess?.enabled) && Boolean(developerAccess?.invite_expires_at) && new Date(developerAccess!.invite_expires_at as string).getTime() > now;
+    entitled = trialValid || activeValid || developerValid;
   }
 
   if (paidRoute && !entitled) return redirectWithNext(request, SUBSCRIBE_ROUTE, requestedRoute, undefined, response);
