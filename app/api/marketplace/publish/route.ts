@@ -86,17 +86,33 @@ export async function POST(request: Request) {
     }).select("id").single();
     if (listingError || !listing) throw listingError || new Error("The marketplace listing was not created.");
 
+    const momentMusicUrl = `/api/marketplace/download?id=${encodeURIComponent(listing.id)}&preview=1`;
+    const { data: moment, error: momentError } = await admin.from("artist_moments").insert({
+      user_id: user.id,
+      body: `New track: ${file.title}\nPublished on Crucible.`,
+      music_url: momentMusicUrl,
+      artwork_url: file.artwork_url,
+      is_public: true,
+    }).select("id").single();
+    if (momentError || !moment) {
+      await admin.from("sound_library_items").delete().eq("id", listing.id);
+      throw momentError || new Error("The public Moment was not created.");
+    }
+
     const { error: updateError } = await admin.from("star_music_files").update({
       marketplace_item_id: listing.id,
       publish_status: "published",
       updated_at: new Date().toISOString(),
     }).eq("id", file.id).eq("user_id", user.id);
     if (updateError) {
-      await admin.from("sound_library_items").delete().eq("id", listing.id);
+      await Promise.all([
+        admin.from("artist_moments").delete().eq("id", moment.id),
+        admin.from("sound_library_items").delete().eq("id", listing.id),
+      ]);
       throw updateError;
     }
 
-    return NextResponse.json({ itemId: listing.id, published: true });
+    return NextResponse.json({ itemId: listing.id, momentId: moment.id, published: true });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Marketplace publishing failed." }, { status: 500 });
   }
