@@ -16,7 +16,7 @@ export default function SupportDock() {
     { role: "assistant", content: "Yo — Ask Crucible is here. What do you need help with?" },
   ]);
 
-  if (pathname === "/workstation" || pathname === "/sound-library") return null;
+  if (pathname === "/workstation" || pathname === "/sound-library" || pathname === "/sound-furnace") return null;
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
