@@ -21,7 +21,7 @@ async function getTrack(trackId: string) {
 }
 
 async function getMembers(trackId: string) {
-  return adminRequest<CollaboratorRow[]>(`project_collaborators?track_id=eq.${encodeURIComponent(trackId)}&select=track_id,user_id,invited_by,role,joined_at&order=joined_at.asc`, { method: "GET" });
+  return adminRequest<CollaboratorRow[]>(`track_collaborators?track_id=eq.${encodeURIComponent(trackId)}&select=track_id,user_id,invited_by,role,joined_at&order=joined_at.asc`, { method: "GET" });
 }
 
 async function getProfiles(ids: string[]) {
@@ -64,7 +64,7 @@ export async function POST(request: NextRequest) {
   if (!track) return NextResponse.json({ error: "Project not found." }, { status: 404 });
   if (track.user_id !== user.id) return NextResponse.json({ error: "Only the project owner can create an invite link." }, { status: 403 });
 
-  await adminRequest(`project_collaboration_invites?track_id=eq.${encodeURIComponent(trackId)}&revoked_at=is.null`, {
+  await adminRequest(`track_collaboration_invites?track_id=eq.${encodeURIComponent(trackId)}&revoked_at=is.null`, {
     method: "PATCH",
     headers: { Prefer: "return=minimal" },
     body: JSON.stringify({ revoked_at: new Date().toISOString() }),
@@ -72,14 +72,13 @@ export async function POST(request: NextRequest) {
 
   const token = randomBytes(32).toString("base64url");
   const tokenHash = createHash("sha256").update(token).digest("hex");
-  await adminRequest("project_collaboration_invites", {
+  await adminRequest("track_collaboration_invites", {
     method: "POST",
     headers: { Prefer: "return=minimal" },
     body: JSON.stringify({ track_id: trackId, owner_id: user.id, token_hash: tokenHash }),
   });
 
-  const origin = request.nextUrl.origin;
-  return NextResponse.json({ inviteUrl: `${origin}/collab/${token}` });
+  return NextResponse.json({ inviteUrl: `${request.nextUrl.origin}/collab/${token}` });
 }
 
 export async function DELETE(request: NextRequest) {
@@ -91,7 +90,7 @@ export async function DELETE(request: NextRequest) {
   if (!track) return NextResponse.json({ error: "Project not found." }, { status: 404 });
   if (track.user_id !== user.id) return NextResponse.json({ error: "Only the project owner can disable invite links." }, { status: 403 });
 
-  await adminRequest(`project_collaboration_invites?track_id=eq.${encodeURIComponent(trackId)}&revoked_at=is.null`, {
+  await adminRequest(`track_collaboration_invites?track_id=eq.${encodeURIComponent(trackId)}&revoked_at=is.null`, {
     method: "PATCH",
     headers: { Prefer: "return=minimal" },
     body: JSON.stringify({ revoked_at: new Date().toISOString() }),
