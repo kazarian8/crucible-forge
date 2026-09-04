@@ -37,7 +37,7 @@ export default function CreditBalance() {
 
   return (
     <div
-      className="fixed bottom-5 right-5 z-[70] flex items-center gap-2 rounded-full border border-amber-200/35 bg-[#120c04]/95 py-2 pl-2 pr-4 text-amber-50 shadow-[0_12px_45px_rgba(245,158,11,.28)] backdrop-blur-xl"
+      className="fixed bottom-[5.75rem] right-3 z-[45] flex items-center gap-2 rounded-full border border-amber-200/35 bg-[#120c04]/95 py-2 pl-2 pr-4 text-amber-50 shadow-[0_12px_45px_rgba(245,158,11,.28)] backdrop-blur-xl"
       aria-label={`Crucible credits: ${balance.toLocaleString()}`}
       title="Crucible credit balance"
     >
