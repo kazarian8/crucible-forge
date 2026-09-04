@@ -22,7 +22,7 @@ export function hasPaidAccess(subscription: Subscription | null) {
   );
 }
 
-async function hasExpertMusicianDevAccess(userId: string) {
+export async function hasExpertMusicianDevAccess(userId: string) {
   try {
     const admin = createAdminClient();
     const { data, error } = await admin
