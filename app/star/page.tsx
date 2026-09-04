@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { FormEvent, useEffect, useRef, useState } from "react";
-import { CheckCircle2, Gauge, LibraryBig, Music2, Play, Send, ShieldCheck, Sparkles, Upload } from "lucide-react";
+import { CheckCircle2, Gauge, ImagePlus, LibraryBig, Music2, Play, Send, ShieldCheck, Sparkles, Upload } from "lucide-react";
 import { createClient } from "../../lib/supabase/client";
 import { analyzeAudioFile, createWatermarkedPreview, type FileDnaAnalysis } from "../../lib/audio/file-dna";
 import { playForgeConfirmation } from "../../lib/audio/forge-confirm";
@@ -13,6 +13,7 @@ type StarFile = {
   title: string;
   original_filename: string;
   storage_path: string;
+  artwork_url: string | null;
   category: string;
   bpm: number | null;
   musical_key: string | null;
@@ -47,11 +48,13 @@ type StarFile = {
   created_at: string;
 };
 
-const STAR_FILE_COLUMNS = "id,title,original_filename,storage_path,category,bpm,musical_key,size_bytes,duration_seconds,sample_rate,channels,peak_dbfs,rms_dbfs,silence_percent,clipping_count,analysis_score,grade,verification_status,publish_status,description,price_cents,license_type,marketplace_item_id,analysis,created_at";
+const STAR_FILE_COLUMNS = "id,title,original_filename,storage_path,artwork_url,category,bpm,musical_key,size_bytes,duration_seconds,sample_rate,channels,peak_dbfs,rms_dbfs,silence_percent,clipping_count,analysis_score,grade,verification_status,publish_status,description,price_cents,license_type,marketplace_item_id,analysis,created_at";
 
 export default function CrucibleStarPage() {
   const [files, setFiles] = useState<StarFile[]>([]);
   const [audioFile, setAudioFile] = useState<File | null>(null);
+  const [artworkFile, setArtworkFile] = useState<File | null>(null);
+  const [artworkPreview, setArtworkPreview] = useState("");
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [category, setCategory] = useState("auto");
@@ -77,6 +80,7 @@ export default function CrucibleStarPage() {
   const [confirmationGlowId, setConfirmationGlowId] = useState("");
   const previewObjectUrls = useRef<string[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const artworkInputRef = useRef<HTMLInputElement>(null);
 
   async function load() {
     const sb = createClient();
@@ -95,6 +99,17 @@ export default function CrucibleStarPage() {
     };
   }, []);
 
+  useEffect(() => {
+    return () => {
+      if (artworkPreview) URL.revokeObjectURL(artworkPreview);
+    };
+  }, [artworkPreview]);
+
+  function chooseArtwork(file: File | null) {
+    setArtworkFile(file);
+    setArtworkPreview(file ? URL.createObjectURL(file) : "");
+  }
+
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!audioFile) return setMessage("Choose a music file first.");
@@ -107,6 +122,12 @@ export default function CrucibleStarPage() {
       const { data: { user } } = await sb.auth.getUser();
       if (!user) throw new Error("Sign in before uploading to Crucible Star.");
       if (audioFile.size > 250 * 1024 * 1024) throw new Error("Star currently accepts files up to 250 MB.");
+      if (artworkFile && !["image/jpeg", "image/png", "image/webp"].includes(artworkFile.type)) {
+        throw new Error("Cover artwork must be a JPG, PNG, or WebP image.");
+      }
+      if (artworkFile && artworkFile.size > 10 * 1024 * 1024) {
+        throw new Error("Cover artwork must be 10 MB or smaller.");
+      }
 
       const { analysis: signalAnalysis, hash } = await analyzeAudioFile(audioFile);
       let analysis = signalAnalysis;
@@ -156,12 +177,32 @@ export default function CrucibleStarPage() {
       });
       if (uploadError) throw uploadError;
 
+      let artworkPath: string | null = null;
+      let artworkUrl: string | null = null;
+      if (artworkFile) {
+        const cleanArtworkName = artworkFile.name.replace(/[^A-Za-z0-9._-]+/g, "-").slice(-120);
+        artworkPath = `${user.id}/${crypto.randomUUID()}-${cleanArtworkName}`;
+        const { error: artworkUploadError } = await sb.storage
+          .from("track-artwork")
+          .upload(artworkPath, artworkFile, {
+            cacheControl: "3600",
+            upsert: false,
+            contentType: artworkFile.type,
+          });
+        if (artworkUploadError) {
+          await sb.storage.from("star-music").remove([path]);
+          throw artworkUploadError;
+        }
+        artworkUrl = sb.storage.from("track-artwork").getPublicUrl(artworkPath).data.publicUrl;
+      }
+
       const cents = Math.max(0, Math.round(Number(price || 0) * 100));
       const { data: insertedFile, error: insertError } = await sb.from("star_music_files").insert({
         user_id: user.id,
         title: title.trim() || audioFile.name.replace(/\.[^.]+$/, ""),
         original_filename: audioFile.name,
         storage_path: path,
+        artwork_url: artworkUrl,
         mime_type: storageMimeType,
         size_bytes: audioFile.size,
         sha256: hash,
@@ -204,12 +245,20 @@ export default function CrucibleStarPage() {
         publish_status: analysis.status === "verified" ? "ready" : "draft",
       }).select(STAR_FILE_COLUMNS).single();
       if (insertError) {
-        await sb.storage.from("star-music").remove([path]);
+        await Promise.all([
+          sb.storage.from("star-music").remove([path]),
+          artworkPath
+            ? sb.storage.from("track-artwork").remove([artworkPath])
+            : Promise.resolve(),
+        ]);
         throw insertError;
       }
 
       setMessage(`Saved privately as ${detectedCategory}. Detected ${analysis.contentType} · ${analysis.contentConfidence}% confidence · Grade ${analysis.grade} ${analysis.score}/100. Publishing is optional.`);
       setAudioFile(null);
+      setArtworkFile(null);
+      setArtworkPreview("");
+      if (artworkInputRef.current) artworkInputRef.current.value = "";
       setTitle("");
       setDescription("");
       setBpm("");
@@ -281,6 +330,9 @@ export default function CrucibleStarPage() {
 
   function uploadNew() {
     setAudioFile(null);
+    setArtworkFile(null);
+    setArtworkPreview("");
+    if (artworkInputRef.current) artworkInputRef.current.value = "";
     setTitle("");
     setDescription("");
     setCategory("auto");
@@ -401,6 +453,25 @@ export default function CrucibleStarPage() {
               <span className="text-sm font-black">{audioFile ? audioFile.name : "Choose WAV, MP3, FLAC, AAC, M4A or OGG"}</span>
               <span className="mt-1 text-xs text-white/35">Private upload · up to 250 MB</span>
               <input ref={fileInputRef} className="hidden" type="file" accept="audio/*,.wav,.mp3,.flac,.aac,.m4a,.ogg" onChange={(e) => { const file = e.target.files?.[0] ?? null; setAudioFile(file); setLastUploaded(null); if (file && !title) setTitle(file.name.replace(/\.[^.]+$/, "")); }} />
+            </label>
+            <label className="mt-4 flex cursor-pointer items-center gap-4 rounded-2xl border border-dashed border-white/15 bg-black/20 p-4">
+              <div
+                className="grid size-20 shrink-0 place-items-center overflow-hidden rounded-xl bg-white/[0.04] bg-cover bg-center text-white/35"
+                style={artworkPreview ? { backgroundImage: `url(${artworkPreview})` } : undefined}
+              >
+                {!artworkPreview ? <ImagePlus size={26} /> : null}
+              </div>
+              <div>
+                <span className="block text-sm font-black">{artworkFile ? artworkFile.name : "Choose custom track picture"}</span>
+                <span className="mt-1 block text-xs text-white/35">Optional cover artwork · JPG, PNG or WebP · up to 10 MB</span>
+              </div>
+              <input
+                ref={artworkInputRef}
+                className="hidden"
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                onChange={(event) => chooseArtwork(event.target.files?.[0] ?? null)}
+              />
             </label>
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
               <input required value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Title" className="rounded-xl border border-white/10 bg-black/30 px-3 py-3 text-sm" />
