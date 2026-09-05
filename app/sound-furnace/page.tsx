@@ -245,10 +245,32 @@ function encodeWav16(buffer: AudioBuffer) {
 }
 
 async function createStemSourceFile(buffer: AudioBuffer, originalName: string) {
-  const sampleRate = Math.min(44_100, buffer.sampleRate);
-  const channels = Math.min(2, buffer.numberOfChannels);
-  let source = buffer;
+  // Keep stem requests below Vercel's multipart ceiling even when the user's
+  // original source is much larger. Mastering still uses the untouched buffer.
+  const targetBytes = 90 * 1024 * 1024;
+  let channels = Math.min(2, buffer.numberOfChannels);
+  let sampleRate = Math.min(44_100, buffer.sampleRate);
 
+  const estimatedBytes = (rate: number, channelCount: number) =>
+    44 + Math.ceil(buffer.duration * rate) * channelCount * 2;
+
+  if (estimatedBytes(sampleRate, channels) > targetBytes) {
+    const rateThatFits = Math.floor((targetBytes - 44) / Math.max(1, buffer.duration * channels * 2));
+    sampleRate = Math.max(22_050, Math.min(sampleRate, rateThatFits));
+  }
+
+  if (estimatedBytes(sampleRate, channels) > targetBytes && channels > 1) {
+    channels = 1;
+    const rateThatFits = Math.floor((targetBytes - 44) / Math.max(1, buffer.duration * channels * 2));
+    sampleRate = Math.max(16_000, Math.min(sampleRate, rateThatFits));
+  }
+
+  if (estimatedBytes(sampleRate, channels) > targetBytes) {
+    const rateThatFits = Math.floor((targetBytes - 44) / Math.max(1, buffer.duration * channels * 2));
+    sampleRate = Math.max(8_000, Math.min(sampleRate, rateThatFits));
+  }
+
+  let source = buffer;
   if (buffer.sampleRate !== sampleRate || buffer.numberOfChannels !== channels) {
     const context = new OfflineAudioContext(
       channels,
@@ -263,6 +285,9 @@ async function createStemSourceFile(buffer: AudioBuffer, originalName: string) {
   }
 
   const blob = encodeWav16(source);
+  if (blob.size > targetBytes) {
+    throw new Error("This track is too long to prepare safely for stem separation on this device.");
+  }
   const baseName = originalName.replace(/\.[^.]+$/, "");
   return new File([blob], `${baseName}-stem-source.wav`, { type: "audio/wav" });
 }
@@ -744,7 +769,7 @@ export default function SoundFurnacePage() {
               <input ref={inputRef} type="file" accept="audio/*,.wav,.mp3,.flac,.aiff,.aif,.m4a,.aac" onChange={handleFile} className="sr-only" />
               <div className="mx-auto flex h-13 w-13 items-center justify-center rounded-full bg-orange-500/12 text-orange-300"><Upload size={23} /></div>
               <p className="mt-3 font-bold">{file ? file.name : "Drop in one track"}</p>
-              <p className="mt-1 text-xs text-white/35">WAV, MP3, FLAC, AIFF, M4A or AAC · up to 250 MB</p>
+              <p className="mt-1 text-xs text-white/35">WAV, MP3, FLAC, AIFF, M4A or AAC · up to 250 MB · large stem jobs are optimized before upload</p>
               <button type="button" onClick={() => inputRef.current?.click()} disabled={busy} className="mt-4 rounded-xl bg-white/8 px-5 py-2.5 text-sm font-bold hover:bg-white/12 disabled:opacity-50">
                 {file ? "Choose another" : "Choose track"}
               </button>
