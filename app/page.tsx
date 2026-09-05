@@ -47,9 +47,9 @@ export default function HomePage() {
             <div className="inline-flex items-center gap-2 rounded-full border border-orange-300/20 bg-orange-500/10 px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.2em] text-orange-200">
               <Sparkles size={13} /> No label. No engineer. No problem.
             </div>
-            <h2 className="mt-5 text-4xl font-black leading-none tracking-[-0.05em] sm:text-6xl">Finish your track. Master it. Verify it. Release it.</h2>
+            <h2 className="mt-5 text-4xl font-black leading-none tracking-[-0.05em] sm:text-6xl">Professional-level mastering, production & distribution access for independent artists.</h2>
             <p className="mt-4 max-w-xl text-sm leading-6 text-white/55 sm:text-base">
-              CrucibleForge is built for underground and independent artists who do not have a producer, engineer, or record label behind them. Fine-tune your track, master it, verify the finished version with Crucible Star DNA, and get it ready to distribute like a pro.
+              CrucibleForge gives underground and independent artists access to the kind of finishing tools usually backed by a producer, engineer, or record label. Fine-tune your track, master it, verify the finished version with Crucible Star DNA, and move it toward release and distribution like a pro.
             </p>
             <div className="mt-7 flex flex-wrap gap-3">
               <Link href="/sound-furnace" className="inline-flex items-center gap-2 rounded-2xl bg-orange-500 px-5 py-3 text-sm font-black text-black">
@@ -59,7 +59,7 @@ export default function HomePage() {
                 <SlidersHorizontal size={17} /> Fine-Tune in Workstation
               </Link>
             </div>
-            <p className="mt-5 text-xs font-bold uppercase tracking-[0.18em] text-orange-200/70">Upload → Forge → DNA → Finalize → Publish</p>
+            <p className="mt-5 text-xs font-bold uppercase tracking-[0.18em] text-orange-200/70">Upload → Forge → DNA → Finalize → Publish → Distribute</p>
           </div>
         </section>
 
