@@ -34,7 +34,7 @@ export default function HomePage() {
       <div className="mx-auto max-w-5xl px-4 py-6 sm:px-6 sm:py-10">
         <header className="flex items-center justify-between gap-4">
           <div>
-            <p className="text-[10px] font-black uppercase tracking-[0.28em] text-orange-300">Private artist network</p>
+            <p className="text-[10px] font-black uppercase tracking-[0.28em] text-orange-300">Built for independent artists</p>
             <h1 className="mt-2 text-3xl font-black tracking-[-0.04em] sm:text-5xl">Crucible Forge</h1>
           </div>
           <Link href="/account" className="rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-xs font-black text-white/70">
@@ -45,27 +45,28 @@ export default function HomePage() {
         <section className="mt-8 overflow-hidden rounded-[28px] border border-orange-300/15 bg-[radial-gradient(circle_at_78%_20%,rgba(249,115,22,.22),transparent_34rem),#0d0907] p-6 sm:p-9">
           <div className="max-w-2xl">
             <div className="inline-flex items-center gap-2 rounded-full border border-orange-300/20 bg-orange-500/10 px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.2em] text-orange-200">
-              <Sparkles size={13} /> Your music workspace
+              <Sparkles size={13} /> No label. No engineer. No problem.
             </div>
-            <h2 className="mt-5 text-4xl font-black leading-none tracking-[-0.05em] sm:text-6xl">Build it in the Forge.</h2>
+            <h2 className="mt-5 text-4xl font-black leading-none tracking-[-0.05em] sm:text-6xl">Finish your track. Master it. Verify it. Release it.</h2>
             <p className="mt-4 max-w-xl text-sm leading-6 text-white/55 sm:text-base">
-              Crucible is your private artist hub: create in the workstation, keep your music organized, pull from the shared sound library, and publish only what you choose.
+              CrucibleForge is built for underground and independent artists who do not have a producer, engineer, or record label behind them. Fine-tune your track, master it, verify the finished version with Crucible Star DNA, and get it ready to distribute like a pro.
             </p>
             <div className="mt-7 flex flex-wrap gap-3">
-              <Link href="/workstation" className="inline-flex items-center gap-2 rounded-2xl bg-orange-500 px-5 py-3 text-sm font-black text-black">
-                <SlidersHorizontal size={17} /> Open Workstation
+              <Link href="/sound-furnace" className="inline-flex items-center gap-2 rounded-2xl bg-orange-500 px-5 py-3 text-sm font-black text-black">
+                <AudioLines size={17} /> Master Your Track
               </Link>
-              <Link href="/sound-furnace" className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/[0.04] px-5 py-3 text-sm font-black text-white/80">
-                <AudioLines size={17} /> Sound Furnace
+              <Link href="/workstation" className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/[0.04] px-5 py-3 text-sm font-black text-white/80">
+                <SlidersHorizontal size={17} /> Fine-Tune in Workstation
               </Link>
             </div>
+            <p className="mt-5 text-xs font-bold uppercase tracking-[0.18em] text-orange-200/70">Upload → Forge → DNA → Finalize → Publish</p>
           </div>
         </section>
 
         <section className="mt-8">
           <div className="mb-4 flex items-center justify-between">
             <h3 className="text-lg font-black">Your Crucible</h3>
-            <span className="text-[10px] font-black uppercase tracking-[0.18em] text-white/30">5-tab mobile hub</span>
+            <span className="text-[10px] font-black uppercase tracking-[0.18em] text-white/30">Master · Verify · Release</span>
           </div>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             {cards.map((card) => {
