@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
-import { ChevronDown, ChevronUp, Dna, LibraryBig, Play, Send, ShieldCheck, Upload, XCircle } from "lucide-react";
+import { ChevronDown, ChevronUp, Dna, ExternalLink, Globe2, LibraryBig, Play, Send, ShieldCheck, Upload, XCircle } from "lucide-react";
 import { playForgeConfirmation } from "../../lib/audio/forge-confirm";
 import { storageAudioMimeType } from "../../lib/audio/mime";
 import { createClient } from "../../lib/supabase/client";
@@ -43,6 +43,7 @@ type StarItem = {
 };
 
 const STAR_COLUMNS = "id,title,original_filename,storage_path,artwork_url,category,bpm,musical_key,size_bytes,duration_seconds,sample_rate,channels,peak_dbfs,rms_dbfs,silence_percent,analysis_score,grade,verification_status,publish_status,analysis,created_at";
+const DISTROKID_URL = process.env.NEXT_PUBLIC_DISTROKID_AFFILIATE_URL?.trim() || "https://distrokid.com/";
 
 export default function LocalLibraryPage() {
   const [items, setItems] = useState<StarItem[]>([]);
@@ -98,7 +99,7 @@ export default function LocalLibraryPage() {
       const result = await response.json() as { error?: string };
       if (!response.ok) throw new Error(result.error || "Publish failed.");
       setItems((current) => current.map((file) => file.id === item.id ? { ...file, publish_status: "published" } : file));
-      setMessage(`“${item.title}” is published. Your private copy is still saved here.`);
+      setMessage(`“${item.title}” is published. Distribute to 40+ platforms is now available below.`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Publish failed.");
     } finally {
@@ -187,14 +188,24 @@ export default function LocalLibraryPage() {
               {item.artwork_url ? <div className="mb-4 aspect-square rounded-xl bg-cover bg-center" style={{ backgroundImage: `url(${item.artwork_url})` }} /> : null}
               <div className="flex items-start justify-between gap-3"><div className="min-w-0"><div className="flex items-center gap-2"><ShieldCheck size={14} className="shrink-0 text-emerald-300" /><p className="truncate font-black">{item.title}</p></div><p className="mt-1 truncate pl-[22px] text-xs text-white/40">{item.category}{item.duration_seconds != null ? ` · ${Number(item.duration_seconds).toFixed(2)} sec` : ""} · private</p></div><span className="shrink-0 rounded-lg bg-orange-500 px-2.5 py-1 text-xs font-black text-black">{item.grade ?? "—"} {item.analysis_score ?? ""}</span></div>
               <div className="mt-3 flex flex-wrap gap-2"><button type="button" onClick={() => void play(item)} className="inline-flex items-center gap-2 rounded-xl border border-white/10 px-3 py-2 text-xs font-black"><Play size={14} />Preview</button><button type="button" aria-expanded={dnaOpen} onClick={() => setOpenDnaId(dnaOpen ? "" : item.id)} className="inline-flex items-center gap-2 rounded-xl border border-sky-300/20 px-3 py-2 text-xs font-black text-sky-200"><Dna size={14} />{dnaOpen ? "Hide DNA" : "View DNA"}{dnaOpen ? <ChevronUp size={13} /> : <ChevronDown size={13} />}</button>{item.publish_status === "published" ? (
-                <button
-                  type="button"
-                  disabled={unpublishingId === item.id}
-                  onClick={() => void unpublish(item)}
-                  className="inline-flex items-center gap-2 rounded-xl bg-red-500 px-3 py-2 text-xs font-black text-white disabled:opacity-40"
-                >
-                  <XCircle size={14} />{unpublishingId === item.id ? "Unpublishing…" : "Unpublish"}
-                </button>
+                <>
+                  <a
+                    href={DISTROKID_URL}
+                    target="_blank"
+                    rel="sponsored noopener noreferrer"
+                    className="inline-flex items-center gap-2 rounded-xl bg-emerald-400 px-3 py-2 text-xs font-black text-black"
+                  >
+                    <Globe2 size={14} />Distribute to 40+ Platforms <ExternalLink size={13} />
+                  </a>
+                  <button
+                    type="button"
+                    disabled={unpublishingId === item.id}
+                    onClick={() => void unpublish(item)}
+                    className="inline-flex items-center gap-2 rounded-xl bg-red-500 px-3 py-2 text-xs font-black text-white disabled:opacity-40"
+                  >
+                    <XCircle size={14} />{unpublishingId === item.id ? "Unpublishing…" : "Unpublish"}
+                  </button>
+                </>
               ) : (
                 <button
                   type="button"
