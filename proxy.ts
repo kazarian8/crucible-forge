@@ -77,7 +77,7 @@ export async function proxy(request: NextRequest) {
       getAll() {
         return request.cookies.getAll();
       },
-      setAll(cookiesToSet, cacheHeaders) {
+      setAll(cookiesToSet) {
         cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value));
         response = makeBaseResponse();
         // Keep refreshed sessions host-only. Sharing the same Supabase cookie
@@ -86,9 +86,11 @@ export async function proxy(request: NextRequest) {
         cookiesToSet.forEach(({ name, value, options }) =>
           response.cookies.set(name, value, { ...options, domain: undefined }),
         );
-        Object.entries(cacheHeaders ?? {}).forEach(([key, value]) => {
-          if (value) response.headers.set(key, value);
-        });
+        // @supabase/ssr 0.7 does not pass cache headers to setAll, so mark every
+        // response that refreshes a session as private and non-cacheable here.
+        response.headers.set("Cache-Control", "private, no-store");
+        response.headers.set("Pragma", "no-cache");
+        response.headers.set("Expires", "0");
       },
     },
   });
@@ -133,7 +135,7 @@ export async function proxy(request: NextRequest) {
     return redirectPreservingSession(request, response, entitled ? getSafeNextRoute(searchParams.get("next")) : SUBSCRIBE_ROUTE);
   }
   if (pathname === SIGNUP_ROUTE && userId) {
-    return redirectPreservingSession(request, response, isStarRoot ? "/star" : DEFAULT_AFTER_LOGIN);
+    return redirectPreservingSession(request, response, DEFAULT_AFTER_LOGIN);
   }
 
   return response;
