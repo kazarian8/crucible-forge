@@ -1373,6 +1373,52 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
     });
   }
 
+  async function previewInstrumentPattern() {
+    const activeCount = instrumentEditor === "drums"
+      ? drumPattern.flat().filter(Boolean).length
+      : Object.keys(pianoCells).length;
+    if (activeCount === 0) {
+      setError(`Place at least one ${instrumentEditor === "drums" ? "drum hit" : "note"} first.`);
+      return;
+    }
+
+    setBusy(true);
+    setError("");
+    const name = instrumentEditor === "drums"
+      ? DRUM_KITS[kitIndex].name
+      : PIANO_INSTRUMENTS[instrumentIndex].name;
+    setStatus(`Previewing ${name} at ${projectBpm} BPM — nothing has been added to the timeline.`);
+
+    try {
+      const buffer = await renderInstrumentBuffer({
+        editor: instrumentEditor,
+        bpm: projectBpm,
+        swing,
+        drumPattern,
+        kitIndex,
+        pianoCells,
+        instrumentIndex,
+      });
+      const url = loadPreviewBlob(encodeWav24(buffer), "instrument-preview");
+      const player = previewRef.current;
+      if (!player) throw new Error("The preview player is not ready.");
+      if (player.src !== url) {
+        player.src = url;
+        player.load();
+      }
+      player.currentTime = 0;
+      await player.play();
+      setPlaying(true);
+      setStatus(`Previewing ${name} — edit the pattern or sound, then add it to the timeline when ready.`);
+    } catch (caught) {
+      setPlaying(false);
+      setError(caught instanceof Error ? caught.message : "The instrument preview could not be played.");
+      setStatus("Instrument preview stopped safely.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function addInstrumentTrack() {
     if (tracks.length >= MAX_TRACKS) return;
     const activeCount = instrumentEditor === "drums"
@@ -2268,6 +2314,7 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
               <label className="min-w-40 flex-1 text-[9px] font-black uppercase tracking-wider text-white/40">Swing {Math.round(swing * 100)}%
                 <input type="range" min="0" max="0.75" step="0.01" value={swing} onChange={(event) => setSwing(event.target.valueAsNumber)} className="mt-2 w-full accent-orange-400" />
               </label>
+              <button type="button" onClick={() => void previewInstrumentPattern()} disabled={busy} className="rounded-xl border border-white/15 bg-white/[0.06] px-5 py-3 text-xs font-black text-white/75 disabled:opacity-40"><Play className="mr-1 inline" size={15} /> Preview pattern</button>
               <button type="button" onClick={() => void addInstrumentTrack()} disabled={busy || tracks.length >= MAX_TRACKS} className="rounded-xl bg-gradient-to-r from-orange-500 to-amber-300 px-5 py-3 text-xs font-black text-black disabled:opacity-40"><Plus className="mr-1 inline" size={15} /> Add to timeline · Free</button>
             </div>
           </div>
