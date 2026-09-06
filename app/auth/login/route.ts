@@ -18,6 +18,13 @@ function getClientIp(request: NextRequest) {
   );
 }
 
+function currentParentCookieDomain(request: NextRequest) {
+  const hostname = request.headers.get("host")?.split(":")[0]?.toLowerCase() ?? "";
+  if (hostname === "cruciblestar.com" || hostname.endsWith(".cruciblestar.com")) return ".cruciblestar.com";
+  if (hostname === "crucibleforge.org" || hostname.endsWith(".crucibleforge.org")) return ".crucibleforge.org";
+  return null;
+}
+
 async function listUsers() {
   const admin = createAdminClient();
   const users: UserSummary[] = [];
@@ -162,16 +169,19 @@ export async function POST(request: NextRequest) {
         .filter((name) => name.startsWith("sb-") || name.includes("auth-token")),
     );
     pendingCookies.forEach(({ name }) => staleNames.add(name));
+    const parentDomain = currentParentCookieDomain(request);
 
     staleNames.forEach((name) => {
       response.headers.append(
         "set-cookie",
         `${name}=; Path=/; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax`,
       );
-      response.headers.append(
-        "set-cookie",
-        `${name}=; Path=/; Domain=.crucibleforge.org; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax`,
-      );
+      if (parentDomain) {
+        response.headers.append(
+          "set-cookie",
+          `${name}=; Path=/; Domain=${parentDomain}; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax`,
+        );
+      }
     });
 
     pendingCookies.forEach(({ name, value, options }) => {
