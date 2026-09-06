@@ -20,7 +20,8 @@ export default function SupportDock() {
     pathname === "/workstation" ||
     pathname === "/sound-library" ||
     pathname === "/sound-furnace" ||
-    pathname.startsWith("/sound-furnace/wave-lab")
+    pathname.startsWith("/sound-furnace/wave-lab") ||
+    pathname.startsWith("/star")
   ) return null;
 
   async function submit(event: FormEvent<HTMLFormElement>) {
