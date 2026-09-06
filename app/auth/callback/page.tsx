@@ -20,23 +20,37 @@ export default function AuthCallbackPage() {
 
     async function completeSignIn() {
       const params = new URLSearchParams(window.location.search);
+      const hash = new URLSearchParams(window.location.hash.replace(/^#/, ""));
       const code = params.get("code");
+      const tokenHash = params.get("token_hash");
+      const type = params.get("type") ?? hash.get("type");
+      const accessToken = hash.get("access_token");
+      const refreshToken = hash.get("refresh_token");
       const next = getSafeNextRoute();
-
-      if (!code) {
-        const loginUrl = new URL("/login", window.location.origin);
-        loginUrl.searchParams.set("next", next);
-        loginUrl.searchParams.set("verified", "1");
-        window.location.replace(loginUrl.toString());
-        return;
-      }
 
       try {
         const supabase = createClient();
-        const { error } = await supabase.auth.exchangeCodeForSession(code);
-        if (error) throw error;
 
-        window.location.replace(next);
+        if (code) {
+          const { error } = await supabase.auth.exchangeCodeForSession(code);
+          if (error) throw error;
+        } else if (tokenHash && type === "recovery") {
+          const { error } = await supabase.auth.verifyOtp({ type: "recovery", token_hash: tokenHash });
+          if (error) throw error;
+        } else if (accessToken && refreshToken) {
+          const { error } = await supabase.auth.setSession({
+            access_token: accessToken,
+            refresh_token: refreshToken,
+          });
+          if (error) throw error;
+        } else {
+          const { data: { user } } = await supabase.auth.getUser();
+          if (!user) throw new Error("No recovery or sign-in session found.");
+        }
+
+        const destination = type === "recovery" ? "/reset-password" : next;
+        window.history.replaceState({}, "", destination);
+        window.location.replace(destination);
       } catch {
         if (active) setMessage("Secure sign-in failed. Returning to login…");
         const loginUrl = new URL("/login", window.location.origin);
