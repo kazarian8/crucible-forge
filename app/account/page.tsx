@@ -44,6 +44,8 @@ export default function AccountPage() {
         return;
       }
       setProfile(payload.profile);
+      setUsername(payload.profile?.username ?? username);
+      setUsernameFont(payload.profile?.username_font ?? usernameFont);
       setMessage(payload.charged ? `Locked in. ${payload.charged} credits used.` : "Locked in. No credits used.");
       window.dispatchEvent(new Event("crucible:credits-updated"));
     } catch {
@@ -72,8 +74,11 @@ export default function AccountPage() {
   }
 
   const firstSetup = !!profile && !profile.username;
-  const usernameChangeCost = profile?.username && profile.username !== username ? CREDIT_PRICES.usernameChange : 0;
-  const fontChangeCost = !firstSetup && profile && profile.username_font !== usernameFont ? CREDIT_PRICES.usernameFontChange : 0;
+  const usernameChanged = !!profile && (profile.username ?? "") !== username;
+  const fontChanged = !!profile && profile.username_font !== usernameFont;
+  const hasIdentityChanges = !!profile && (usernameChanged || fontChanged);
+  const usernameChangeCost = profile?.username && usernameChanged ? CREDIT_PRICES.usernameChange : 0;
+  const fontChangeCost = !firstSetup && fontChanged ? CREDIT_PRICES.usernameFontChange : 0;
   const pendingCost = usernameChangeCost + fontChangeCost;
 
   return (
@@ -103,8 +108,8 @@ export default function AccountPage() {
               <p className="mt-2 text-2xl" style={usernameFont === "gochi_hand" ? { fontFamily: "var(--font-gochi-hand)" } : undefined}>@{username || "your_name"}</p>
             </div>
 
-            <button type="submit" disabled={loading || !username} className="w-full rounded-xl bg-orange-500 px-5 py-4 font-black text-black disabled:opacity-50">
-              {loading ? "Saving..." : `Save${pendingCost ? ` · ${pendingCost} credits` : " · free"}`}
+            <button type="submit" disabled={loading || !username || !hasIdentityChanges} className="w-full rounded-xl bg-orange-500 px-5 py-4 font-black text-black disabled:bg-white/[0.06] disabled:text-white/45 disabled:opacity-100">
+              {loading ? "Saving..." : !profile ? "Loading saved identity..." : !hasIdentityChanges ? "Saved" : `Save${pendingCost ? ` · ${pendingCost} credits` : " · free"}`}
             </button>
           </form>
         </div>
