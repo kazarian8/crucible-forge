@@ -2,11 +2,17 @@
 
 import { FormEvent, useEffect, useState } from "react";
 
+function defaultNext() {
+  return window.location.hostname === "cruciblestar.com" || window.location.hostname === "www.cruciblestar.com"
+    ? "/star"
+    : "/sound-furnace";
+}
+
 function safeNext() {
   const value = new URLSearchParams(window.location.search).get("next");
   return value?.startsWith("/") && !value.startsWith("//")
     ? value
-    : "/sound-furnace";
+    : defaultNext();
 }
 
 export default function LoginPage() {
@@ -14,12 +20,14 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [message, setMessage] = useState("");
   const [verified, setVerified] = useState(false);
+  const [passwordReset, setPasswordReset] = useState(false);
   const [loading, setLoading] = useState(false);
   const [linkLoading, setLinkLoading] = useState(false);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     setVerified(params.get("verified") === "1");
+    setPasswordReset(params.get("password_reset") === "1");
     if (params.get("error") === "session") {
       setMessage("Your sign-in expired before Crucible could open. Please sign in again.");
     } else if (params.get("error") === "service-unavailable") {
@@ -49,7 +57,7 @@ export default function LoginPage() {
         if (error === "account-not-found") {
           setMessage("No account found with that email or username.");
         } else if (error === "wrong-password") {
-          setMessage("Incorrect password. Use the email sign-in link below if you need immediate access.");
+          setMessage("Incorrect password. Reset it below or use the email sign-in link for immediate access.");
         } else if (error === "email-not-verified") {
           setMessage("Verify your email before signing in.");
         } else if (error === "rate-limited") {
@@ -102,7 +110,7 @@ export default function LoginPage() {
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-black px-6 text-white">
+    <main className="flex min-h-screen items-center justify-center bg-black px-6 py-12 text-white">
       <section className="w-full max-w-md rounded-2xl border border-orange-500/40 bg-zinc-950 p-8">
         <h1 className="text-center text-3xl font-bold">Enter the Crucible</h1>
         <p className="mt-3 text-center text-sm leading-6 text-zinc-400">
@@ -111,6 +119,11 @@ export default function LoginPage() {
         {verified ? (
           <p role="status" className="mt-4 rounded-lg border border-emerald-400/30 bg-emerald-400/10 p-3 text-center text-sm text-emerald-200">
             Email confirmed. Your account is enabled — sign in below.
+          </p>
+        ) : null}
+        {passwordReset ? (
+          <p role="status" className="mt-4 rounded-lg border border-emerald-400/30 bg-emerald-400/10 p-3 text-center text-sm text-emerald-200">
+            Password updated. Sign in with your new password.
           </p>
         ) : null}
         <form onSubmit={handleSignIn} className="mt-7 space-y-4" noValidate>
@@ -127,7 +140,10 @@ export default function LoginPage() {
             />
           </label>
           <label className="block">
-            <span className="text-xs font-bold uppercase tracking-wider text-zinc-400">Password</span>
+            <span className="flex items-center justify-between gap-3 text-xs font-bold uppercase tracking-wider text-zinc-400">
+              <span>Password</span>
+              <a href="/forgot-password" className="normal-case tracking-normal text-orange-300">Forgot password?</a>
+            </span>
             <input
               type="password"
               required
