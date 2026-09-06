@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { LoaderCircle, ShieldCheck, Sparkles } from "lucide-react";
 import StarDnaAnalyzer from "../../../components/star/StarDnaAnalyzer";
-import { createClient } from "../../../lib/supabase/client";
 
 type StarTrack = {
   id: string;
@@ -15,9 +14,13 @@ type StarTrack = {
   analysis_score: number | null;
   verification_status: "pending" | "verified" | "warning" | "failed";
   created_at: string;
+  audio_url: string | null;
 };
 
-const COLUMNS = "id,title,original_filename,storage_path,grade,analysis_score,verification_status,created_at";
+type AnalyzerResponse = {
+  tracks?: StarTrack[];
+  error?: string;
+};
 
 export default function CrucibleStarAnalyzerPage() {
   const [tracks, setTracks] = useState<StarTrack[]>([]);
@@ -29,35 +32,39 @@ export default function CrucibleStarAnalyzerPage() {
 
   useEffect(() => {
     let cancelled = false;
+
     void (async () => {
-      const sb = createClient();
-      const { data: { user } } = await sb.auth.getUser();
-      if (!user) {
+      try {
+        const response = await fetch("/api/star/analyzer", {
+          method: "GET",
+          cache: "no-store",
+          credentials: "same-origin",
+        });
+        const payload = (await response.json()) as AnalyzerResponse;
+
+        if (cancelled) return;
+
+        if (!response.ok) {
+          setTracks([]);
+          setMessage(payload.error || "CrucibleStar could not load your verified DNA.");
+          setLoading(false);
+          return;
+        }
+
+        const items = payload.tracks ?? [];
+        setTracks(items);
+        setMessage("");
+        setLoading(false);
+        if (items[0]) void openTrack(items[0]);
+      } catch {
         if (!cancelled) {
-          setMessage("Sign in to inspect your verified CrucibleStar DNA.");
+          setTracks([]);
+          setMessage("CrucibleStar could not load your verified DNA.");
           setLoading(false);
         }
-        return;
       }
-      const { data, error } = await sb
-        .from("star_music_files")
-        .select(COLUMNS)
-        .eq("user_id", user.id)
-        .eq("verification_status", "verified")
-        .is("archived_at", null)
-        .order("created_at", { ascending: false })
-        .limit(20);
-      if (cancelled) return;
-      if (error) {
-        setMessage(error.message);
-        setLoading(false);
-        return;
-      }
-      const items = (data ?? []) as StarTrack[];
-      setTracks(items);
-      setLoading(false);
-      if (items[0]) void openTrack(items[0]);
     })();
+
     return () => { cancelled = true; };
   }, []);
 
@@ -65,12 +72,14 @@ export default function CrucibleStarAnalyzerPage() {
     setOpeningId(track.id);
     setMessage("Opening the exact verified audio version…");
     setAudio(null);
+
     try {
-      const sb = createClient();
-      const { data, error } = await sb.storage.from("star-music").download(track.storage_path);
-      if (error || !data) throw error || new Error("Verified audio could not be opened.");
+      if (!track.audio_url) throw new Error("Verified audio link could not be created.");
+      const response = await fetch(track.audio_url, { cache: "no-store" });
+      if (!response.ok) throw new Error("Verified audio could not be opened.");
+      const blob = await response.blob();
       setSelected(track);
-      setAudio(data);
+      setAudio(blob);
       setMessage("");
     } catch (caught) {
       setMessage(caught instanceof Error ? caught.message : "Verified audio could not be opened.");
@@ -127,7 +136,7 @@ export default function CrucibleStarAnalyzerPage() {
               })}
             </div>
           ) : null}
-          {!loading && tracks.length === 0 ? <p className="mt-3 text-xs text-white/40">No verified tracks yet. Verify a final master in CrucibleStar and its DNA Wave will appear here automatically.</p> : null}
+          {!loading && tracks.length === 0 && !message ? <p className="mt-3 text-xs text-white/40">No verified tracks yet. Verify a final master in CrucibleStar and its DNA Wave will appear here automatically.</p> : null}
           {message ? <p className="mt-3 rounded-xl border border-orange-300/15 bg-orange-400/[0.05] p-3 text-xs text-orange-100/75">{message}</p> : null}
         </section>
 
