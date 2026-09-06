@@ -15,6 +15,10 @@ function getSafeNextRoute(value: string | null) {
 
 function preserveSupabaseState(source: NextResponse, target: NextResponse) {
   source.cookies.getAll().forEach((cookie) => target.cookies.set(cookie));
+  for (const header of ["cache-control", "expires", "pragma"]) {
+    const value = source.headers.get(header);
+    if (value) target.headers.set(header, value);
+  }
   return target;
 }
 
@@ -38,25 +42,27 @@ function redirectPreservingSession(request: NextRequest, response: NextResponse,
 export async function proxy(request: NextRequest) {
   const { pathname, searchParams } = request.nextUrl;
   const hostname = request.headers.get("host")?.split(":")[0].toLowerCase();
+  const isStarRoot = Boolean(hostname && STAR_HOSTS.has(hostname) && pathname === "/");
 
-  // The Star domain is a separate product entry point backed by this same
-  // deployment. Keep its root URL stable without changing Forge routing.
-  if (hostname && STAR_HOSTS.has(hostname) && pathname === "/") {
-    const starUrl = request.nextUrl.clone();
-    starUrl.pathname = "/star";
-    return NextResponse.rewrite(starUrl);
-  }
+  const makeBaseResponse = () => {
+    if (isStarRoot) {
+      const starUrl = request.nextUrl.clone();
+      starUrl.pathname = "/star";
+      return NextResponse.rewrite(starUrl, { request: { headers: request.headers } });
+    }
+    return NextResponse.next({ request });
+  };
 
   const paidRoute = PAID_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
   const authenticatedRoute = paidRoute || pathname === "/account" || pathname === SUBSCRIBE_ROUTE || pathname.startsWith("/billing/success");
-  const authPageRoute = pathname === LOGIN_ROUTE || pathname === SIGNUP_ROUTE;
   const authEndpoint = pathname.startsWith("/auth/");
   const switchingAccount = pathname === LOGIN_ROUTE && searchParams.get("switch") === "1";
 
-  // Login/signup and /auth/* establish or clear sessions themselves.
-  if (authPageRoute || authEndpoint) return NextResponse.next({ request });
+  // /auth/* establishes or clears sessions itself. All page requests, including
+  // CrucibleStar's root-domain rewrite, must pass through the normal SSR refresh.
+  if (authEndpoint) return NextResponse.next({ request });
 
-  let response = NextResponse.next({ request });
+  let response = makeBaseResponse();
 
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -68,14 +74,21 @@ export async function proxy(request: NextRequest) {
 
   const supabase = createServerClient(supabaseUrl, supabaseKey, {
     cookies: {
-      getAll() { return request.cookies.getAll(); },
-      setAll(cookiesToSet) {
+      getAll() {
+        return request.cookies.getAll();
+      },
+      setAll(cookiesToSet, cacheHeaders) {
         cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value));
-        response = NextResponse.next({ request });
+        response = makeBaseResponse();
         // Keep refreshed sessions host-only. Sharing the same Supabase cookie
-        // name across host and parent-domain scopes can make Safari send two
+        // name across parent-domain and host scopes can make Safari send two
         // refresh tokens and create a login loop.
-        cookiesToSet.forEach(({ name, value, options }) => response.cookies.set(name, value, { ...options, domain: undefined }));
+        cookiesToSet.forEach(({ name, value, options }) =>
+          response.cookies.set(name, value, { ...options, domain: undefined }),
+        );
+        Object.entries(cacheHeaders ?? {}).forEach(([key, value]) => {
+          if (value) response.headers.set(key, value);
+        });
       },
     },
   });
@@ -116,7 +129,13 @@ export async function proxy(request: NextRequest) {
 
   if (paidRoute && !entitled) return redirectWithNext(request, SUBSCRIBE_ROUTE, requestedRoute, undefined, response);
   if (pathname === SUBSCRIBE_ROUTE && entitled) return redirectPreservingSession(request, response, DEFAULT_AFTER_LOGIN);
-  if (pathname === LOGIN_ROUTE && userId && !switchingAccount) return redirectPreservingSession(request, response, entitled ? getSafeNextRoute(searchParams.get("next")) : SUBSCRIBE_ROUTE);
+  if (pathname === LOGIN_ROUTE && userId && !switchingAccount) {
+    return redirectPreservingSession(request, response, entitled ? getSafeNextRoute(searchParams.get("next")) : SUBSCRIBE_ROUTE);
+  }
+  if (pathname === SIGNUP_ROUTE && userId) {
+    return redirectPreservingSession(request, response, isStarRoot ? "/star" : DEFAULT_AFTER_LOGIN);
+  }
+
   return response;
 }
 
