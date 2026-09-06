@@ -1,15 +1,30 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
+
+const RESET_COOLDOWN_SECONDS = 60;
 
 export default function ForgotPasswordPage() {
   const [email, setEmail] = useState("");
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
   const [isError, setIsError] = useState(false);
+  const [cooldown, setCooldown] = useState(0);
+
+  useEffect(() => {
+    if (cooldown <= 0) return;
+
+    const timer = window.setTimeout(() => {
+      setCooldown((remaining) => Math.max(0, remaining - 1));
+    }, 1000);
+
+    return () => window.clearTimeout(timer);
+  }, [cooldown]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (cooldown > 0) return;
+
     const normalized = email.trim().toLowerCase();
     if (!normalized.includes("@")) {
       setMessage("Enter the email address on your Crucible account.");
@@ -31,12 +46,14 @@ export default function ForgotPasswordPage() {
       const result = await response.json().catch(() => ({}));
 
       if (!response.ok && result.error === "rate-limited") {
-        setMessage("Too many reset requests. Wait a little and try again.");
-        setIsError(true);
+        setCooldown(RESET_COOLDOWN_SECONDS);
+        setMessage("A reset was requested recently. You can request another link when the timer ends.");
+        setIsError(false);
       } else if (!response.ok) {
         setMessage("Password recovery is temporarily unavailable. Please try again.");
         setIsError(true);
       } else {
+        setCooldown(RESET_COOLDOWN_SECONDS);
         setMessage("If that email belongs to a Crucible account, a password-reset link is on the way. Check your inbox and spam folder.");
       }
     } catch {
@@ -46,6 +63,12 @@ export default function ForgotPasswordPage() {
       setLoading(false);
     }
   }
+
+  const buttonLabel = loading
+    ? "Sending reset link..."
+    : cooldown > 0
+      ? `Request another link in ${cooldown}s`
+      : "Send password-reset link";
 
   return (
     <main className="flex min-h-screen items-center justify-center bg-black px-5 py-12 text-white">
@@ -69,10 +92,10 @@ export default function ForgotPasswordPage() {
           </label>
           <button
             type="submit"
-            disabled={loading || !email}
+            disabled={loading || !email || cooldown > 0}
             className="w-full rounded-xl bg-gradient-to-r from-orange-600 to-amber-400 px-5 py-4 font-black text-black disabled:opacity-50"
           >
-            {loading ? "Sending reset link..." : "Send password-reset link"}
+            {buttonLabel}
           </button>
         </form>
 
