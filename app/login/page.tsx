@@ -126,25 +126,32 @@ export default function LoginPage() {
             Password updated. Sign in with your new password.
           </p>
         ) : null}
-        <form onSubmit={handleSignIn} className="mt-7 space-y-4" noValidate>
-          <label className="block">
+        <form id="crucible-login-form" onSubmit={handleSignIn} className="mt-7 space-y-4" autoComplete="on" noValidate>
+          <label htmlFor="crucible-login-identifier" className="block">
             <span className="text-xs font-bold uppercase tracking-wider text-zinc-400">Email or username</span>
             <input
+              id="crucible-login-identifier"
+              name="username"
               type="text"
               required
               value={login}
               onChange={(event) => setLogin(event.target.value)}
               placeholder="Email address or username"
               autoComplete="username"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
               className="mt-2 w-full rounded-lg border border-zinc-700 bg-zinc-900 px-4 py-3 outline-none focus:border-orange-500"
             />
           </label>
-          <label className="block">
+          <label htmlFor="crucible-login-password" className="block">
             <span className="flex items-center justify-between gap-3 text-xs font-bold uppercase tracking-wider text-zinc-400">
               <span>Password</span>
               <a href="/forgot-password" className="normal-case tracking-normal text-orange-300">Forgot password?</a>
             </span>
             <input
+              id="crucible-login-password"
+              name="password"
               type="password"
               required
               value={password}
