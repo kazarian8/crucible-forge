@@ -26,7 +26,9 @@ export default async function StarLayout({ children }: { children: React.ReactNo
           {signedIn ? (
             <div className="flex shrink-0 items-center gap-2">
               <Link href="/account" className="rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-[10px] font-black text-white/75">Account</Link>
-              <Link href="/auth/signout?next=/star" className="rounded-xl border border-orange-300/20 bg-orange-400/10 px-3 py-2 text-[10px] font-black text-orange-200">Sign Out</Link>
+              <form action="/auth/signout?next=/star" method="post">
+                <button type="submit" className="rounded-xl border border-orange-300/20 bg-orange-400/10 px-3 py-2 text-[10px] font-black text-orange-200">Sign Out</button>
+              </form>
             </div>
           ) : (
             <div className="flex shrink-0 overflow-hidden rounded-xl border border-orange-300/25 bg-black/45">
