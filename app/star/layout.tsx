@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Activity, LogIn, UserPlus } from "lucide-react";
+import StarSessionGate from "../../components/star/StarSessionGate";
 import { createClient } from "../../lib/supabase/server";
 
 export default async function StarLayout({ children }: { children: React.ReactNode }) {
@@ -40,7 +41,7 @@ export default async function StarLayout({ children }: { children: React.ReactNo
         </div>
       </div>
 
-      {children}
+      <StarSessionGate>{children}</StarSessionGate>
 
       <Link
         href="/star/analyzer"
