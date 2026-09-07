@@ -9,8 +9,10 @@ const DEFAULT_AFTER_LOGIN = "/sound-furnace";
 const PAID_PREFIXES = ["/furnace", "/prompt-reforge", "/sound-furnace", "/studio"];
 const STAR_HOSTS = new Set(["cruciblestar.com", "www.cruciblestar.com"]);
 
-function getSafeNextRoute(value: string | null) {
-  return value?.startsWith("/") && !value.startsWith("//") ? value : DEFAULT_AFTER_LOGIN;
+function getSafeNextRoute(value: string | null, fallback = DEFAULT_AFTER_LOGIN) {
+  const validLocalRoute = value?.startsWith("/") && !value.startsWith("//");
+  const accountSetupRoute = value === "/account" || value?.startsWith("/account?") || value?.startsWith("/account#");
+  return validLocalRoute && !accountSetupRoute ? value! : fallback;
 }
 
 function preserveSupabaseState(source: NextResponse, target: NextResponse) {
@@ -42,7 +44,8 @@ function redirectPreservingSession(request: NextRequest, response: NextResponse,
 export async function proxy(request: NextRequest) {
   const { pathname, searchParams } = request.nextUrl;
   const hostname = request.headers.get("host")?.split(":")[0].toLowerCase();
-  const isStarRoot = Boolean(hostname && STAR_HOSTS.has(hostname) && pathname === "/");
+  const isStarHost = Boolean(hostname && STAR_HOSTS.has(hostname));
+  const isStarRoot = Boolean(isStarHost && pathname === "/");
 
   const makeBaseResponse = () => {
     if (isStarRoot) {
@@ -132,7 +135,11 @@ export async function proxy(request: NextRequest) {
   if (paidRoute && !entitled) return redirectWithNext(request, SUBSCRIBE_ROUTE, requestedRoute, undefined, response);
   if (pathname === SUBSCRIBE_ROUTE && entitled) return redirectPreservingSession(request, response, DEFAULT_AFTER_LOGIN);
   if (pathname === LOGIN_ROUTE && userId && !switchingAccount) {
-    return redirectPreservingSession(request, response, entitled ? getSafeNextRoute(searchParams.get("next")) : SUBSCRIBE_ROUTE);
+    return redirectPreservingSession(
+      request,
+      response,
+      entitled ? getSafeNextRoute(searchParams.get("next"), isStarHost ? "/star" : DEFAULT_AFTER_LOGIN) : SUBSCRIBE_ROUTE,
+    );
   }
   if (pathname === SIGNUP_ROUTE && userId) {
     return redirectPreservingSession(request, response, DEFAULT_AFTER_LOGIN);
