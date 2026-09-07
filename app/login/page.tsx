@@ -10,8 +10,10 @@ function defaultNext() {
 
 function safeNext() {
   const value = new URLSearchParams(window.location.search).get("next");
-  return value?.startsWith("/") && !value.startsWith("//")
-    ? value
+  const validLocalRoute = value?.startsWith("/") && !value.startsWith("//");
+  const accountSetupRoute = value === "/account" || value?.startsWith("/account?") || value?.startsWith("/account#");
+  return validLocalRoute && !accountSetupRoute
+    ? value!
     : defaultNext();
 }
 
