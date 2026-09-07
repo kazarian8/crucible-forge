@@ -4,6 +4,7 @@ import ArtistBottomNav from "../components/ArtistBottomNav";
 import SequencerClipGestureGuard from "../components/SequencerClipGestureGuard";
 import SupportDock from "../components/SupportDock";
 import AuthRecoveryRedirect from "../components/AuthRecoveryRedirect";
+import CrucibleProductSwitcher from "../components/CrucibleProductSwitcher";
 import type { Metadata } from "next";
 import { Gochi_Hand, JetBrains_Mono, Space_Grotesk } from "next/font/google";
 
@@ -24,6 +25,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body className="pb-20 md:pb-0">
         <AuthRecoveryRedirect />
         {children}
+        <CrucibleProductSwitcher />
         <ArtistBottomNav />
         <SequencerClipGestureGuard />
         <CreditBalance />
