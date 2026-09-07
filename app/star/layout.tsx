@@ -41,7 +41,7 @@ export default async function StarLayout({ children }: { children: React.ReactNo
         </div>
       </div>
 
-      <StarSessionGate>{children}</StarSessionGate>
+      <StarSessionGate signedIn={signedIn}>{children}</StarSessionGate>
 
       <Link
         href="/star/analyzer"
