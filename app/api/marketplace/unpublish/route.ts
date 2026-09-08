@@ -24,24 +24,7 @@ export async function POST(request: Request) {
 
     if (error || !data) return NextResponse.json({ error: "Private library file not found." }, { status: 404 });
 
-    const admin = createAdminClient();
-    if (data.marketplace_item_id) {
-      const { error: listingError } = await admin
-        .from("sound_library_items")
-        .update({ is_published: false })
-        .eq("id", data.marketplace_item_id)
-        .eq("user_id", user.id);
-      if (listingError) throw listingError;
-    }
-
-    const { error: updateError } = await admin
-      .from("star_music_files")
-      .update({
-        publish_status: "ready",
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", data.id)
-      .eq("user_id", user.id);
+    const { error: updateError } = await createAdminClient().rpc("unpublish_track_from_wall", { track_id: data.id, owner_id: user.id });
     if (updateError) throw updateError;
 
     return NextResponse.json({ unpublished: true });

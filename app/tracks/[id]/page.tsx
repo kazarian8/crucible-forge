@@ -1,12 +1,15 @@
 "use client";
 
 import Link from "next/link";
+import MasteringComparisonReport from "../../../components/star/MasteringComparisonReport";
+import { validReport } from "../../../lib/star/mastering-report";
 import { useParams } from "next/navigation";
 import { Copy, Download, ExternalLink, Globe2, History, Link2, LockKeyhole, MoreHorizontal, Music2, SlidersHorizontal, Users } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { createClient } from "../../../lib/supabase/client";
 
 type Track = {
+  analysis?: { mastering_report?: unknown } | null;
   id: string;
   title: string;
   artwork_url: string | null;
@@ -72,7 +75,7 @@ export default function TrackProjectPage() {
     const [{ data: trackData, error: trackError }, { data: versionData, error: versionError }] = await Promise.all([
       supabase
         .from("star_music_files")
-        .select("id,title,artwork_url,storage_path,original_filename,size_bytes,verification_status,created_at")
+        .select("id,title,artwork_url,storage_path,original_filename,size_bytes,verification_status,created_at,analysis")
         .eq("id", trackId)
         .single(),
       supabase
@@ -232,6 +235,8 @@ export default function TrackProjectPage() {
                 <button type="button" onClick={() => setTab("distribution")} className="inline-flex items-center gap-2 rounded-2xl bg-emerald-500 px-5 py-3 font-black text-white"><Globe2 size={18} />Distribute</button>
               </div>
             </section>
+
+            {validReport(track.analysis?.mastering_report) ? <div className="text-white"><MasteringComparisonReport report={track.analysis.mastering_report} /></div> : null}
 
             <section className="mt-10">
               <h2 className="text-xl font-black">Version History</h2>

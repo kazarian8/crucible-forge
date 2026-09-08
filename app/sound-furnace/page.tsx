@@ -1,5 +1,8 @@
 "use client";
 
+import MasteringComparisonReport from "../../components/star/MasteringComparisonReport";
+import { measureSignal, type MasteringReport } from "../../lib/star/mastering-report";
+import { renderReportImage } from "../../lib/star/report-image";
 import StemSequencer from "../../components/sound-furnace/StemSequencer";
 import { CREDITS_UPDATED_EVENT } from "../../components/CreditBalance";
 import { CREDIT_PRICES } from "../../lib/credits/pricing";
@@ -7,6 +10,7 @@ import { analyzeAudioFile } from "../../lib/audio/file-dna";
 import { storageAudioMimeType } from "../../lib/audio/mime";
 import { createClient } from "../../lib/supabase/client";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   ChangeEvent,
   DragEvent,
@@ -23,7 +27,6 @@ import {
   Download,
   Flame,
   Gauge,
-  Globe2,
   Hammer,
   LibraryBig,
   LoaderCircle,
@@ -482,9 +485,27 @@ function playForgeFinish() {
 }
 
 export default function SoundFurnacePage() {
+  const router = useRouter();
+  const uploaderId = useRef("");
   const inputRef = useRef<HTMLInputElement>(null);
   const sourceAudioRef = useRef<HTMLAudioElement>(null);
   const resultAudioRef = useRef<HTMLAudioElement>(null);
+  const [masteringReport, setMasteringReport] = useState<MasteringReport | null>(null);
+  const [reportEmailStatus, setReportEmailStatus] = useState("");
+  const [reportEmailBusy, setReportEmailBusy] = useState(false);
+  const reportEmailLock = useRef(false);
+  async function emailMasteringReport(report: MasteringReport) {
+    if (reportEmailLock.current) return;
+    reportEmailLock.current = true; setReportEmailBusy(true);
+    setReportEmailStatus("Sending your before-and-after reports to your verified account email…");
+    try {
+      const response = await fetch("/api/star/mastering-report", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ uploaderId: uploaderId.current, report, beforeImage: renderReportImage(report,"before"), afterImage: renderReportImage(report,"after") }) });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "Report email failed.");
+      setReportEmailStatus(`Email accepted for delivery to ${payload.recipient}. Both full-page reports are attached.`);
+    } catch (caught) { setReportEmailStatus(caught instanceof Error ? caught.message : "Report email could not be confirmed. You can download both reports here."); }
+    finally { reportEmailLock.current = false; setReportEmailBusy(false); }
+  }
   const [file, setFile] = useState<File | null>(null);
   const [buffer, setBuffer] = useState<AudioBuffer | null>(null);
   const [sourceUrl, setSourceUrl] = useState("");
@@ -507,9 +528,27 @@ export default function SoundFurnacePage() {
   const [pendingVersion, setPendingVersion] = useState<"original" | "forged" | null>(null);
   const savingVersionRef = useRef(false);
   const [completionOpen, setCompletionOpen] = useState(false);
-  const [completionStage, setCompletionStage] = useState<"choose" | "saving" | "actions">("choose");
+  const [completionStage, setCompletionStage] = useState<"choose" | "details" | "saving" | "actions">("choose");
   const [savedStar, setSavedStar] = useState<SavedStarResult | null>(null);
   const [publishing, setPublishing] = useState(false);
+  const [saveIntent, setSaveIntent] = useState<"private" | "publish">("private");
+  const [trackTitle, setTrackTitle] = useState("");
+  const [trackPicture, setTrackPicture] = useState<File | null>(null);
+  const [picturePreview, setPicturePreview] = useState("");
+  useEffect(() => () => { if (picturePreview) URL.revokeObjectURL(picturePreview); }, [picturePreview]);
+  function choosePicture(picture: File | null) {
+    setTrackPicture(picture);
+    setPicturePreview(picture ? URL.createObjectURL(picture) : "");
+  }
+
+  function editBeforeSave(intent: "private" | "publish") {
+    if (!pendingVersion || !file || !result) return;
+    setSaveIntent(intent);
+    setTrackTitle(file.name.replace(/\.[^.]+$/, ""));
+    choosePicture(null);
+    setError("");
+    setCompletionStage("details");
+  }
 
   useEffect(() => () => {
     if (sourceUrl) URL.revokeObjectURL(sourceUrl);
@@ -546,6 +585,8 @@ export default function SoundFurnacePage() {
   async function acceptFile(candidate: File) {
     setError("");
     setResult(null);
+    setMasteringReport(null);
+    setReportEmailStatus("");
     setStemFiles([]);
     setEngineerTrackCount(0);
     setEngineerOpen(false);
@@ -587,6 +628,8 @@ export default function SoundFurnacePage() {
   function acceptStemMix(mixed: AudioBuffer, name: string) {
     setError("");
     setResult(null);
+    setMasteringReport(null);
+    setReportEmailStatus("");
     if (sourceUrl) URL.revokeObjectURL(sourceUrl);
     if (result?.url) URL.revokeObjectURL(result.url);
 
@@ -614,19 +657,22 @@ export default function SoundFurnacePage() {
 
   function handleDrop(event: DragEvent<HTMLDivElement>) {
     event.preventDefault();
+    if (busy) return;
     const candidate = event.dataTransfer.files?.[0];
     if (candidate) void acceptFile(candidate);
   }
 
   async function handleForge(event: FormEvent) {
     event.preventDefault();
-    if (!file || !buffer) return;
+    if (!file || !buffer || busy) return;
     const submitter = (event.nativeEvent as SubmitEvent).submitter as HTMLButtonElement | null;
     const requestedMode: ForgeMode = submitter?.value === "auto" ? "auto" : mode;
     if (requestedMode === "guided" && prompt.trim().length < 8) {
       setError("Give the guided forge a little more direction—at least 8 characters.");
       return;
     }
+    setMasteringReport(null);
+    setReportEmailStatus("");
     setMode(requestedMode);
     setCompletionOpen(false);
     setPendingVersion(null);
@@ -640,6 +686,9 @@ export default function SoundFurnacePage() {
       ? "Auto Forge started… balancing tone, dynamics, and final level."
       : "Heating the furnace… balancing tone, dynamics, and final level.");
     try {
+      const { data: { user: masteringUser } } = await createClient().auth.getUser();
+      if (!masteringUser?.email_confirmed_at) throw new Error("Sign in with a verified email before mastering.");
+      uploaderId.current = masteringUser.id;
       const forged = await forgeBuffer(buffer, requestedMode, prompt);
       const blob = encodeWav24(forged);
       const url = URL.createObjectURL(blob);
@@ -652,6 +701,19 @@ export default function SoundFurnacePage() {
         stats: analyzeBuffer(forged),
         samples: waveformSamples(forged),
       });
+      // Analyze the exact encoded output, including WAV quantization, against the input.
+      try {
+        const reportContext = new AudioContext();
+        try {
+          const originalBytes = await file.arrayBuffer();
+          const masterBytes = await blob.arrayBuffer();
+          const decodedMaster = await reportContext.decodeAudioData(masterBytes.slice(0));
+          const hashes = await Promise.all([originalBytes, masterBytes].map(async bytes => Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))).map(n=>n.toString(16).padStart(2,"0")).join("")));
+          const report: MasteringReport = { version: 1, title: file.name.replace(/\.[^.]+$/, "").slice(0,160), beforeHash: hashes[0], afterHash: hashes[1], before: measureSignal(buffer), after: measureSignal(decodedMaster) };
+          setMasteringReport(report);
+          await emailMasteringReport(report);
+        } finally { void reportContext.close(); }
+      } catch { setReportEmailStatus("Your master is ready, but report generation failed. Try mastering again to regenerate the reports."); }
       playForgeFinish();
       setCompletionStage("choose");
       setSavedStar(null);
@@ -667,7 +729,7 @@ export default function SoundFurnacePage() {
   }
 
   async function keepVersion(chosenVersion: "original" | "forged") {
-    if (!file || !result || busy || savingVersionRef.current || completionStage !== "choose" || auditionedMasterUrl !== result.url || pendingVersion !== chosenVersion) return;
+    if (!file || !result || busy || savingVersionRef.current || completionStage !== "details" || !trackTitle.trim() || auditionedMasterUrl !== result.url || pendingVersion !== chosenVersion) return;
     savingVersionRef.current = true;
     sourceAudioRef.current?.pause();
     resultAudioRef.current?.pause();
@@ -681,13 +743,25 @@ export default function SoundFurnacePage() {
       : file;
     const supabase = createClient();
     let storagePath = "";
+    let artworkPath = "";
+    let persisted = false;
 
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("Sign in before saving this track and requesting its CrucibleStar badge.");
       if (selectedFile.size > MAX_FILE_BYTES) throw new Error("The selected file is larger than CrucibleStar's 250 MB limit.");
 
+      if (trackPicture && (!["image/jpeg", "image/png", "image/webp"].includes(trackPicture.type) || trackPicture.size > 10 * 1024 * 1024)) {
+        throw new Error("Use a JPG, PNG or WebP picture up to 10 MB.");
+      }
       const { analysis, hash } = await analyzeAudioFile(selectedFile);
+      let artworkUrl: string | null = null;
+      if (trackPicture) {
+        artworkPath = `${user.id}/${crypto.randomUUID()}.${trackPicture.type === "image/jpeg" ? "jpg" : trackPicture.type.split("/")[1]}`;
+        const { error: pictureError } = await supabase.storage.from("track-artwork").upload(artworkPath, trackPicture, { contentType: trackPicture.type, upsert: false });
+        if (pictureError) throw pictureError;
+        artworkUrl = supabase.storage.from("track-artwork").getPublicUrl(artworkPath).data.publicUrl;
+      }
       const cleanName = selectedFile.name.replace(/[^A-Za-z0-9._-]+/g, "-").slice(-120);
       storagePath = `${user.id}/${crypto.randomUUID()}-${cleanName}`;
       const mimeType = storageAudioMimeType(selectedFile);
@@ -712,10 +786,10 @@ export default function SoundFurnacePage() {
       };
       const { data: saved, error: insertError } = await supabase.from("star_music_files").insert({
         user_id: user.id,
-        title: selectedFile.name.replace(/\.[^.]+$/, ""),
+        title: trackTitle.trim(),
         original_filename: selectedFile.name,
         storage_path: storagePath,
-        artwork_url: null,
+        artwork_url: artworkUrl,
         mime_type: mimeType,
         size_bytes: selectedFile.size,
         sha256: hash,
@@ -734,6 +808,7 @@ export default function SoundFurnacePage() {
         verification_status: analysis.status,
         verification_notes: analysis.notes,
         analysis: {
+          mastering_report: masteringReport,
           engine: "crucible-file-dna-browser-v2",
           sha256: hash,
           analyzed_at: new Date().toISOString(),
@@ -760,6 +835,7 @@ export default function SoundFurnacePage() {
         throw insertError ?? new Error("The chosen file could not be saved.");
       }
 
+      persisted = true;
       setSavedStar({
         id: String(saved.id),
         grade: String(saved.grade ?? analysis.grade),
@@ -773,32 +849,37 @@ export default function SoundFurnacePage() {
           ? `CrucibleStar verified the ${chosenVersion} version. Grade ${saved.grade ?? analysis.grade} · ${saved.analysis_score ?? analysis.score}/100.`
           : `The ${chosenVersion} version is saved privately. CrucibleStar marked it ${saved.verification_status} for review.`,
       );
+      if (saveIntent === "publish") {
+        if (saved.verification_status === "verified") await publishSavedVersion(String(saved.id));
+        else setError("Saved privately. This version needs improvement before it can be published. Open its Star report or return to editing.");
+      } else router.push("/local-library");
     } catch (caught) {
-      if (storagePath) await supabase.storage.from("star-music").remove([storagePath]);
+      if (!persisted && storagePath) await supabase.storage.from("star-music").remove([storagePath]);
+      if (!persisted && artworkPath) await supabase.storage.from("track-artwork").remove([artworkPath]);
       setError(caught instanceof Error ? caught.message : "The selected version could not be saved.");
-      setCompletionStage("choose");
-      setStatus("Your original and forged audio are still safe. Choose a version and try again.");
+      setCompletionStage(persisted ? "actions" : "details");
+      setStatus("Your audio is safe. Review the details and try again.");
     } finally {
       savingVersionRef.current = false;
     }
   }
 
-  async function publishSavedVersion() {
-    if (!savedStar || savedStar.verificationStatus !== "verified") return;
+  async function publishSavedVersion(trackId = savedStar?.id) {
+    if (!trackId || publishing) return;
     setPublishing(true);
     setError("");
     try {
-      const response = await fetch("/api/marketplace/publish", {
+      const response = await fetch("/api/tracks/publish", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ starFileId: savedStar.id, previewPath: null }),
+        body: JSON.stringify({ starFileId: trackId, previewPath: null }),
       });
       const payload = await response.json().catch(() => ({})) as { error?: string };
       if (!response.ok) throw new Error(payload.error || "Publishing failed.");
-      setStatus("Published successfully. Your private master remains saved in My Tracks.");
-      setCompletionOpen(false);
+      setStatus("Published to the public Moments wall for listening. Your master is saved in My Tracks.");
+      router.push("/local-library");
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Publishing failed.");
+      setError(`Your track is saved privately. ${caught instanceof Error ? caught.message : "Publishing failed."} Retry publishing below.`);
     } finally {
       setPublishing(false);
     }
@@ -918,7 +999,7 @@ export default function SoundFurnacePage() {
           </Link>
           <div className="text-right">
             <p className="text-xs font-black uppercase tracking-[0.2em] text-orange-300">Sound Furnace</p>
-            <p className="text-[10px] text-white/35">Browser-local quick remaster</p>
+            <p className="text-[10px] text-white/35">Mastering · CrucibleStar analysis</p>
           </div>
         </div>
       </header>
@@ -927,10 +1008,10 @@ export default function SoundFurnacePage() {
         <div className="grid gap-8 lg:grid-cols-[.86fr_1.14fr]">
           <div>
             <div className="inline-flex items-center gap-2 rounded-full border border-orange-400/25 bg-orange-500/10 px-4 py-2 text-[10px] font-black uppercase tracking-[0.18em] text-orange-200">
-              <LockKeyhole size={13} /> Your track stays on this device
+              <LockKeyhole size={13} /> Master first · Compare · Save
             </div>
-            <h1 className="mt-5 text-4xl font-black tracking-[-0.045em] sm:text-6xl">Hear what “remastered” should mean.</h1>
-            <p className="mt-5 max-w-xl leading-7 text-white/55">Analyze the mix, forge a balanced 24-bit WAV, compare the original and result, then download the file. No silent upload and no replacement of your original.</p>
+            <h1 className="mt-5 text-4xl font-black tracking-[-0.045em] sm:text-6xl">Upload your track to the Furnace.</h1>
+            <p className="mt-5 max-w-xl leading-7 text-white/55">Master your music, hear the difference and compare the waves. Choose your version, add a picture and title, then save privately or publish to the wall. CrucibleStar grades the exact audio you save.</p>
 
             <div className="mt-7 rounded-2xl border border-white/8 bg-white/[0.025] p-5">
               <p className="text-sm font-bold">What the Quick Forge does</p>
@@ -1085,9 +1166,16 @@ export default function SoundFurnacePage() {
         )}
       </section>
 
+      {masteringReport ? <div className="mx-auto max-w-6xl px-5 pb-8">
+        <MasteringComparisonReport report={masteringReport} />
+        <p className="mt-4 text-sm text-white/70" role="status">{reportEmailStatus}</p>
+        {!reportEmailStatus.startsWith("Email accepted") ? <button type="button" disabled={reportEmailBusy} onClick={() => void emailMasteringReport(masteringReport)} className="mt-3 rounded-xl border border-white/20 px-4 py-3 text-sm disabled:opacity-40">{reportEmailBusy ? "Sending reports…" : "Retry report email"}</button> : null}
+      </div> : reportEmailStatus ? <p role="status" className="mx-auto max-w-6xl px-5 py-4 text-sm text-amber-200">{reportEmailStatus}</p> : null}
+
       {completionOpen && result ? (
         <div className="fixed inset-0 z-[70] grid place-items-center overflow-y-auto bg-black/80 p-4 backdrop-blur-md" role="dialog" aria-modal="true" aria-labelledby="forge-complete-title">
           <div className="w-full max-w-xl rounded-[28px] border border-orange-300/25 bg-[#100c09] p-5 shadow-[0_30px_100px_rgba(0,0,0,.75)] sm:p-7">
+            {error ? <p role="alert" className="mb-4 rounded-xl border border-red-300/30 bg-red-500/10 p-3 text-sm text-red-100">{error}</p> : null}
             <div className="flex items-start gap-3">
               <div className="grid size-11 shrink-0 place-items-center rounded-2xl bg-orange-500 text-black"><CheckCircle2 size={23} /></div>
               <div>
@@ -1110,9 +1198,25 @@ export default function SoundFurnacePage() {
                   </button>
                 </div>
                 <p className="mt-4 text-sm text-orange-100" aria-live="polite">{pendingVersion ? `Selected: ${pendingVersion === "forged" ? "forged 24-bit master" : "unchanged original"}` : "Select a version above. Nothing is saved until you confirm."}</p>
-                <button type="button" disabled={!pendingVersion || auditionedMasterUrl !== result.url} onClick={() => { if (pendingVersion) void keepVersion(pendingVersion); }} className="mt-3 w-full rounded-xl bg-sky-300 px-4 py-3 text-sm font-black text-sky-950 disabled:opacity-35">Confirm version · Save and check with Star</button>
+                <div className="mt-3 grid grid-cols-2 gap-3">
+                  <button type="button" disabled={!pendingVersion} onClick={() => editBeforeSave("private")} className="rounded-xl bg-sky-300 px-4 py-3 text-sm font-black text-sky-950 disabled:opacity-35">Save to library</button>
+                  <button type="button" disabled={!pendingVersion} onClick={() => editBeforeSave("publish")} className="rounded-xl bg-emerald-400 px-4 py-3 text-sm font-black text-black disabled:opacity-35">Publish to wall</button>
+                </div>
                 <button type="button" onClick={() => setCompletionOpen(false)} className="mt-4 w-full rounded-xl px-4 py-2 text-xs font-bold text-white/40">Keep comparing before I decide</button>
               </>
+            ) : null}
+
+            {completionStage === "details" ? (
+              <form className="mt-5 space-y-4" onSubmit={(event) => { event.preventDefault(); if (pendingVersion) void keepVersion(pendingVersion); }}>
+                <h3 className="text-lg font-black">Add the finishing touches</h3>
+                <p className="text-sm text-white/60">{saveIntent === "publish" ? "Confirm to save in your private library and publish this version to the wall after Star verification." : "Confirm to save this version in your private library."}</p>
+                <label className="block text-sm font-bold">Track title<input required maxLength={160} value={trackTitle} onChange={(event) => setTrackTitle(event.target.value)} className="mt-2 w-full rounded-xl border border-white/20 bg-black/30 p-3" /></label>
+                <label className="block text-sm font-bold">Track picture (optional)<input type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => choosePicture(event.target.files?.[0] ?? null)} className="mt-2 block w-full text-sm" /></label>
+                {picturePreview ? <div role="img" aria-label="Track picture preview" className="mx-auto size-36 rounded-xl bg-cover bg-center" style={{ backgroundImage: `url(${picturePreview})` }} /> : null}
+                <p className="text-sm text-white/50">JPG, PNG or WebP, up to 10 MB. Distribution will be available in My Tracks after saving.</p>
+                <button type="submit" disabled={!trackTitle.trim()} className="w-full rounded-xl bg-orange-400 p-3 text-sm font-black text-black disabled:opacity-35">{saveIntent === "publish" ? "Confirm save and publish" : "Confirm save to library"}</button>
+                <button type="button" onClick={() => setCompletionStage("choose")} className="w-full p-2 text-sm text-white/60">Back to version choice</button>
+              </form>
             ) : null}
 
             {completionStage === "saving" ? (
@@ -1135,8 +1239,8 @@ export default function SoundFurnacePage() {
                 <div className="mt-3 grid grid-cols-2 gap-3">
                   <button type="button" onClick={openSavedEngineerMode} className="flex items-center justify-center gap-2 rounded-xl bg-violet-300 px-3 py-3 text-xs font-black text-violet-950"><Hammer size={15} />Engineer Mode</button>
                   <button type="button" disabled={publishing || savedStar.verificationStatus !== "verified"} onClick={() => void publishSavedVersion()} className="flex items-center justify-center gap-2 rounded-xl bg-emerald-400 px-3 py-3 text-xs font-black text-black disabled:opacity-35"><Send size={15} />{publishing ? "Publishing…" : "Publish"}</button>
-                  <a href={`/tracks/${savedStar.id}?tab=distribution`} className="flex items-center justify-center gap-2 rounded-xl bg-[#ff2d19] px-3 py-3 text-xs font-black text-white"><Globe2 size={15} />Distribution</a>
-                  <a href="/local-library" className="flex items-center justify-center gap-2 rounded-xl border border-white/12 bg-white/[0.04] px-3 py-3 text-xs font-black text-white"><LibraryBig size={15} />Save / My Tracks</a>
+                  <a href={`/star/analyzer?track=${savedStar.id}`} className="rounded-xl border border-white/20 px-3 py-3 text-center text-sm font-bold">View Star report</a>
+                  <a href="/local-library" className="flex items-center justify-center gap-2 rounded-xl border border-white/12 bg-white/[0.04] px-3 py-3 text-xs font-black text-white"><LibraryBig size={15} />My Tracks</a>
                 </div>
                 {savedStar.verificationStatus !== "verified" ? <p className="mt-3 text-xs leading-5 text-amber-100/65">Publishing stays locked until this version passes CrucibleStar. You can save it or improve it in Engineer Mode now.</p> : null}
               </>

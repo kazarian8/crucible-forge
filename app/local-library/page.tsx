@@ -90,7 +90,7 @@ export default function LocalLibraryPage() {
     setPublishingId(item.id);
     setMessage("Publishing from your private library…");
     try {
-      const response = await fetch("/api/marketplace/publish", {
+      const response = await fetch("/api/tracks/publish", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ starFileId: item.id, previewPath: null }),
@@ -98,7 +98,7 @@ export default function LocalLibraryPage() {
       const result = await response.json() as { error?: string };
       if (!response.ok) throw new Error(result.error || "Publish failed.");
       setItems((current) => current.map((file) => file.id === item.id ? { ...file, publish_status: "published" } : file));
-      setMessage(`“${item.title}” is published. Your private copy is still saved here.`);
+      setMessage(`“${item.title}” is published to the public Moments wall for listening. Your private copy is still saved here.`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Publish failed.");
     } finally {
