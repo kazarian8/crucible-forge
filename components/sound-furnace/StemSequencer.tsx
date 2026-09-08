@@ -1608,17 +1608,17 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
         setStatus(`Opening stem ${index + 1} of ${candidates.length}: ${file.name}…`);
         const bytes = await file.arrayBuffer();
         const buffer = await context.decodeAudioData(bytes.slice(0));
-        const audible = detectAudibleRange(buffer);
+        // Keep imported stems on the same timeline origin, including leading silence.
         const addition: StemTrack = {
           id: crypto.randomUUID(),
           name: file.name,
           buffer,
-          startSeconds: audible.start,
-          originalStartSeconds: audible.start,
-          trimStartSeconds: audible.start,
-          trimEndSeconds: audible.end,
-          fadeInSeconds: Math.min(0.02, (audible.end - audible.start) / 2),
-          fadeOutSeconds: Math.min(0.04, (audible.end - audible.start) / 2),
+          startSeconds: 0,
+          originalStartSeconds: 0,
+          trimStartSeconds: 0,
+          trimEndSeconds: buffer.duration,
+          fadeInSeconds: Math.min(0.02, buffer.duration / 2),
+          fadeOutSeconds: Math.min(0.04, buffer.duration / 2),
           gainDb: 0,
           pan: 0,
           muted: false,
@@ -1645,7 +1645,7 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
       setCadenceProfiles({});
       setCadenceSuggestions({});
       setStatus(
-        `Loaded ${additions.length} stem${additions.length === 1 ? "" : "s"}. Dead space was clipped with a safe 25 ms edge and every original timestamp was preserved.`,
+        `Loaded ${additions.length} stem${additions.length === 1 ? "" : "s"}. All tracks start at 0:00 with their full audio and original timing preserved.`,
       );
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "The stems could not be decoded.");
