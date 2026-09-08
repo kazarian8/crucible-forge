@@ -135,14 +135,15 @@ export default function ForgeWaveLabPage() {
   const pixelsPerSecond = 36 * zoom;
   const timelineWidth = Math.max(780, duration * pixelsPerSecond + 80);
   const selectedTrack = tracks.find((track) => track.id === selectedTrackId) ?? tracks[0] ?? null;
-  const canUndo = historyVersion >= 0 && undoRef.current.length > 0;
-  const canRedo = historyVersion >= 0 && redoRef.current.length > 0;
+  const canUndo = undoDepth > 0;
+  const canRedo = redoDepth > 0;
 
   function recordHistory() {
     undoRef.current.push(tracksRef.current.map((track) => ({ ...track })));
     if (undoRef.current.length > 60) undoRef.current.shift();
     redoRef.current = [];
-    setHistoryVersion((value) => value + 1);
+    setUndoDepth(undoRef.current.length);
+    setRedoDepth(0);
   }
 
   function replaceTrack(id: string, patch: Partial<StemTrack>, addHistory = true) {
@@ -160,7 +161,8 @@ export default function ForgeWaveLabPage() {
     if (!previous) return;
     redoRef.current.push(tracksRef.current.map((track) => ({ ...track })));
     setTracks(previous);
-    setHistoryVersion((value) => value + 1);
+    setUndoDepth(undoRef.current.length);
+    setRedoDepth(redoRef.current.length);
     setStatus("Undid the last waveform edit.");
   }
 
@@ -169,7 +171,8 @@ export default function ForgeWaveLabPage() {
     if (!next) return;
     undoRef.current.push(tracksRef.current.map((track) => ({ ...track })));
     setTracks(next);
-    setHistoryVersion((value) => value + 1);
+    setUndoDepth(undoRef.current.length);
+    setRedoDepth(redoRef.current.length);
     setStatus("Redid the waveform edit.");
   }
 
