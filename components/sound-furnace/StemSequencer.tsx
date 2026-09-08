@@ -684,7 +684,7 @@ function StemWaveform({ track }: { track: StemTrack }) {
     const fadeInX = trimStartX + (track.fadeInSeconds / keptDuration) * activeWidth;
     const fadeOutX = trimEndX - (track.fadeOutSeconds / keptDuration) * activeWidth;
     const points = Math.max(240, Math.floor(width));
-    const block = Math.max(1, Math.floor(track.buffer.length / points));
+    const silenceThreshold = dbToGain(SILENCE_THRESHOLD_DB);
 
     context.fillStyle = "#080706";
     context.fillRect(0, 0, width, height);
@@ -704,8 +704,8 @@ function StemWaveform({ track }: { track: StemTrack }) {
 
     for (let point = 0; point < points; point += 1) {
       let peak = 0;
-      const start = point * block;
-      const end = Math.min(track.buffer.length, start + block);
+      const start = Math.floor(point * track.buffer.length / points);
+      const end = Math.floor((point + 1) * track.buffer.length / points);
       for (let channel = 0; channel < track.buffer.numberOfChannels; channel += 1) {
         const data = track.buffer.getChannelData(channel);
         for (let sample = start; sample < end; sample += 1) {
@@ -715,7 +715,12 @@ function StemWaveform({ track }: { track: StemTrack }) {
       const x = (point / points) * width;
       const bar = Math.max(1, peak * (height - 12));
       const inside = x >= trimStartX && x <= trimEndX;
-      context.fillStyle = inside ? "rgba(251,146,60,.88)" : "rgba(248,113,113,.28)";
+      const silent = peak <= silenceThreshold;
+      if (silent) {
+        context.fillStyle = "#202020";
+        context.fillRect(x, 0, Math.max(1, width / points), height);
+      }
+      context.fillStyle = silent ? "#777777" : inside ? "rgba(251,146,60,.88)" : "rgba(248,113,113,.28)";
       context.fillRect(x, (height - bar) / 2, Math.max(1, width / points), bar);
     }
 
@@ -756,9 +761,9 @@ function StemWaveform({ track }: { track: StemTrack }) {
         aria-label={`${track.name} waveform showing silence cuts and edge fades`}
       />
       <div className="mt-1 flex flex-wrap justify-between gap-2 text-[9px] font-bold uppercase tracking-wider">
-        <span className="text-red-300/55">Dim = removed dead space</span>
+        <span className="text-red-300/55">Gray = silence · Dim = trimmed</span>
         <span className="text-amber-200/60">Gold = edge fades</span>
-        <span className="text-orange-200/60">Orange = kept audio</span>
+        <span className="text-orange-200/60">Orange = audible audio</span>
       </div>
     </div>
   );
@@ -792,7 +797,7 @@ function TimelineWaveform({
       Math.ceil(track.trimEndSeconds * track.buffer.sampleRate),
     );
     const points = Math.max(160, Math.floor(width));
-    const block = Math.max(1, Math.floor((endFrame - startFrame) / points));
+    const silenceThreshold = dbToGain(SILENCE_THRESHOLD_DB);
 
     context.fillStyle = "#09131f";
     context.fillRect(0, 0, width, height);
@@ -804,8 +809,8 @@ function TimelineWaveform({
 
     for (let point = 0; point < points; point += 1) {
       let peak = 0;
-      const start = startFrame + point * block;
-      const end = Math.min(endFrame, start + block);
+      const start = startFrame + Math.floor(point * (endFrame - startFrame) / points);
+      const end = startFrame + Math.floor((point + 1) * (endFrame - startFrame) / points);
       for (let channel = 0; channel < track.buffer.numberOfChannels; channel += 1) {
         const data = track.buffer.getChannelData(channel);
         for (let sample = start; sample < end; sample += 1) {
@@ -814,7 +819,12 @@ function TimelineWaveform({
       }
       const x = (point / points) * width;
       const bar = Math.max(1, peak * (height - 10));
-      context.fillStyle = waveColor;
+      const silent = peak <= silenceThreshold;
+      if (silent) {
+        context.fillStyle = "#202020";
+        context.fillRect(x, 0, Math.max(1, width / points), height);
+      }
+      context.fillStyle = silent ? "#777777" : waveColor;
       context.fillRect(x, (height - bar) / 2, Math.max(1, width / points), bar);
     }
 
