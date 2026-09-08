@@ -37,6 +37,8 @@ import {
 } from "lucide-react";
 import { createClient } from "../../lib/supabase/client";
 
+import StarDnaAnalyzer from "../star/StarDnaAnalyzer";
+
 const MAX_TRACKS = 16;
 const MAX_FILE_BYTES = 250 * 1024 * 1024;
 const SILENCE_THRESHOLD_DB = -52;
@@ -792,7 +794,7 @@ function TimelineWaveform({
     const points = Math.max(160, Math.floor(width));
     const block = Math.max(1, Math.floor((endFrame - startFrame) / points));
 
-    context.fillStyle = "#27272a";
+    context.fillStyle = "#09131f";
     context.fillRect(0, 0, width, height);
     context.strokeStyle = "rgba(255,255,255,.12)";
     context.beginPath();
@@ -870,6 +872,7 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
   const [cadenceSuggestions, setCadenceSuggestions] = useState<Record<string, CadenceSuggestion>>({});
   const [error, setError] = useState("");
   const [status, setStatus] = useState("Add stems to build a clean master-ready mix.");
+  const [dnaSelection, setDnaSelection] = useState({ trackId: "", time: 0 });
   const [selectedTrackId, setSelectedTrackId] = useState("");
   const [playheadSeconds, setPlayheadSeconds] = useState(0);
   const [effectsTrackId, setEffectsTrackId] = useState("");
@@ -958,6 +961,7 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
   const duration = useMemo(() => projectDuration(tracks), [tracks]);
   const hasSolo = tracks.some((track) => track.solo);
   const selectedTrack = tracks.find((track) => track.id === selectedTrackId) ?? tracks[0] ?? null;
+  const dnaPosition = dnaSelection.trackId === selectedTrack?.id ? dnaSelection.time : 0;
   const selectedRecordTrack = selectedTrack && VOCAL_TRACK_PATTERN.test(selectedTrack.name) ? selectedTrack : null;
   const canStartRecording = Boolean(selectedRecordTrack) || tracks.length < MAX_TRACKS;
   const previewTrack = tracks.find((track) => track.id === previewSourceId) ?? null;
@@ -1996,7 +2000,7 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
   }
 
   return (
-    <section className="min-h-[calc(100vh-4.5rem)] overflow-hidden rounded-xl border border-white/10 bg-[#0b0b0b] pb-20 shadow-[0_24px_80px_rgba(0,0,0,.5)] md:pb-0">
+    <section className="min-h-[calc(100vh-4.5rem)] overflow-hidden rounded-xl border border-white/10 bg-[#070c14] pb-20 shadow-[0_24px_80px_rgba(0,0,0,.5)] md:pb-0">
       <audio
         ref={previewRef}
         onPlay={() => setPlaying(true)}
@@ -2020,7 +2024,7 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
         preload="metadata"
         className="hidden"
       />
-      <div className="flex flex-col justify-between gap-3 border-b border-white/10 bg-[#101010] p-3 xl:flex-row xl:items-center">
+      <div className="flex flex-col justify-between gap-3 border-b border-white/10 bg-[#0c1520] p-3 xl:flex-row xl:items-center">
         <div className="min-w-0">
           <p className="flex items-center gap-2 text-[9px] font-black uppercase tracking-[0.2em] text-orange-300/80">
             <Layers3 size={13} /> Live arrangement
@@ -2322,6 +2326,17 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
       ) : null}
 
       {!lyricsOpen && !projectSettingsOpen && !cadenceOpen ? <>
+      {selectedTrack ? <div className="space-y-3 p-3 sm:p-4">
+        <StarDnaAnalyzer key={selectedTrack.id} audio={selectedTrack.buffer} title={selectedTrack.name} mode="workstation" verified={false} trimRange={[selectedTrack.trimStartSeconds, selectedTrack.trimEndSeconds]} onInspect={(time) => setDnaSelection({ trackId: selectedTrack.id, time })} />
+        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-sky-300/20 bg-[#0a1420] p-3">
+          <span className="mr-2 font-mono text-sm text-sky-200">{formatTime(dnaPosition)}</span>
+          <button type="button" onClick={() => replaceTrack(selectedTrack.id, { trimStartSeconds: Math.min(dnaPosition, selectedTrack.trimEndSeconds) })} className="rounded-lg border border-orange-300/30 px-3 py-2 text-sm text-orange-200">Trim start here</button>
+          <button type="button" onClick={() => replaceTrack(selectedTrack.id, { trimEndSeconds: Math.max(dnaPosition, selectedTrack.trimStartSeconds) })} className="rounded-lg border border-orange-300/30 px-3 py-2 text-sm text-orange-200">Trim end here</button>
+          <button type="button" onClick={() => document.getElementById("track-dna-controls")?.scrollIntoView({ behavior: "smooth", block: "center" })} className="rounded-lg border border-violet-300/30 px-3 py-2 text-sm text-violet-200">Fade · Gain · Pan</button>
+          <button type="button" onClick={() => setEffectsTrackId(selectedTrack.id)} className="rounded-lg border border-cyan-300/30 px-3 py-2 text-sm text-cyan-200">Track effects</button>
+          <span className="text-xs text-slate-400">Source preserved · edits apply on playback / export</span>
+        </div>
+      </div> : null}
       {tracks.length === 0 ? (
         <div className="min-h-[calc(100vh-12rem)] bg-[#070707]">
           <div className="flex h-12 items-center gap-2 border-b border-white/10 bg-black/60 px-3">
@@ -2598,7 +2613,7 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
       ) : null}
 
       {selectedTrack ? (
-        <section className="mt-4 rounded-2xl border border-orange-300/15 bg-orange-500/[0.035] p-4">
+        <section id="track-dna-controls" className="mt-4 scroll-mt-24 rounded-2xl border border-orange-300/15 bg-orange-500/[0.035] p-4">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <p className="text-[9px] font-black uppercase tracking-[0.18em] text-orange-300/70">Selected track inspector</p>
