@@ -119,7 +119,8 @@ export default function ForgeWaveLabPage() {
   const [zoom, setZoom] = useState(1);
   const [status, setStatus] = useState("Upload stems to test the direct-edit waveform.");
   const [error, setError] = useState("");
-  const [undoDepth, setUndoDepth] = useState(0);\n  const [redoDepth, setRedoDepth] = useState(0);
+  const [undoDepth, setUndoDepth] = useState(0);
+  const [redoDepth, setRedoDepth] = useState(0);
 
   useEffect(() => {
     tracksRef.current = tracks;
