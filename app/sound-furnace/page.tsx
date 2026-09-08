@@ -319,6 +319,34 @@ function guidedSettings(prompt: string) {
   };
 }
 
+// Two dB of default output drive, with stereo-linked lookahead limiting.
+// This is a gain setting, not a measured integrated-LUFS target.
+function applyDefaultMasteringGain(buffer: AudioBuffer) {
+  const drive = Math.pow(10, 2 / 20);
+  // Leave extra headroom for reconstructed inter-sample peaks.
+  const ceiling = Math.pow(10, -1.5 / 20);
+  const channels = Array.from({ length: buffer.numberOfChannels }, (_, channel) => buffer.getChannelData(channel));
+  const requiredGain = new Float32Array(buffer.length);
+  const attackStep = 1 / Math.max(1, Math.round(buffer.sampleRate * 0.005));
+  const release = Math.exp(-1 / (buffer.sampleRate * 0.08));
+
+  for (let frame = 0; frame < buffer.length; frame += 1) {
+    let peak = 0;
+    for (const channel of channels) peak = Math.max(peak, Math.abs(channel[frame]) * drive);
+    requiredGain[frame] = peak > ceiling ? ceiling / peak : 1;
+  }
+  // Anticipate peaks without delaying or trimming the exported audio.
+  for (let frame = buffer.length - 2; frame >= 0; frame -= 1) {
+    requiredGain[frame] = Math.min(requiredGain[frame], requiredGain[frame + 1] + attackStep);
+  }
+  let gain = 1;
+  for (let frame = 0; frame < buffer.length; frame += 1) {
+    gain = Math.min(requiredGain[frame], 1 - (1 - gain) * release);
+    for (const channel of channels) channel[frame] *= drive * gain;
+  }
+  return buffer;
+}
+
 async function forgeBuffer(input: AudioBuffer, mode: ForgeMode, prompt: string) {
   const sourceStats = analyzeBuffer(input);
   const ceiling = Math.pow(10, -1 / 20);
@@ -353,7 +381,7 @@ async function forgeBuffer(input: AudioBuffer, mode: ForgeMode, prompt: string) 
         for (let index = 0; index < data.length; index += 1) data[index] *= scale;
       }
     }
-    return output;
+    return applyDefaultMasteringGain(output);
   }
 
   const settings = mode === "guided" ? guidedSettings(prompt) : guidedSettings("clear balanced release ready");
@@ -408,7 +436,7 @@ async function forgeBuffer(input: AudioBuffer, mode: ForgeMode, prompt: string) 
     }
   }
 
-  return rendered;
+  return applyDefaultMasteringGain(rendered);
 }
 
 function Waveform({ samples, color, label }: { samples: Float32Array; color: string; label: string }) {
