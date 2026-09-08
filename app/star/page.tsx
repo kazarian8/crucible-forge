@@ -8,6 +8,8 @@ import { analyzeAudioFile, createWatermarkedPreview, type FileDnaAnalysis } from
 import { playForgeConfirmation } from "../../lib/audio/forge-confirm";
 import { storageAudioMimeType } from "../../lib/audio/mime";
 
+import StarDnaAnalyzer from "../../components/star/StarDnaAnalyzer";
+
 type StarFile = {
   id: string;
   title: string;
@@ -493,21 +495,22 @@ export default function CrucibleStarPage() {
   }
 
   return (
-    <main className="min-h-screen bg-[#050403] pb-28 text-white">
-      <div className="mx-auto max-w-6xl px-4 py-7">
-        <header className="rounded-3xl border border-orange-300/15 bg-gradient-to-br from-[#17100a] to-[#080605] p-6">
+    <main className="min-h-screen bg-[#04070d] pb-28 text-white">
+      <div className="mx-auto max-w-[1600px] px-4 py-7">
+        <header className="rounded-3xl border border-orange-300/15 bg-gradient-to-br from-[#0b2030] via-[#090e18] to-[#171026] p-6">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-3">
             <div className="grid size-12 place-items-center rounded-2xl bg-orange-500 text-black"><Sparkles size={24} /></div>
-            <div><p className="text-[10px] font-black uppercase tracking-[.28em] text-orange-300">Crucible Star</p><h1 className="text-3xl font-black">Music Intake Lab</h1></div>
+            <div><p className="text-[10px] font-black uppercase tracking-[.28em] text-orange-300">Crucible Star</p><h1 className="text-3xl font-black">Audio DNA Lab</h1></div>
             </div>
             <div className="flex gap-2"><Link href="/workstation" className="rounded-xl border border-white/10 px-3 py-2 text-xs font-black">Workstation</Link><Link href="/sound-library" className="rounded-xl border border-white/10 px-3 py-2 text-xs font-black">Marketplace</Link></div>
           </div>
           <p className="mt-4 max-w-3xl text-sm leading-6 text-white/50">Analyze → verify → grade → upload. Masters stay private in the Star vault until you decide they are ready for the Crucible marketplace.</p>
         </header>
 
+        {audioFile ? <div className="mt-5"><StarDnaAnalyzer audio={audioFile} title={title || audioFile.name} verified={false} /></div> : <div className="mt-5 flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-sky-300/20 bg-[#081521] p-5"><div><h2 className="text-lg font-bold text-sky-100">Full Song DNA Wave</h2><p className="mt-1 text-sm text-slate-400">Load your audio to inspect its waveform, frequency energy, pan and stereo width.</p></div><Link href="/star/analyzer" className="rounded-xl border border-sky-300/30 bg-sky-400/10 px-4 py-3 text-sm font-bold text-sky-200">Open saved track DNA</Link></div>}
         <section className="mt-5 grid gap-5 lg:grid-cols-[1.1fr_.9fr]">
-          <form onSubmit={submit} className="rounded-3xl border border-white/10 bg-[#0d0a08] p-5">
+          <form onSubmit={submit} className="rounded-3xl border border-white/10 bg-[#0a111c] p-5">
             <h2 className="text-lg font-black">Load a music file</h2>
             <label className="mt-4 flex min-h-36 cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed border-orange-300/25 bg-black/20 p-5 text-center">
               <Upload className="mb-2 text-orange-300" />
@@ -578,13 +581,13 @@ export default function CrucibleStarPage() {
             {lastUploaded ? <div className="mt-4 rounded-2xl border border-emerald-300/15 bg-emerald-400/[0.04] p-4"><p className="text-[10px] font-black uppercase tracking-[.2em] text-emerald-200">Choose what happens next</p><h3 className="mt-1 font-black">{lastUploaded.title}</h3><p className="mt-1 text-xs text-white/45">It is private unless you explicitly publish it.</p><div className="mt-3 flex flex-wrap gap-2"><Link href="/local-library" className="inline-flex items-center gap-2 rounded-xl bg-emerald-300 px-3 py-2 text-xs font-black text-black"><LibraryBig size={14} />Keep in Private Library</Link>{lastUploaded.publish_status === "published" ? <Link href="/sound-library" className="inline-flex items-center gap-2 rounded-xl border border-orange-300/20 px-3 py-2 text-xs font-black text-orange-200"><CheckCircle2 size={14} />View published file</Link> : <button type="button" disabled={publishingId === lastUploaded.id} onClick={() => void publish(lastUploaded)} className="inline-flex items-center gap-2 rounded-xl border border-orange-300/20 px-3 py-2 text-xs font-black text-orange-200"><Send size={14} />{publishingId === lastUploaded.id ? "Publishing…" : "Publish to Marketplace"}</button>}<button type="button" onClick={uploadNew} className="inline-flex items-center gap-2 rounded-xl border border-white/10 px-3 py-2 text-xs font-black"><Upload size={14} />Upload New</button></div></div> : null}
           </form>
 
-          <div className="rounded-3xl border border-white/10 bg-[#0d0a08] p-5">
+          <div className="rounded-3xl border border-white/10 bg-[#0a111c] p-5">
             <h2 className="flex items-center gap-2 text-lg font-black"><Gauge size={19} />Latest grade</h2>
             {lastAnalysis ? <div className="mt-4"><div className="flex items-end gap-3"><span className="text-7xl font-black text-orange-300">{lastAnalysis.grade}</span><span className="pb-2 text-xl font-black text-white/60">{lastAnalysis.score}/100</span></div><div className="mt-3 flex flex-wrap gap-2">{lastAnalysis.contentTags.map((tag) => <span key={tag} className="rounded-full border border-orange-300/20 bg-orange-500/10 px-2.5 py-1 text-[10px] font-black uppercase text-orange-200">{tag}</span>)}</div><div className="mt-4 grid grid-cols-2 gap-2 text-xs"><Metric label="Detected type" value={`${lastAnalysis.contentType} · ${lastAnalysis.contentConfidence}%`} /><Metric label="Suggested category" value={lastAnalysis.suggestedCategory} /><Metric label="Estimated tempo" value={lastAnalysis.estimatedBpm ? `${lastAnalysis.estimatedBpm} BPM · ${lastAnalysis.bpmConfidence}%` : "No confident tempo"} /><Metric label="Estimated key" value={lastAnalysis.estimatedKey ? `${lastAnalysis.estimatedKey} · ${lastAnalysis.keyConfidence}%` : "No confident key"} /><Metric label="Peak" value={`${lastAnalysis.peakDb.toFixed(1)} dBFS`} /><Metric label="RMS" value={`${lastAnalysis.rmsDb.toFixed(1)} dBFS`} /><Metric label="Sample rate" value={`${lastAnalysis.sampleRate} Hz`} /><Metric label="Channels" value={String(lastAnalysis.channels)} /><Metric label="Duration" value={`${lastAnalysis.duration.toFixed(2)} sec`} /><Metric label="Silence" value={`${lastAnalysis.silencePercent.toFixed(1)}%`} /></div><div className="mt-4 space-y-2">{lastAnalysis.notes.map((note) => <p key={note} className="flex gap-2 text-xs leading-5 text-white/50"><CheckCircle2 size={14} className="mt-0.5 shrink-0 text-orange-300" />{note}</p>)}</div></div> : <div className="mt-8 text-center text-sm text-white/30"><Music2 className="mx-auto mb-3" />File DNA will identify the likely content, type, tempo, and key after you upload.</div>}
           </div>
         </section>
 
-        <section id="private-library" className="mt-5 rounded-3xl border border-white/10 bg-[#0d0a08] p-5">
+        <section id="private-library" className="mt-5 rounded-3xl border border-white/10 bg-[#0a111c] p-5">
           <div className="flex flex-wrap items-center justify-between gap-3"><div><p className="text-[10px] font-black uppercase tracking-[.22em] text-orange-300">Working view</p><h2 className="mt-1 text-xl font-black">Last three uploads</h2><p className="mt-1 text-xs text-white/40">Recent files stay private unless you choose Publish.</p></div><Link href="/local-library" className="rounded-xl border border-emerald-300/20 px-3 py-2 text-xs font-black text-emerald-200">Open full Private Library</Link></div>
           <div className="mt-4 space-y-3">
             {files.map((item) => (
