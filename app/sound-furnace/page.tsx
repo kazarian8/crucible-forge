@@ -503,6 +503,9 @@ export default function SoundFurnacePage() {
   const [separatingStems, setSeparatingStems] = useState(false);
   const [stemElapsed, setStemElapsed] = useState(0);
   const [stemEstimate, setStemEstimate] = useState(120);
+  const [auditionedMasterUrl, setAuditionedMasterUrl] = useState("");
+  const [pendingVersion, setPendingVersion] = useState<"original" | "forged" | null>(null);
+  const savingVersionRef = useRef(false);
   const [completionOpen, setCompletionOpen] = useState(false);
   const [completionStage, setCompletionStage] = useState<"choose" | "saving" | "actions">("choose");
   const [savedStar, setSavedStar] = useState<SavedStarResult | null>(null);
@@ -510,8 +513,12 @@ export default function SoundFurnacePage() {
 
   useEffect(() => () => {
     if (sourceUrl) URL.revokeObjectURL(sourceUrl);
-    if (result?.url) URL.revokeObjectURL(result.url);
-  }, [result, sourceUrl]);
+  }, [sourceUrl]);
+
+  useEffect(() => {
+    const url = result?.url;
+    return () => { if (url) URL.revokeObjectURL(url); };
+  }, [result?.url]);
 
   useEffect(() => {
     if (!separatingStems) return;
@@ -621,6 +628,12 @@ export default function SoundFurnacePage() {
       return;
     }
     setMode(requestedMode);
+    setCompletionOpen(false);
+    setPendingVersion(null);
+    setAuditionedMasterUrl("");
+    sourceAudioRef.current?.pause();
+    resultAudioRef.current?.pause();
+    setPlaying(null);
     setBusy(true);
     setError("");
     setStatus(requestedMode === "auto"
@@ -642,8 +655,9 @@ export default function SoundFurnacePage() {
       playForgeFinish();
       setCompletionStage("choose");
       setSavedStar(null);
-      setCompletionOpen(true);
-      setStatus("Forge complete. Compare both versions, then choose which file to keep.");
+      setCompletionOpen(false);
+      setStatus("Forge complete. Listen to your finished master and compare it with the original before choosing a version.");
+      window.setTimeout(() => document.getElementById("forge-ab-comparison")?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
     } catch {
       setError("The forge could not finish this track in your browser. Try closing other tabs or using a smaller file.");
       setStatus("Forge stopped safely. Your original file was not changed.");
@@ -653,7 +667,11 @@ export default function SoundFurnacePage() {
   }
 
   async function keepVersion(chosenVersion: "original" | "forged") {
-    if (!file || !result) return;
+    if (!file || !result || busy || savingVersionRef.current || completionStage !== "choose" || auditionedMasterUrl !== result.url || pendingVersion !== chosenVersion) return;
+    savingVersionRef.current = true;
+    sourceAudioRef.current?.pause();
+    resultAudioRef.current?.pause();
+    setPlaying(null);
     setCompletionStage("saving");
     setError("");
     setStatus("Saving your choice and checking the exact file with CrucibleStar…");
@@ -760,6 +778,8 @@ export default function SoundFurnacePage() {
       setError(caught instanceof Error ? caught.message : "The selected version could not be saved.");
       setCompletionStage("choose");
       setStatus("Your original and forged audio are still safe. Choose a version and try again.");
+    } finally {
+      savingVersionRef.current = false;
     }
   }
 
@@ -1023,9 +1043,9 @@ export default function SoundFurnacePage() {
         </section>
 
         {sourceSamples && (
-          <section className="mt-10 rounded-[28px] border border-white/10 bg-white/[0.025] p-5 sm:p-7">
+          <section id="forge-ab-comparison" className="mt-10 scroll-mt-24 rounded-[28px] border border-white/10 bg-white/[0.025] p-5 sm:p-7">
             <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
-              <div><p className="text-xs font-black uppercase tracking-[0.2em] text-orange-300">A/B comparison</p><h2 className="mt-2 text-2xl font-black">Original directly above the forge</h2></div>
+              <div><p className="text-xs font-black uppercase tracking-[0.2em] text-orange-300">A/B comparison</p><h2 className="mt-2 text-2xl font-black">Listen before you decide</h2></div>
               <div className="flex items-center gap-2 text-xs text-white/40"><AudioWaveform size={16} /> Only one player can run at a time</div>
             </div>
 
@@ -1041,7 +1061,7 @@ export default function SoundFurnacePage() {
               {result ? (
                 <div className="rounded-2xl border border-orange-400/25 bg-orange-500/[0.045] p-4">
                   <Waveform samples={result.samples} color="rgba(251,146,60,.82)" label="Crucible forge" />
-                  <audio ref={resultAudioRef} src={result.url} onEnded={() => setPlaying(null)} preload="auto" playsInline />
+                  <audio ref={resultAudioRef} src={result.url} onPlaying={() => setAuditionedMasterUrl(result.url)} onEnded={() => setPlaying(null)} preload="auto" playsInline />
                   <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                     <button type="button" onClick={() => togglePlayback("result")} className="flex items-center justify-center gap-2 rounded-lg border border-orange-300/20 px-4 py-2 text-xs font-bold text-orange-100">
                       {playing === "result" ? <Square size={13} fill="currentColor" /> : <Play size={13} fill="currentColor" />} {playing === "result" ? "Stop forge" : "Play forge"}
@@ -1056,6 +1076,10 @@ export default function SoundFurnacePage() {
               )}
             </div>
 
+            {result ? <div className="mt-5 rounded-2xl border border-sky-300/20 bg-sky-400/5 p-4">
+              <p className="text-sm text-sky-100">{auditionedMasterUrl === result.url ? "Take your time comparing. Continue when you are ready to choose." : "Play the finished master first, then choose the version you want to keep."}</p>
+              <button type="button" disabled={busy || auditionedMasterUrl !== result.url} onClick={() => { sourceAudioRef.current?.pause(); resultAudioRef.current?.pause(); setPlaying(null); setCompletionOpen(true); }} className="mt-3 rounded-xl bg-orange-400 px-5 py-3 text-sm font-black text-black disabled:opacity-40">{savedStar ? "View saved version and next steps" : "Ready to choose my version"}</button>
+            </div> : null}
             {result && <div className="mt-5 flex items-start gap-3 rounded-xl border border-emerald-400/20 bg-emerald-400/[0.06] p-4 text-sm text-emerald-100/75"><CheckCircle2 className="mt-0.5 shrink-0" size={18} /><p>Forge completed locally. The original file remains untouched; the download is a new 24-bit WAV.</p></div>}
           </section>
         )}
@@ -1076,15 +1100,17 @@ export default function SoundFurnacePage() {
               <>
                 <p className="mt-4 text-sm leading-6 text-white/55">Choose which exact audio file becomes your saved track. CrucibleStar will grade that version and attach any badge to it. Your original is never deleted.</p>
                 <div className="mt-5 grid gap-3 sm:grid-cols-2">
-                  <button type="button" onClick={() => void keepVersion("forged")} className="rounded-2xl bg-gradient-to-r from-orange-500 to-amber-300 p-4 text-left text-black">
+                  <button type="button" aria-pressed={pendingVersion === "forged"} onClick={() => setPendingVersion("forged")} className="rounded-2xl bg-gradient-to-r from-orange-500 to-amber-300 p-4 text-left text-black">
                     <span className="block text-sm font-black">Use forged version</span>
                     <span className="mt-1 block text-xs font-bold text-black/60">Make the new 24-bit master the saved version</span>
                   </button>
-                  <button type="button" onClick={() => void keepVersion("original")} className="rounded-2xl border border-white/12 bg-white/[0.04] p-4 text-left text-white">
+                  <button type="button" aria-pressed={pendingVersion === "original"} onClick={() => setPendingVersion("original")} className="rounded-2xl border border-white/12 bg-white/[0.04] p-4 text-left text-white">
                     <span className="block text-sm font-black">Keep original</span>
                     <span className="mt-1 block text-xs text-white/45">Save and grade the unchanged source file</span>
                   </button>
                 </div>
+                <p className="mt-4 text-sm text-orange-100" aria-live="polite">{pendingVersion ? `Selected: ${pendingVersion === "forged" ? "forged 24-bit master" : "unchanged original"}` : "Select a version above. Nothing is saved until you confirm."}</p>
+                <button type="button" disabled={!pendingVersion || auditionedMasterUrl !== result.url} onClick={() => { if (pendingVersion) void keepVersion(pendingVersion); }} className="mt-3 w-full rounded-xl bg-sky-300 px-4 py-3 text-sm font-black text-sky-950 disabled:opacity-35">Confirm version · Save and check with Star</button>
                 <button type="button" onClick={() => setCompletionOpen(false)} className="mt-4 w-full rounded-xl px-4 py-2 text-xs font-bold text-white/40">Keep comparing before I decide</button>
               </>
             ) : null}
@@ -1104,6 +1130,7 @@ export default function SoundFurnacePage() {
                   </div>
                   <p className="mt-2 text-xs text-white/45">{savedStar.chosenVersion === "forged" ? "Forged 24-bit master" : "Original audio"} is now the saved version.</p>
                 </div>
+                <button type="button" onClick={() => setCompletionOpen(false)} className="mt-4 w-full rounded-xl border border-white/20 px-4 py-3 text-sm font-bold">Back to listening</button>
                 <p className="mt-5 text-xs font-black uppercase tracking-[.18em] text-white/35">What do you want to do next?</p>
                 <div className="mt-3 grid grid-cols-2 gap-3">
                   <button type="button" onClick={openSavedEngineerMode} className="flex items-center justify-center gap-2 rounded-xl bg-violet-300 px-3 py-3 text-xs font-black text-violet-950"><Hammer size={15} />Engineer Mode</button>
