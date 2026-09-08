@@ -3,6 +3,9 @@
 import StemSequencer from "../../components/sound-furnace/StemSequencer";
 import { CREDITS_UPDATED_EVENT } from "../../components/CreditBalance";
 import { CREDIT_PRICES } from "../../lib/credits/pricing";
+import { analyzeAudioFile } from "../../lib/audio/file-dna";
+import { storageAudioMimeType } from "../../lib/audio/mime";
+import { createClient } from "../../lib/supabase/client";
 import Link from "next/link";
 import {
   ChangeEvent,
@@ -20,12 +23,16 @@ import {
   Download,
   Flame,
   Gauge,
+  Globe2,
   Hammer,
+  LibraryBig,
   LoaderCircle,
   LockKeyhole,
   Play,
+  Send,
   Sparkles,
   Square,
+  Star,
   Upload,
 } from "lucide-react";
 
@@ -45,8 +52,17 @@ type AudioStats = {
 type ForgeResult = {
   url: string;
   name: string;
+  blob: Blob;
   stats: AudioStats;
   samples: Float32Array;
+};
+
+type SavedStarResult = {
+  id: string;
+  grade: string;
+  score: number;
+  verificationStatus: "pending" | "verified" | "warning" | "failed";
+  chosenVersion: "original" | "forged";
 };
 
 type ZipEntry = { name: string; bytes: Uint8Array };
@@ -487,6 +503,10 @@ export default function SoundFurnacePage() {
   const [separatingStems, setSeparatingStems] = useState(false);
   const [stemElapsed, setStemElapsed] = useState(0);
   const [stemEstimate, setStemEstimate] = useState(120);
+  const [completionOpen, setCompletionOpen] = useState(false);
+  const [completionStage, setCompletionStage] = useState<"choose" | "saving" | "actions">("choose");
+  const [savedStar, setSavedStar] = useState<SavedStarResult | null>(null);
+  const [publishing, setPublishing] = useState(false);
 
   useEffect(() => () => {
     if (sourceUrl) URL.revokeObjectURL(sourceUrl);
@@ -522,6 +542,9 @@ export default function SoundFurnacePage() {
     setStemFiles([]);
     setEngineerTrackCount(0);
     setEngineerOpen(false);
+    setCompletionOpen(false);
+    setCompletionStage("choose");
+    setSavedStar(null);
     const extension = candidate.name.split(".").pop()?.toLowerCase() ?? "";
     if (!ACCEPTED_EXTENSIONS.includes(extension)) {
       setError("Use a WAV, MP3, FLAC, AIFF, M4A, or AAC audio file.");
@@ -612,17 +635,158 @@ export default function SoundFurnacePage() {
       setResult({
         url,
         name: `${baseName}-crucible-master-24bit.wav`,
+        blob,
         stats: analyzeBuffer(forged),
         samples: waveformSamples(forged),
       });
       playForgeFinish();
-      setStatus("Forge complete. Your 24-bit master is ready to audition or download.");
+      setCompletionStage("choose");
+      setSavedStar(null);
+      setCompletionOpen(true);
+      setStatus("Forge complete. Compare both versions, then choose which file to keep.");
     } catch {
       setError("The forge could not finish this track in your browser. Try closing other tabs or using a smaller file.");
       setStatus("Forge stopped safely. Your original file was not changed.");
     } finally {
       setBusy(false);
     }
+  }
+
+  async function keepVersion(chosenVersion: "original" | "forged") {
+    if (!file || !result) return;
+    setCompletionStage("saving");
+    setError("");
+    setStatus("Saving your choice and checking the exact file with CrucibleStar…");
+
+    const selectedFile = chosenVersion === "forged"
+      ? new File([result.blob], result.name, { type: "audio/wav" })
+      : file;
+    const supabase = createClient();
+    let storagePath = "";
+
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error("Sign in before saving this track and requesting its CrucibleStar badge.");
+      if (selectedFile.size > MAX_FILE_BYTES) throw new Error("The selected file is larger than CrucibleStar's 250 MB limit.");
+
+      const { analysis, hash } = await analyzeAudioFile(selectedFile);
+      const cleanName = selectedFile.name.replace(/[^A-Za-z0-9._-]+/g, "-").slice(-120);
+      storagePath = `${user.id}/${crypto.randomUUID()}-${cleanName}`;
+      const mimeType = storageAudioMimeType(selectedFile);
+      const uploadBody = selectedFile.type === mimeType
+        ? selectedFile
+        : new Blob([selectedFile], { type: mimeType });
+
+      const { error: uploadError } = await supabase.storage.from("star-music").upload(storagePath, uploadBody, {
+        cacheControl: "3600",
+        upsert: false,
+        contentType: mimeType,
+      });
+      if (uploadError) throw uploadError;
+
+      const featureVector = {
+        duration: analysis.duration,
+        transient_rate: analysis.transientRate,
+        rhythmicity: analysis.rhythmicity,
+        tonality: analysis.tonality,
+        estimated_bpm: analysis.estimatedBpm,
+        tags: analysis.contentTags,
+      };
+      const { data: saved, error: insertError } = await supabase.from("star_music_files").insert({
+        user_id: user.id,
+        title: selectedFile.name.replace(/\.[^.]+$/, ""),
+        original_filename: selectedFile.name,
+        storage_path: storagePath,
+        artwork_url: null,
+        mime_type: mimeType,
+        size_bytes: selectedFile.size,
+        sha256: hash,
+        category: analysis.suggestedCategory,
+        bpm: analysis.estimatedBpm,
+        musical_key: analysis.estimatedKey,
+        duration_seconds: analysis.duration,
+        sample_rate: analysis.sampleRate,
+        channels: analysis.channels,
+        peak_dbfs: analysis.peakDb,
+        rms_dbfs: analysis.rmsDb,
+        silence_percent: analysis.silencePercent,
+        clipping_count: analysis.clippingCount,
+        analysis_score: analysis.score,
+        grade: analysis.grade,
+        verification_status: analysis.status,
+        verification_notes: analysis.notes,
+        analysis: {
+          engine: "crucible-file-dna-browser-v2",
+          sha256: hash,
+          analyzed_at: new Date().toISOString(),
+          content_type: analysis.contentType,
+          content_tags: analysis.contentTags,
+          content_confidence: analysis.contentConfidence,
+          estimated_bpm: analysis.estimatedBpm,
+          bpm_confidence: analysis.bpmConfidence,
+          estimated_key: analysis.estimatedKey,
+          key_confidence: analysis.keyConfidence,
+          transient_rate: analysis.transientRate,
+          rhythmicity: analysis.rhythmicity,
+          tonality: analysis.tonality,
+          model_version: analysis.modelVersion,
+          learned_from_examples: analysis.learnedFromExamples,
+          confidence_source: analysis.confidenceSource,
+          feature_vector: featureVector,
+        },
+        publish_status: analysis.status === "verified" ? "ready" : "draft",
+      }).select("id,grade,analysis_score,verification_status").single();
+
+      if (insertError || !saved) {
+        await supabase.storage.from("star-music").remove([storagePath]);
+        throw insertError ?? new Error("The chosen file could not be saved.");
+      }
+
+      setSavedStar({
+        id: String(saved.id),
+        grade: String(saved.grade ?? analysis.grade),
+        score: Number(saved.analysis_score ?? analysis.score),
+        verificationStatus: saved.verification_status as SavedStarResult["verificationStatus"],
+        chosenVersion,
+      });
+      setCompletionStage("actions");
+      setStatus(
+        saved.verification_status === "verified"
+          ? `CrucibleStar verified the ${chosenVersion} version. Grade ${saved.grade ?? analysis.grade} · ${saved.analysis_score ?? analysis.score}/100.`
+          : `The ${chosenVersion} version is saved privately. CrucibleStar marked it ${saved.verification_status} for review.`,
+      );
+    } catch (caught) {
+      if (storagePath) await supabase.storage.from("star-music").remove([storagePath]);
+      setError(caught instanceof Error ? caught.message : "The selected version could not be saved.");
+      setCompletionStage("choose");
+      setStatus("Your original and forged audio are still safe. Choose a version and try again.");
+    }
+  }
+
+  async function publishSavedVersion() {
+    if (!savedStar || savedStar.verificationStatus !== "verified") return;
+    setPublishing(true);
+    setError("");
+    try {
+      const response = await fetch("/api/marketplace/publish", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ starFileId: savedStar.id, previewPath: null }),
+      });
+      const payload = await response.json().catch(() => ({})) as { error?: string };
+      if (!response.ok) throw new Error(payload.error || "Publishing failed.");
+      setStatus("Published successfully. Your private master remains saved in My Tracks.");
+      setCompletionOpen(false);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Publishing failed.");
+    } finally {
+      setPublishing(false);
+    }
+  }
+
+  function openSavedEngineerMode() {
+    setCompletionOpen(false);
+    openEngineerMode();
   }
 
   async function separateIntoStems(candidate: File, decoded: AudioBuffer | null = buffer) {
@@ -896,6 +1060,63 @@ export default function SoundFurnacePage() {
           </section>
         )}
       </section>
+
+      {completionOpen && result ? (
+        <div className="fixed inset-0 z-[70] grid place-items-center overflow-y-auto bg-black/80 p-4 backdrop-blur-md" role="dialog" aria-modal="true" aria-labelledby="forge-complete-title">
+          <div className="w-full max-w-xl rounded-[28px] border border-orange-300/25 bg-[#100c09] p-5 shadow-[0_30px_100px_rgba(0,0,0,.75)] sm:p-7">
+            <div className="flex items-start gap-3">
+              <div className="grid size-11 shrink-0 place-items-center rounded-2xl bg-orange-500 text-black"><CheckCircle2 size={23} /></div>
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-[.24em] text-orange-300">Sound Furnace</p>
+                <h2 id="forge-complete-title" className="mt-1 text-2xl font-black">Forge complete</h2>
+              </div>
+            </div>
+
+            {completionStage === "choose" ? (
+              <>
+                <p className="mt-4 text-sm leading-6 text-white/55">Choose which exact audio file becomes your saved track. CrucibleStar will grade that version and attach any badge to it. Your original is never deleted.</p>
+                <div className="mt-5 grid gap-3 sm:grid-cols-2">
+                  <button type="button" onClick={() => void keepVersion("forged")} className="rounded-2xl bg-gradient-to-r from-orange-500 to-amber-300 p-4 text-left text-black">
+                    <span className="block text-sm font-black">Use forged version</span>
+                    <span className="mt-1 block text-xs font-bold text-black/60">Make the new 24-bit master the saved version</span>
+                  </button>
+                  <button type="button" onClick={() => void keepVersion("original")} className="rounded-2xl border border-white/12 bg-white/[0.04] p-4 text-left text-white">
+                    <span className="block text-sm font-black">Keep original</span>
+                    <span className="mt-1 block text-xs text-white/45">Save and grade the unchanged source file</span>
+                  </button>
+                </div>
+                <button type="button" onClick={() => setCompletionOpen(false)} className="mt-4 w-full rounded-xl px-4 py-2 text-xs font-bold text-white/40">Keep comparing before I decide</button>
+              </>
+            ) : null}
+
+            {completionStage === "saving" ? (
+              <div className="grid min-h-44 place-items-center text-center">
+                <div><LoaderCircle className="mx-auto animate-spin text-sky-300" size={30} /><p className="mt-4 font-black">CrucibleStar is checking your final file…</p><p className="mt-2 text-xs text-white/40">The badge will belong only to this exact version.</p></div>
+              </div>
+            ) : null}
+
+            {completionStage === "actions" && savedStar ? (
+              <>
+                <div className={`mt-5 rounded-2xl border p-4 ${savedStar.verificationStatus === "verified" ? "border-emerald-300/25 bg-emerald-400/[0.07]" : "border-amber-300/25 bg-amber-400/[0.07]"}`}>
+                  <div className="flex items-center justify-between gap-3">
+                    <div><p className="text-[10px] font-black uppercase tracking-[.2em] text-sky-300">CrucibleStar result</p><p className="mt-1 text-lg font-black">{savedStar.verificationStatus === "verified" ? "Verified badge earned" : `Saved · ${savedStar.verificationStatus}`}</p></div>
+                    <div className="flex items-center gap-2 rounded-xl bg-sky-300 px-3 py-2 font-black text-sky-950"><Star size={16} fill="currentColor" />{savedStar.grade} · {savedStar.score}</div>
+                  </div>
+                  <p className="mt-2 text-xs text-white/45">{savedStar.chosenVersion === "forged" ? "Forged 24-bit master" : "Original audio"} is now the saved version.</p>
+                </div>
+                <p className="mt-5 text-xs font-black uppercase tracking-[.18em] text-white/35">What do you want to do next?</p>
+                <div className="mt-3 grid grid-cols-2 gap-3">
+                  <button type="button" onClick={openSavedEngineerMode} className="flex items-center justify-center gap-2 rounded-xl bg-violet-300 px-3 py-3 text-xs font-black text-violet-950"><Hammer size={15} />Engineer Mode</button>
+                  <button type="button" disabled={publishing || savedStar.verificationStatus !== "verified"} onClick={() => void publishSavedVersion()} className="flex items-center justify-center gap-2 rounded-xl bg-emerald-400 px-3 py-3 text-xs font-black text-black disabled:opacity-35"><Send size={15} />{publishing ? "Publishing…" : "Publish"}</button>
+                  <a href={`/tracks/${savedStar.id}?tab=distribution`} className="flex items-center justify-center gap-2 rounded-xl bg-[#ff2d19] px-3 py-3 text-xs font-black text-white"><Globe2 size={15} />Distribution</a>
+                  <a href="/local-library" className="flex items-center justify-center gap-2 rounded-xl border border-white/12 bg-white/[0.04] px-3 py-3 text-xs font-black text-white"><LibraryBig size={15} />Save / My Tracks</a>
+                </div>
+                {savedStar.verificationStatus !== "verified" ? <p className="mt-3 text-xs leading-5 text-amber-100/65">Publishing stays locked until this version passes CrucibleStar. You can save it or improve it in Engineer Mode now.</p> : null}
+              </>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
 
       {engineerOpen ? (
         <div className="fixed inset-0 z-50 overflow-y-auto bg-[#070605] text-white">
