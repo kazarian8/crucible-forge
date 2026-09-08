@@ -101,6 +101,12 @@ export default function TrackProjectPage() {
 
   useEffect(() => { void load(); }, [load]);
 
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("tab") === "distribution") {
+      setTab("distribution");
+    }
+  }, []);
+
   async function copyInviteLink() {
     if (!trackId) return;
     setInviteLoading(true);
