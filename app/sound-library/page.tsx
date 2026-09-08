@@ -56,6 +56,8 @@ function sellerInitial(name: string) {
 }
 
 export default function SoundLibraryPage() {
+  const [ownerId, setOwnerId] = useState("");
+  const [editingItem, setEditingItem] = useState<Item | null>(null);
   const [items, setItems] = useState<Item[]>([]);
   const [sellers, setSellers] = useState<Record<string, Seller>>({});
   const [query, setQuery] = useState("");
@@ -72,7 +74,7 @@ export default function SoundLibraryPage() {
 
     async function loadMarketplace() {
       const supabase = createClient();
-      const [itemsResult, sellersResult] = await Promise.all([
+      const [itemsResult, sellersResult, authResult] = await Promise.all([
         supabase
           .from("sound_library_items")
           .select("id,user_id,title,description,category,artwork_url,free_download,price_cents,preview_url,watermark_label,bpm,musical_key,license_type,crucible_score,crucible_grade,created_at")
@@ -83,9 +85,11 @@ export default function SoundLibraryPage() {
           .from("marketplace_sellers")
           .select("user_id,display_name")
           .limit(100),
+        supabase.auth.getUser(),
       ]);
 
       if (cancelled) return;
+      setOwnerId(authResult.data.user?.id ?? "");
       if (itemsResult.error) setMessage(itemsResult.error.message);
       else setItems((itemsResult.data ?? []) as Item[]);
 
@@ -179,6 +183,8 @@ export default function SoundLibraryPage() {
 
   return (
     <main className="min-h-screen bg-[#060606] pb-28 text-white">
+      {editingItem ? <ListingEditor key={editingItem.id} item={editingItem} onClose={() => setEditingItem(null)} onSaved={(patch) => { setItems((current) => current.map((item) => item.id === editingItem.id ? { ...item, ...patch } : item)); setEditingItem(null); setMessage("Listing updated. Your picture is saved to the track and its Moment."); }} /> : null}
+
       <audio
         ref={audioRef}
         preload="metadata"
@@ -294,6 +300,7 @@ export default function SoundLibraryPage() {
                     </div>
                   </div>
 
+                  {ownerId && item.user_id === ownerId ? <button type="button" onClick={() => setEditingItem(item)} className="mt-4 w-full rounded-xl border border-orange-300/30 bg-orange-400/10 px-4 py-3 text-sm font-bold text-orange-200">{item.artwork_url ? "Edit listing / Change picture" : "Edit listing / Add picture"}</button> : null}
                   <h2 className="mt-4 truncate text-lg font-black" title={item.title}>{item.title}</h2>
                   <div className="mt-2 flex flex-wrap gap-1.5 text-[9px] font-bold uppercase tracking-wider text-white/45">
                     {item.bpm ? <span className="rounded-md bg-white/[0.06] px-2 py-1">{item.bpm} BPM</span> : null}
@@ -330,4 +337,58 @@ export default function SoundLibraryPage() {
       </div>
     </main>
   );
+}
+
+
+function ListingEditor({ item, onClose, onSaved }: { item: Item; onClose: () => void; onSaved: (patch: Pick<Item, "title" | "description" | "artwork_url">) => void }) {
+  const [title, setTitle] = useState(item.title);
+  const [description, setDescription] = useState(item.description || "");
+  const [picture, setPicture] = useState<File | null>(null);
+  const [preview, setPreview] = useState(item.artwork_url || "");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const uploadedPath = useRef<{ file: File; path: string } | null>(null);
+  const dialog = useRef<HTMLDialogElement>(null);
+  useEffect(() => { dialog.current?.showModal(); }, []);
+  useEffect(() => {
+    if (!picture) return;
+    const url = URL.createObjectURL(picture); setPreview(url);
+    return () => URL.revokeObjectURL(url);
+  }, [picture]);
+  async function save(event: React.FormEvent) {
+    event.preventDefault(); if (busy) return; setBusy(true); setError("");
+    try {
+      const supabase = createClient();
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user || user.id !== item.user_id) throw new Error("Sign in as the owner to edit this listing.");
+      let artworkPath: string | undefined;
+      if (picture) {
+        if (!["image/jpeg", "image/png", "image/webp"].includes(picture.type) || picture.size > 10 * 1024 * 1024) throw new Error("Use a JPG, PNG or WebP picture up to 10 MB.");
+        if (uploadedPath.current?.file === picture) artworkPath = uploadedPath.current.path;
+        else {
+          artworkPath = `${user.id}/${crypto.randomUUID()}.${picture.type === "image/jpeg" ? "jpg" : picture.type.split("/")[1]}`;
+          const { error: uploadError } = await supabase.storage.from("track-artwork").upload(artworkPath, picture, { contentType: picture.type, upsert: false });
+          if (uploadError) throw uploadError;
+          uploadedPath.current = { file: picture, path: artworkPath };
+        }
+      }
+      const response = await fetch("/api/marketplace/publish", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ itemId: item.id, title, description, ...(artworkPath ? { artworkPath } : {}) }) });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "Could not save listing.");
+      onSaved(payload.item);
+    } catch (caught) { setError(caught instanceof Error ? caught.message : "Could not save listing."); }
+    finally { setBusy(false); }
+  }
+  return <dialog ref={dialog} onCancel={(event) => { event.preventDefault(); if (!busy) onClose(); }} className="fixed inset-0 m-auto max-h-[85dvh] w-[calc(100%-2rem)] max-w-lg overflow-y-auto rounded-2xl border border-orange-300/25 bg-[#101015] p-5 text-white backdrop:bg-black/80" aria-labelledby="edit-listing-title">
+    <form onSubmit={save} className="space-y-4">
+      <h2 id="edit-listing-title" className="text-xl font-bold">Edit your listing</h2>
+      {preview ? <div role="img" aria-label="Track picture preview" className="mx-auto aspect-square w-40 rounded-xl bg-cover bg-center" style={{ backgroundImage: `url(${preview})` }} /> : null}
+      <label className="block text-sm">Track picture<input type="file" accept="image/jpeg,image/png,image/webp" disabled={busy} onChange={(event) => { const file = event.target.files?.[0]; if (file) setPicture(file); }} className="mt-2 block w-full text-sm" /><span className="mt-1 block text-xs text-white/60">JPG, PNG or WebP · up to 10 MB</span></label>
+      <label className="block text-sm">Title<input autoFocus required maxLength={160} value={title} disabled={busy} onChange={(event) => setTitle(event.target.value)} className="mt-1 w-full rounded-lg border border-white/20 bg-black/40 p-3 text-base" /></label>
+      <label className="block text-sm">Description<textarea maxLength={2000} value={description} disabled={busy} onChange={(event) => setDescription(event.target.value)} className="mt-1 min-h-24 w-full rounded-lg border border-white/20 bg-black/40 p-3 text-base" /></label>
+      <p className="text-xs text-white/60">Your published audio and Star badge stay attached to this listing.</p>
+      {error ? <p role="alert" className="text-sm text-red-300">{error}</p> : null}
+      <div className="flex gap-3"><button type="submit" disabled={busy || !title.trim()} className="flex-1 rounded-xl bg-orange-400 p-3 text-sm font-bold text-black disabled:opacity-40">{busy ? "Saving…" : "Save changes"}</button><button type="button" onClick={onClose} disabled={busy} className="rounded-xl border border-white/20 p-3 text-sm">Cancel</button></div>
+    </form>
+  </dialog>;
 }
