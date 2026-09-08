@@ -227,7 +227,8 @@ export async function analyzeAudioFile(file: Blob): Promise<{ analysis: FileDnaA
     const decoded = await context.decodeAudioData(bytes.slice(0));
     const filename = file instanceof File ? file.name : "audio";
     let musicalContent = analyzeMusicalContent(decoded, filename);
-    const stride = Math.max(1, Math.floor(decoded.length / 1_000_000));
+    // Scan every sample in every channel so brief clipping is not skipped.
+    const stride = 1;
     let peak = 0;
     let sumSquares = 0;
     let samples = 0;
@@ -304,10 +305,11 @@ export async function analyzeAudioFile(file: Blob): Promise<{ analysis: FileDnaA
       notes.push("A large portion of the file is near silence.");
     }
 
-    score = Math.max(0, Math.min(100, Math.round(score)));
+    score = Math.max(0, Math.min(99, Math.round(score)));
     const unusable = hasNoAudibleSignal || decoded.duration < 0.02 || decoded.length < 2;
     const status: FileDnaAnalysis["status"] = unusable ? "failed" : score >= 85 ? "verified" : "warning";
     if (notes.length === 0) notes.push("File decoded successfully with no major technical warnings.");
+    notes.push("Technical screening score only; automated checks cannot certify a flawless professional recording. Scores are capped at 99.");
     if (!hasNoAudibleSignal) notes.push(`Detected ${musicalContent.contentType} · ${musicalContent.contentTags.join(" + ")} · ${musicalContent.contentConfidence}% classification confidence.`);
     if (musicalContent.estimatedBpm) notes.push(`Estimated tempo ${musicalContent.estimatedBpm} BPM · ${musicalContent.bpmConfidence}% confidence.`);
     if (musicalContent.estimatedKey) notes.push(`Estimated key ${musicalContent.estimatedKey} · ${musicalContent.keyConfidence}% confidence.`);

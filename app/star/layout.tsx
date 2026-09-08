@@ -1,15 +1,18 @@
 import Link from "next/link";
+import { isStarAdmin } from "../../lib/star/admin";
 import { Activity, LogIn, UserPlus } from "lucide-react";
 import StarSessionGate from "../../components/star/StarSessionGate";
 import { createClient } from "../../lib/supabase/server";
 
 export default async function StarLayout({ children }: { children: React.ReactNode }) {
   let signedIn = false;
+  let admin = false;
 
   try {
     const supabase = await createClient();
     const { data: { user } } = await supabase.auth.getUser();
     signedIn = Boolean(user);
+    admin = isStarAdmin(user);
   } catch {
     signedIn = false;
   }
@@ -31,6 +34,7 @@ export default async function StarLayout({ children }: { children: React.ReactNo
               >
                 Forge
               </a>
+              {admin ? <Link href="/star/review" className="rounded-xl border border-orange-300/25 px-3 py-2 text-sm font-bold text-orange-200">Review</Link> : null}
               <Link href="/account" className="rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-[10px] font-black text-white/75">Account</Link>
               <form action="/auth/signout?next=/star" method="post">
                 <button type="submit" className="rounded-xl border border-orange-300/20 bg-orange-400/10 px-3 py-2 text-[10px] font-black text-orange-200">Sign Out</button>
