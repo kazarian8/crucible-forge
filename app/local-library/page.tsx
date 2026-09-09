@@ -4,7 +4,7 @@ import type { QualityAssessment, QualityComparison } from "../../lib/audio/quali
 import QualityReport from "../../components/star/QualityReport";
 
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ChevronDown, ChevronUp, Dna, Download, LibraryBig, Play, Send, ShieldCheck, Upload, XCircle } from "lucide-react";
 import { playForgeConfirmation } from "../../lib/audio/forge-confirm";
 import { storageAudioMimeType } from "../../lib/audio/mime";
@@ -58,6 +58,13 @@ export default function LocalLibraryPage() {
   const [feedbackBusyId, setFeedbackBusyId] = useState("");
   const [confirmedIds, setConfirmedIds] = useState<Set<string>>(() => new Set());
   const [confirmationGlowId, setConfirmationGlowId] = useState("");
+  const activeAudio = useRef<HTMLAudioElement>(null);
+  const attachPreviewAudio = useCallback((audio: HTMLAudioElement | null) => {
+    if (activeAudio.current !== audio) activeAudio.current?.pause();
+    activeAudio.current = audio;
+  }, []);
+  const previewRequest = useRef(0);
+  const [activePreviewId, setActivePreviewId] = useState("");
   const [playUrl, setPlayUrl] = useState<Record<string, string>>({});
   const [publishingId, setPublishingId] = useState("");
   const [unpublishingId, setUnpublishingId] = useState("");
@@ -75,22 +82,44 @@ export default function LocalLibraryPage() {
   useEffect(() => {
     void load();
     return () => {
+      previewRequest.current += 1;
+      activeAudio.current?.pause();
       for (const objectUrl of previewObjectUrls.current) URL.revokeObjectURL(objectUrl);
     };
   }, []);
 
   async function play(item: StarItem) {
-    if (playUrl[item.id]) return;
-    setMessage("Preparing authorized private preview…");
-    const sb = createClient();
-    const { data, error } = await sb.storage.from("star-music").download(item.storage_path);
-    if (error || !data) return setMessage(error?.message || "Could not open the private preview.");
-    const mimeType = storageAudioMimeType({ name: item.original_filename, type: data.type });
-    const playableBlob = data.type === mimeType ? data : new Blob([data], { type: mimeType });
-    const objectUrl = URL.createObjectURL(playableBlob);
-    previewObjectUrls.current.push(objectUrl);
-    setPlayUrl((current) => ({ ...current, [item.id]: objectUrl }));
-    setMessage("Private preview ready.");
+    // Stop immediately, even while the next private file is still downloading.
+    const request = ++previewRequest.current;
+    const previous = activeAudio.current;
+    if (previous) {
+      previous.pause();
+      previous.currentTime = 0;
+    }
+    setActivePreviewId(item.id);
+    if (playUrl[item.id]) {
+      if (activePreviewId === item.id && previous) {
+        try { await previous.play(); }
+        catch { if (request === previewRequest.current) setMessage("Tap Play in the audio controls to start this preview."); }
+      }
+      return;
+    }
+    setMessage(`Preparing “${item.title}”…`);
+    try {
+      const sb = createClient();
+      const { data, error } = await sb.storage.from("star-music").download(item.storage_path);
+      // A slower earlier request must never replace the user's latest choice.
+      if (request !== previewRequest.current) return;
+      if (error || !data) throw new Error(error?.message || "Could not open the private preview.");
+      const mimeType = storageAudioMimeType({ name: item.original_filename, type: data.type });
+      const playableBlob = data.type === mimeType ? data : new Blob([data], { type: mimeType });
+      const objectUrl = URL.createObjectURL(playableBlob);
+      previewObjectUrls.current.push(objectUrl);
+      setPlayUrl((current) => ({ ...current, [item.id]: objectUrl }));
+      setMessage(`“${item.title}” is ready. If playback does not start, tap Play below.`);
+    } catch (caught) {
+      if (request === previewRequest.current) setMessage(caught instanceof Error ? caught.message : "Could not open the private preview.");
+    }
   }
 
   async function downloadTrack(item: StarItem) {
@@ -240,7 +269,7 @@ export default function LocalLibraryPage() {
                   <Send size={14} />{publishingId === item.id ? "Publishing…" : "Publish"}
                 </button>
               )}</div>
-              {playUrl[item.id] ? <audio className="mt-3 w-full" controls autoPlay src={playUrl[item.id]} /> : null}
+              {activePreviewId === item.id && playUrl[item.id] ? <audio key={item.id} ref={attachPreviewAudio} aria-label={`Preview ${item.title}`} className="mt-3 w-full" controls autoPlay src={playUrl[item.id]} onError={() => setMessage("This preview could not play. Try downloading the track instead.")} /> : null}
               {dnaOpen ? <div>{item.analysis?.quality?.version === "quality-measurements-v1" ? <QualityReport quality={item.analysis.quality} comparison={item.analysis.quality_comparison} /> : <p className="mt-2 text-xs text-white/50">Legacy technical assessment. Reanalyze the audio for detailed quality checks.</p>}</div> : null}
               {dnaOpen ? <div className="mt-3 rounded-2xl border border-sky-300/15 bg-sky-400/[0.04] p-3"><div className="flex flex-wrap items-center justify-between gap-2"><div><p className="text-[10px] font-black uppercase tracking-wider text-sky-200">File DNA · {item.analysis?.content_type ?? "unanalyzed"}</p><p className="mt-1 text-xs text-white/45">{(item.analysis?.content_tags ?? []).join(" + ") || "No content tags"}</p></div><span className="text-sm font-black text-sky-200 transition-all duration-500">{item.analysis?.content_confidence ?? 0}%</span></div><div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4"><Metric label="Tempo" value={item.bpm ? `${item.bpm} BPM` : "Not detected"} /><Metric label="Key" value={item.musical_key || "Not detected"} /><Metric label="Peak" value={item.peak_dbfs == null ? "—" : `${Number(item.peak_dbfs).toFixed(1)} dBFS`} /><Metric label="RMS" value={item.rms_dbfs == null ? "—" : `${Number(item.rms_dbfs).toFixed(1)} dBFS`} /><Metric label="Silence" value={item.silence_percent == null ? "—" : `${Number(item.silence_percent).toFixed(1)}%`} /><Metric label="Sample rate" value={item.sample_rate ? `${item.sample_rate} Hz` : "—"} /><Metric label="Channels" value={item.channels ? String(item.channels) : "—"} /><Metric label="Size" value={`${(item.size_bytes / 1024 / 1024).toFixed(2)} MB`} /></div>{dnaConfirmed ? <span className={`mt-3 inline-flex rounded-xl border px-3 py-2 text-xs font-black transition-all duration-500 ${confirmationGlowId === item.id ? "border-emerald-200 bg-emerald-300 text-black shadow-[0_0_24px_rgba(110,231,183,0.7)]" : "border-emerald-300/15 text-emerald-200"}`}>{confirmationGlowId === item.id ? `DNA confirmed · ${item.analysis?.content_confidence ?? 0}%` : "DNA confirmed"}</span> : <button type="button" disabled={feedbackBusyId === item.id} onClick={() => void confirmDna(item)} className="mt-3 rounded-xl border border-emerald-300/20 px-3 py-2 text-xs font-black text-emerald-200">{feedbackBusyId === item.id ? "Forging confirmation…" : "Confirm DNA"}</button>}</div> : null}
             </article>;
