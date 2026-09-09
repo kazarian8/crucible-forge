@@ -1,5 +1,8 @@
 "use client";
 
+import type { QualityAssessment, QualityComparison } from "../../lib/audio/quality-assessment";
+import QualityReport from "../../components/star/QualityReport";
+
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { ChevronDown, ChevronUp, Dna, LibraryBig, Play, Send, ShieldCheck, Upload, XCircle } from "lucide-react";
@@ -28,6 +31,8 @@ type StarItem = {
   verification_status: string;
   publish_status: string;
   analysis: {
+    quality?: QualityAssessment;
+    quality_comparison?: QualityComparison;
     content_type?: string;
     content_tags?: string[];
     content_confidence?: number;
@@ -185,7 +190,7 @@ export default function LocalLibraryPage() {
             const dnaConfirmed = confirmedIds.has(item.id) || Boolean(item.analysis?.artist_confirmed);
             return <article key={item.id} className="p-4">
               {item.artwork_url ? <div className="mb-4 aspect-square rounded-xl bg-cover bg-center" style={{ backgroundImage: `url(${item.artwork_url})` }} /> : null}
-              <div className="flex items-start justify-between gap-3"><div className="min-w-0"><div className="flex items-center gap-2"><ShieldCheck size={14} className="shrink-0 text-emerald-300" /><p className="truncate font-black">{item.title}</p></div><p className="mt-1 truncate pl-[22px] text-xs text-white/40">{item.category}{item.duration_seconds != null ? ` · ${Number(item.duration_seconds).toFixed(2)} sec` : ""} · private</p></div><span className="shrink-0 rounded-lg bg-orange-500 px-2.5 py-1 text-xs font-black text-black">{item.grade ?? "—"} {item.analysis_score ?? ""}</span></div>
+              <div className="flex items-start justify-between gap-3"><div className="min-w-0"><div className="flex items-center gap-2"><ShieldCheck size={14} className="shrink-0 text-emerald-300" /><p className="truncate font-black">{item.title}</p></div><p className="mt-1 truncate pl-[22px] text-xs text-white/40">{item.category}{item.duration_seconds != null ? ` · ${Number(item.duration_seconds).toFixed(2)} sec` : ""} · private</p></div><span className="shrink-0 rounded-lg bg-orange-500 px-2.5 py-1 text-xs font-black text-black">Technical: {item.verification_status}</span></div>
               <div className="mt-3 flex flex-wrap gap-2"><button type="button" onClick={() => void play(item)} className="inline-flex items-center gap-2 rounded-xl border border-white/10 px-3 py-2 text-xs font-black"><Play size={14} />Preview</button><button type="button" aria-expanded={dnaOpen} onClick={() => setOpenDnaId(dnaOpen ? "" : item.id)} className="inline-flex items-center gap-2 rounded-xl border border-sky-300/20 px-3 py-2 text-xs font-black text-sky-200"><Dna size={14} />{dnaOpen ? "Hide DNA" : "View DNA"}{dnaOpen ? <ChevronUp size={13} /> : <ChevronDown size={13} />}</button>{item.publish_status === "published" ? (
                 <button
                   type="button"
@@ -206,6 +211,7 @@ export default function LocalLibraryPage() {
                 </button>
               )}</div>
               {playUrl[item.id] ? <audio className="mt-3 w-full" controls autoPlay src={playUrl[item.id]} /> : null}
+              {dnaOpen ? <div>{item.analysis?.quality?.version === "quality-measurements-v1" ? <QualityReport quality={item.analysis.quality} comparison={item.analysis.quality_comparison} /> : <p className="mt-2 text-xs text-white/50">Legacy technical assessment. Reanalyze the audio for detailed quality checks.</p>}</div> : null}
               {dnaOpen ? <div className="mt-3 rounded-2xl border border-sky-300/15 bg-sky-400/[0.04] p-3"><div className="flex flex-wrap items-center justify-between gap-2"><div><p className="text-[10px] font-black uppercase tracking-wider text-sky-200">File DNA · {item.analysis?.content_type ?? "unanalyzed"}</p><p className="mt-1 text-xs text-white/45">{(item.analysis?.content_tags ?? []).join(" + ") || "No content tags"}</p></div><span className="text-sm font-black text-sky-200 transition-all duration-500">{item.analysis?.content_confidence ?? 0}%</span></div><div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4"><Metric label="Tempo" value={item.bpm ? `${item.bpm} BPM` : "Not detected"} /><Metric label="Key" value={item.musical_key || "Not detected"} /><Metric label="Peak" value={item.peak_dbfs == null ? "—" : `${Number(item.peak_dbfs).toFixed(1)} dBFS`} /><Metric label="RMS" value={item.rms_dbfs == null ? "—" : `${Number(item.rms_dbfs).toFixed(1)} dBFS`} /><Metric label="Silence" value={item.silence_percent == null ? "—" : `${Number(item.silence_percent).toFixed(1)}%`} /><Metric label="Sample rate" value={item.sample_rate ? `${item.sample_rate} Hz` : "—"} /><Metric label="Channels" value={item.channels ? String(item.channels) : "—"} /><Metric label="Size" value={`${(item.size_bytes / 1024 / 1024).toFixed(2)} MB`} /></div>{dnaConfirmed ? <span className={`mt-3 inline-flex rounded-xl border px-3 py-2 text-xs font-black transition-all duration-500 ${confirmationGlowId === item.id ? "border-emerald-200 bg-emerald-300 text-black shadow-[0_0_24px_rgba(110,231,183,0.7)]" : "border-emerald-300/15 text-emerald-200"}`}>{confirmationGlowId === item.id ? `DNA confirmed · ${item.analysis?.content_confidence ?? 0}%` : "DNA confirmed"}</span> : <button type="button" disabled={feedbackBusyId === item.id} onClick={() => void confirmDna(item)} className="mt-3 rounded-xl border border-emerald-300/20 px-3 py-2 text-xs font-black text-emerald-200">{feedbackBusyId === item.id ? "Forging confirmation…" : "Confirm DNA"}</button>}</div> : null}
             </article>;
           })}</div>}

@@ -334,7 +334,7 @@ export default function StarDnaAnalyzer({ audio, title, grade, score, verified =
           </div>
           <div className="flex items-center gap-2">
             {verified ? <span className="inline-flex items-center gap-1 rounded-full border border-emerald-300/20 bg-emerald-400/10 px-3 py-1.5 text-sm font-black uppercase text-emerald-200"><ShieldCheck size={13} />Verified</span> : null}
-            {grade ? <span className="rounded-xl bg-orange-400 px-3 py-1.5 text-sm font-black text-black">{grade}{typeof score === "number" ? ` · ${score}` : ""}</span> : null}
+            {grade ? <span className="rounded-xl bg-orange-400 px-3 py-1.5 text-sm font-black text-black">Technical checklist {grade}{typeof score === "number" ? ` · ${score}/100` : ""}</span> : null}
           </div>
         </div>
 

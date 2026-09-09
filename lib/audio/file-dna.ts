@@ -1,3 +1,5 @@
+import { assessAudioQuality, type QualityAssessment } from "./quality-assessment";
+
 export type FileDnaAnalysis = {
   duration: number;
   sampleRate: number;
@@ -6,7 +8,9 @@ export type FileDnaAnalysis = {
   rmsDb: number;
   silencePercent: number;
   clippingCount: number;
+  /** Technical checklist only; never a sound-quality grade. */
   score: number;
+  quality: QualityAssessment;
   grade: "A" | "B" | "C" | "D" | "F";
   status: "verified" | "warning" | "failed";
   notes: string[];
@@ -21,7 +25,7 @@ export type FileDnaAnalysis = {
   transientRate: number;
   rhythmicity: number;
   tonality: number;
-  modelVersion: "dna-signal-v2";
+  modelVersion: "dna-signal-v3";
   learnedFromExamples: number;
   confidenceSource: "signal" | "signal+community";
 };
@@ -227,7 +231,8 @@ export async function analyzeAudioFile(file: Blob): Promise<{ analysis: FileDnaA
     const decoded = await context.decodeAudioData(bytes.slice(0));
     const filename = file instanceof File ? file.name : "audio";
     let musicalContent = analyzeMusicalContent(decoded, filename);
-    const stride = Math.max(1, Math.floor(decoded.length / 1_000_000));
+    const quality = await assessAudioQuality(decoded);
+    const stride = 1;
     let peak = 0;
     let sumSquares = 0;
     let samples = 0;
@@ -267,7 +272,7 @@ export async function analyzeAudioFile(file: Blob): Promise<{ analysis: FileDnaA
         tonality: 0,
       };
     }
-    const notes: string[] = [];
+    const notes: string[] = ["Technical checklist result only. Sound-quality grading is not calibrated."];
     let score = 100;
 
     if (hasNoAudibleSignal) {
@@ -306,7 +311,9 @@ export async function analyzeAudioFile(file: Blob): Promise<{ analysis: FileDnaA
 
     score = Math.max(0, Math.min(100, Math.round(score)));
     const unusable = hasNoAudibleSignal || decoded.duration < 0.02 || decoded.length < 2;
-    const status: FileDnaAnalysis["status"] = unusable ? "failed" : score >= 85 ? "verified" : "warning";
+    const measuredReview = quality.findings.some((finding) => finding.severity === "review" && ["clipping", "phase", "dc"].includes(finding.check));
+    const status: FileDnaAnalysis["status"] = unusable ? "failed" : score >= 85 && !measuredReview ? "verified" : "warning";
+    notes.push(...quality.findings.filter((finding) => finding.severity === "review").map((finding) => finding.detail));
     if (notes.length === 0) notes.push("File decoded successfully with no major technical warnings.");
     if (!hasNoAudibleSignal) notes.push(`Detected ${musicalContent.contentType} · ${musicalContent.contentTags.join(" + ")} · ${musicalContent.contentConfidence}% classification confidence.`);
     if (musicalContent.estimatedBpm) notes.push(`Estimated tempo ${musicalContent.estimatedBpm} BPM · ${musicalContent.bpmConfidence}% confidence.`);
@@ -323,11 +330,12 @@ export async function analyzeAudioFile(file: Blob): Promise<{ analysis: FileDnaA
         silencePercent,
         clippingCount: clipping,
         score,
+        quality,
         grade: gradeFor(score),
         status,
         notes,
         ...musicalContent,
-        modelVersion: "dna-signal-v2",
+        modelVersion: "dna-signal-v3",
         learnedFromExamples: 0,
         confidenceSource: "signal",
       },
