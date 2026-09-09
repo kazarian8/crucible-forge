@@ -2,16 +2,25 @@
 
 import { FormEvent, useEffect, useState } from "react";
 import { createClient } from "../../lib/supabase/client";
-import { Music2, Plus, Radio } from "lucide-react";
+import { Plus, Radio } from "lucide-react";
 
-type Moment = { id:string; user_id:string; body:string; music_url:string|null; artwork_url:string|null; created_at:string };
+type Moment = { id:string; body:string; music_url:string|null; artwork_url:string|null; created_at:string; username:string|null };
 
 export default function MomentsPage(){
   const [moments,setMoments]=useState<Moment[]>([]); const [body,setBody]=useState(""); const [musicUrl,setMusicUrl]=useState(""); const [busy,setBusy]=useState(false); const [msg,setMsg]=useState("");
-  const load=async()=>{ const sb=createClient(); const {data,error}=await sb.from("artist_moments").select("id,user_id,body,music_url,artwork_url,created_at").eq("is_public",true).order("created_at",{ascending:false}).limit(50); if(error)setMsg(error.message); else setMoments((data??[]) as Moment[]); };
+  const load = async () => {
+    try {
+      const response = await fetch("/api/moments", { cache: "no-store" });
+      if (!response.ok) throw new Error("Unable to load Moments. Please try again.");
+      const data = await response.json() as { moments: Moment[] };
+      setMoments(data.moments);
+    } catch (error) {
+      setMsg(error instanceof Error ? error.message : "Unable to load Moments.");
+    }
+  };
   useEffect(()=>{void load();},[]);
   const submit=async(e:FormEvent)=>{e.preventDefault();setBusy(true);setMsg("");const sb=createClient();const {data:{user}}=await sb.auth.getUser();if(!user){setMsg("Sign in to post a Moment.");setBusy(false);return;}const {error}=await sb.from("artist_moments").insert({user_id:user.id,body:body.trim(),music_url:musicUrl.trim()||null,is_public:true});if(error)setMsg(error.message);else{setBody("");setMusicUrl("");await load();}setBusy(false);};
   return <main className="min-h-screen bg-[#050403] pb-28 text-white"><div className="mx-auto max-w-3xl px-4 py-6"><header><p className="text-[10px] font-black uppercase tracking-[.25em] text-orange-300">Artist network</p><h1 className="mt-2 text-3xl font-black">Moments</h1><p className="mt-2 text-sm text-white/45">Drop updates, tracks, clips and releases to the Crucible community.</p></header>
   <form onSubmit={submit} className="mt-6 rounded-3xl border border-white/10 bg-[#0d0a08] p-4"><textarea required maxLength={1200} value={body} onChange={e=>setBody(e.target.value)} placeholder="What are you working on?" className="min-h-28 w-full resize-none rounded-2xl border border-white/10 bg-black/30 p-3 text-sm outline-none focus:border-orange-400/50"/><input value={musicUrl} onChange={e=>setMusicUrl(e.target.value)} placeholder="Optional audio/track URL" className="mt-3 w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none"/><button disabled={busy} className="mt-3 inline-flex items-center gap-2 rounded-xl bg-orange-500 px-4 py-2 text-sm font-black text-black"><Plus size={16}/>{busy?"Posting…":"Post Moment"}</button>{msg?<p className="mt-2 text-xs text-orange-200">{msg}</p>:null}</form>
-  <section className="mt-6 space-y-3">{moments.length===0?<div className="rounded-2xl border border-dashed border-white/10 p-8 text-center text-sm text-white/35"><Radio className="mx-auto mb-2"/>No public Moments yet.</div>:moments.map(m=><article key={m.id} className="rounded-2xl border border-white/10 bg-[#0d0a08] p-4"><div className="flex items-center gap-2 text-[10px] uppercase tracking-wider text-white/30"><Radio size={13}/>Artist Moment · {new Date(m.created_at).toLocaleDateString()}</div><p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-white/80">{m.body}</p>{m.artwork_url?<div className="mt-4 aspect-square overflow-hidden rounded-2xl bg-black bg-contain bg-center bg-no-repeat" style={{backgroundImage:`url(${m.artwork_url})`}}/>:null}{m.music_url?<audio className="mt-4 w-full" controls preload="none" src={m.music_url}/>:null}</article>)}</section></div></main>;
+  <section className="mt-6 space-y-3">{moments.length===0?<div className="rounded-2xl border border-dashed border-white/10 p-8 text-center text-sm text-white/35"><Radio className="mx-auto mb-2"/>No public Moments yet.</div>:moments.map(m=><article key={m.id} className="rounded-2xl border border-white/10 bg-[#0d0a08] p-4"><header className="min-w-0"><p className="break-words text-sm font-semibold text-orange-200">{m.username ? `@${m.username.replace(/^@/, "")}` : "Artist unavailable"}</p><time dateTime={m.created_at} className="mt-1 block text-xs text-white/60">{new Date(m.created_at).toLocaleString(undefined, { year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" })}</time></header><p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-white/80">{m.body}</p>{m.artwork_url?<div className="mt-4 aspect-square overflow-hidden rounded-2xl bg-black bg-contain bg-center bg-no-repeat" style={{backgroundImage:`url(${m.artwork_url})`}}/>:null}{m.music_url?<audio className="mt-4 w-full" controls preload="none" src={m.music_url}/>:null}</article>)}</section></div></main>;
 }
