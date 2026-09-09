@@ -4,6 +4,7 @@ import type { QualityAssessment, QualityComparison } from "../../lib/audio/quali
 import QualityReport from "../../components/star/QualityReport";
 
 import Link from "next/link";
+import Image from "next/image";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ChevronDown, ChevronUp, Dna, Download, LibraryBig, Play, Send, Upload, XCircle } from "lucide-react";
 import { playForgeConfirmation } from "../../lib/audio/forge-confirm";
@@ -54,6 +55,7 @@ export default function LocalLibraryPage() {
   const [downloadingIds, setDownloadingIds] = useState<Set<string>>(new Set());
   const [items, setItems] = useState<StarItem[]>([]);
   const [message, setMessage] = useState("");
+  const [failedArtwork, setFailedArtwork] = useState<Set<string>>(new Set());
   const [expandedTrackId, setExpandedTrackId] = useState("");
   const [openDnaId, setOpenDnaId] = useState("");
   const [feedbackBusyId, setFeedbackBusyId] = useState("");
@@ -258,7 +260,7 @@ export default function LocalLibraryPage() {
             const dnaOpen = openDnaId === item.id;
             const dnaConfirmed = confirmedIds.has(item.id) || Boolean(item.analysis?.artist_confirmed);
             return <article key={item.id}>
-              <h3><button type="button" id={`track-title-${item.id}`} aria-expanded={expandedTrackId === item.id} aria-controls={`track-options-${item.id}`} onClick={() => toggleTrack(item.id)} className="block w-full break-words px-4 py-4 text-left text-base font-black text-white hover:bg-white/[0.04] focus-visible:outline focus-visible:outline-2 focus-visible:outline-orange-300">{item.title}</button></h3>
+              <h3><button type="button" id={`track-title-${item.id}`} aria-expanded={expandedTrackId === item.id} aria-controls={`track-options-${item.id}`} onClick={() => toggleTrack(item.id)} className="flex w-full items-center gap-3 px-4 py-3 text-left text-base font-black text-white hover:bg-white/[0.04] focus-visible:outline focus-visible:outline-2 focus-visible:outline-orange-300"><Image src={item.artwork_url && !failedArtwork.has(item.artwork_url) ? item.artwork_url : "/crucible-logo.png"} alt="" width={40} height={40} unoptimized className="size-10 shrink-0 rounded-lg object-cover" onError={() => { if (item.artwork_url) setFailedArtwork((current) => new Set(current).add(item.artwork_url!)); }} /><span className="min-w-0 break-words">{item.title}</span></button></h3>
               {expandedTrackId === item.id ? <div id={`track-options-${item.id}`} role="region" aria-labelledby={`track-title-${item.id}`} className="px-4 pb-4">
               {item.artwork_url ? <div className="mb-4 aspect-square rounded-xl bg-cover bg-center" style={{ backgroundImage: `url(${item.artwork_url})` }} /> : null}
               <div className="flex flex-wrap items-center justify-between gap-2"><p className="text-xs text-white/40">{item.category}{item.duration_seconds != null ? ` · ${Number(item.duration_seconds).toFixed(2)} sec` : ""} · {item.publish_status === "published" ? "published" : "private"}</p><span className="rounded-lg bg-orange-500 px-2.5 py-1 text-xs font-black text-black">Technical: {item.verification_status}</span></div>
