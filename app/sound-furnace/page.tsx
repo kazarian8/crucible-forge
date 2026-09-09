@@ -527,7 +527,9 @@ export default function SoundFurnacePage() {
   const [playing, setPlaying] = useState<"source" | "result" | null>(null);
   const [engineerOpen, setEngineerOpen] = useState(false);
   const [stemFiles, setStemFiles] = useState<File[]>([]);
+  const [stemSource, setStemSource] = useState<Blob | null>(null);
   const [engineerTrackCount, setEngineerTrackCount] = useState(0);
+  const stemJobRef = useRef(false);
   const [separatingStems, setSeparatingStems] = useState(false);
   const [stemElapsed, setStemElapsed] = useState(0);
   const [stemEstimate, setStemEstimate] = useState(120);
@@ -538,6 +540,9 @@ export default function SoundFurnacePage() {
   const [completionStage, setCompletionStage] = useState<"choose" | "saving" | "actions">("choose");
   const [savedStar, setSavedStar] = useState<SavedStarResult | null>(null);
   const [publishing, setPublishing] = useState(false);
+
+  const engineerSource = savedStar?.chosenVersion === "forged" && result ? result.blob : file;
+  const hasCurrentStems = stemFiles.length > 0 && stemSource === engineerSource;
 
   useEffect(() => () => {
     if (sourceUrl) URL.revokeObjectURL(sourceUrl);
@@ -572,6 +577,7 @@ export default function SoundFurnacePage() {
   ] : [], [sourceStats]);
 
   async function acceptFile(candidate: File) {
+    if (stemJobRef.current) return;
     setError("");
     setResult(null);
     setStemFiles([]);
@@ -834,7 +840,7 @@ export default function SoundFurnacePage() {
 
   function openSavedEngineerMode() {
     setCompletionOpen(false);
-    openEngineerMode();
+    void openEngineerMode();
   }
 
   async function separateIntoStems(candidate: File, decoded: AudioBuffer | null = buffer) {
@@ -850,7 +856,7 @@ export default function SoundFurnacePage() {
       if (stemSource.size > 95 * 1024 * 1024) {
         throw new Error("This track is too long for stem separation. Trim it below roughly nine minutes and retry.");
       }
-      setStatus("Forge complete. Crucible is forging six synchronized stems…");
+      setStatus("Crucible is separating your track into six synchronized stems…");
       const form = new FormData();
       form.append("file", stemSource, stemSource.name);
       const response = await fetch("/api/stem-separation", {
@@ -896,7 +902,32 @@ export default function SoundFurnacePage() {
     }
   }
 
-  function openEngineerMode() {
+  async function openEngineerMode() {
+    if (busy || stemJobRef.current) return;
+    if (file && buffer && !hasCurrentStems) {
+      stemJobRef.current = true;
+      setError("");
+      try {
+        if (engineerSource && engineerSource !== file && result) {
+          const context = new AudioContext();
+          try {
+            const decoded = await context.decodeAudioData(await engineerSource.arrayBuffer());
+            await separateIntoStems(new File([engineerSource], result.name, { type: engineerSource.type }), decoded);
+          } finally {
+            await context.close();
+          }
+        } else {
+          await separateIntoStems(file, buffer);
+        }
+        setStemSource(engineerSource);
+      } catch (caught) {
+        setError(caught instanceof Error ? caught.message : "Stem separation failed. Please retry.");
+        setStatus("Your source track is ready. Retry Engineer Mode to separate it into stems.");
+      } finally {
+        stemJobRef.current = false;
+      }
+      return;
+    }
     setEngineerOpen(true);
     window.setTimeout(() => {
       document.getElementById("engineer-crucible")?.scrollIntoView({
@@ -1054,10 +1085,11 @@ export default function SoundFurnacePage() {
             </div>
             <button
               type="button"
+              disabled={busy || separatingStems}
               onClick={() => engineerOpen ? setEngineerOpen(false) : void openEngineerMode()}
               className="shrink-0 rounded-xl bg-gradient-to-r from-violet-300 to-orange-400 px-5 py-3 text-sm font-black text-black"
             >
-              {engineerOpen ? "Close Engineer Mode" : "Enable Crucible Engineer Mode"}
+              {separatingStems ? "Separating stems…" : engineerOpen ? "Close Engineer Mode" : file && !hasCurrentStems ? `Enter Engineer Mode · ${CREDIT_PRICES.stemSeparation} coins` : "Enable Crucible Engineer Mode"}
             </button>
           </div>
           <div className="mt-4 rounded-xl border border-amber-300/20 bg-amber-300/[0.06] p-4 text-xs leading-5 text-amber-100/70">
@@ -1065,7 +1097,7 @@ export default function SoundFurnacePage() {
           </div>
           {engineerOpen && stemFiles.length === 0 ? (
             <div className="mt-5 rounded-2xl border border-violet-300/15 bg-black/25 p-5 text-center text-sm text-white/45">
-              Engineer Mode is open. Use Add stems to import up to 16 tracks, or run six-stem separation from the Forge.
+              Upload a song before entering Engineer Mode to separate it automatically, or use Add stems to import existing stems.
             </div>
           ) : null}
         </section>
@@ -1095,7 +1127,7 @@ export default function SoundFurnacePage() {
                       {playing === "result" ? <Square size={13} fill="currentColor" /> : <Play size={13} fill="currentColor" />} {playing === "result" ? "Stop forge" : "Play forge"}
                     </button>
                     <a href={result.url} download={result.name} className="flex items-center justify-center gap-2 rounded-lg bg-orange-500 px-4 py-2 text-xs font-black text-black"><Download size={14} /> Download 24-bit WAV</a>
-                    <button type="button" onClick={() => void openEngineerMode()} disabled={busy} className="flex items-center justify-center gap-2 rounded-lg bg-violet-300 px-4 py-2 text-xs font-black text-violet-950 disabled:opacity-40"><Hammer size={14} /> {engineerOpen ? "Return to Engineer Mode" : stemFiles.length > 0 ? "Enter Engineer Mode" : "Enable Engineer Mode"}</button>
+                    <button type="button" onClick={() => void openEngineerMode()} disabled={busy} className="flex items-center justify-center gap-2 rounded-lg bg-violet-300 px-4 py-2 text-xs font-black text-violet-950 disabled:opacity-40"><Hammer size={14} /> {engineerOpen ? "Return to Engineer Mode" : hasCurrentStems ? "Enter Engineer Mode" : `Enter Engineer Mode · ${CREDIT_PRICES.stemSeparation} coins`}</button>
                   </div>
                   <div className="mt-4 flex flex-wrap gap-3 text-[10px] font-bold uppercase tracking-wider text-orange-100/55"><span>Peak {formatDb(result.stats.peakDb)}</span><span>Average {formatDb(result.stats.rmsDb)}</span><span>Dynamics {formatDb(result.stats.crestDb)}</span></div>
                 </div>
@@ -1161,7 +1193,7 @@ export default function SoundFurnacePage() {
                 <button type="button" onClick={() => setCompletionOpen(false)} className="mt-4 w-full rounded-xl border border-white/20 px-4 py-3 text-sm font-bold">Back to listening</button>
                 <p className="mt-5 text-xs font-black uppercase tracking-[.18em] text-white/35">What do you want to do next?</p>
                 <div className="mt-3 grid grid-cols-2 gap-3">
-                  <button type="button" onClick={openSavedEngineerMode} className="flex items-center justify-center gap-2 rounded-xl bg-violet-300 px-3 py-3 text-xs font-black text-violet-950"><Hammer size={15} />Engineer Mode</button>
+                  <button type="button" onClick={openSavedEngineerMode} className="flex items-center justify-center gap-2 rounded-xl bg-violet-300 px-3 py-3 text-xs font-black text-violet-950"><Hammer size={15} />{hasCurrentStems ? "Engineer Mode" : `Engineer Mode · ${CREDIT_PRICES.stemSeparation} coins`}</button>
                   <button type="button" disabled={publishing || savedStar.verificationStatus !== "verified"} onClick={() => void publishSavedVersion()} className="flex items-center justify-center gap-2 rounded-xl bg-emerald-400 px-3 py-3 text-xs font-black text-black disabled:opacity-35"><Send size={15} />{publishing ? "Publishing…" : "Publish"}</button>
                   <a href={`/tracks/${savedStar.id}?tab=distribution`} className="flex items-center justify-center gap-2 rounded-xl bg-[#ff2d19] px-3 py-3 text-xs font-black text-white"><Globe2 size={15} />Distribution</a>
                   <a href="/local-library" className="flex items-center justify-center gap-2 rounded-xl border border-white/12 bg-white/[0.04] px-3 py-3 text-xs font-black text-white"><LibraryBig size={15} />Save / My Tracks</a>

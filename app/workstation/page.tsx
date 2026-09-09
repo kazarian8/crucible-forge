@@ -17,7 +17,7 @@ export default function WorkstationPage() {
               <div className="flex items-center gap-2">
                 <h1 className="truncate text-sm font-black tracking-tight">Crucible Workstation</h1>
               </div>
-              <p className="truncate text-xs text-white/35">Engineer Mode · Audio DNA</p>
+              <p className="truncate text-xs text-white/35">Engineer Mode · Stem mixing</p>
             </div>
           </div>
           <div className="flex items-center gap-1.5">

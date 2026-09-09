@@ -10,6 +10,7 @@ import {
 } from "react";
 import {
   CircleStop,
+  Dna,
   Download,
   Drum,
   FastForward,
@@ -37,8 +38,18 @@ import {
 } from "lucide-react";
 import { createClient } from "../../lib/supabase/client";
 
-import StarDnaAnalyzer from "../star/StarDnaAnalyzer";
+import dynamic from "next/dynamic";
 
+const StarDnaAnalyzer = dynamic(() => import("../star/StarDnaAnalyzer"), {
+  loading: () => <p className="p-4 text-sm text-white/60">Loading track DNA…</p>,
+});
+
+type TrackAction = "shift" | "fade" | "gain" | "stretch" | "transpose" | "reverse" | "denoise";
+const TRACK_ACTIONS: { id: TrackAction; label: string }[] = [
+  { id: "shift", label: "Shift ↔" }, { id: "gain", label: "Gain" },
+  { id: "transpose", label: "Transpose" }, { id: "stretch", label: "Time stretch" },
+  { id: "fade", label: "Fade" }, { id: "denoise", label: "Denoise" }, { id: "reverse", label: "Reverse" },
+];
 const MAX_TRACKS = 16;
 const MAX_FILE_BYTES = 250 * 1024 * 1024;
 const SILENCE_THRESHOLD_DB = -52;
@@ -840,6 +851,19 @@ function TimelineWaveform({
 }
 
 export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCountChange }: StemSequencerProps) {
+  const editDialogRef = useRef<HTMLDialogElement>(null);
+  const editAbortRef = useRef<AbortController | null>(null);
+  const [trackAction, setTrackAction] = useState<TrackAction>("shift");
+  const [editTrackId, setEditTrackId] = useState("");
+  const [editValue, setEditValue] = useState(0);
+  const [editFadeOut, setEditFadeOut] = useState(0);
+  const [editProgress, setEditProgress] = useState<number | null>(null);
+  const [editError, setEditError] = useState("");
+  useEffect(() => () => editAbortRef.current?.abort(), []);
+  const trackMenuRef = useRef<HTMLDetailsElement>(null);
+  const dnaDialogRef = useRef<HTMLDialogElement>(null);
+  const [dnaOpen, setDnaOpen] = useState(false);
+  const [inspectorOpen, setInspectorOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const previewRef = useRef<HTMLAudioElement>(null);
   const previewUrlRef = useRef("");
@@ -1138,6 +1162,57 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
     commitTracks((current) =>
       current.map((track) => (track.id === id ? { ...track, ...patch } : track)),
     );
+  }
+
+  function openTrackAction(action: TrackAction) {
+    if (!selectedTrack || busy || recording) return;
+    if (trackMenuRef.current) trackMenuRef.current.open = false;
+    setTrackAction(action);
+    setEditTrackId(selectedTrack.id);
+    setEditValue(action === "stretch" ? 100 : action === "denoise" ? 40 : action === "gain" ? selectedTrack.gainDb : action === "fade" ? selectedTrack.fadeInSeconds : 0);
+    setEditFadeOut(selectedTrack.fadeOutSeconds);
+    setEditError("");
+    editDialogRef.current?.showModal();
+  }
+
+  async function applyTrackAction() {
+    if (editAbortRef.current) return;
+    const track = historyTracksRef.current.find((item) => item.id === editTrackId);
+    if (!track) { setEditError("Select an existing track first."); return; }
+    if (!Number.isFinite(editValue) || !Number.isFinite(editFadeOut)) { setEditError("Enter a valid number."); return; }
+    const controller = new AbortController();
+    editAbortRef.current = controller;
+    setBusy(true); setEditProgress(0); setEditError(""); stopAndClearPreview();
+    try {
+      if (trackAction === "shift") {
+        if (track.startSeconds + editValue < 0) throw new Error("A track cannot start before the beginning of the timeline.");
+        replaceTrack(track.id, { startSeconds: seconds(track.startSeconds + editValue) });
+      } else if (trackAction === "gain") {
+        if (editValue < -24 || editValue > 12) throw new Error("Choose gain between -24 and +12 dB.");
+        replaceTrack(track.id, { gainDb: editValue });
+      } else if (trackAction === "fade") {
+        if (editValue < 0 || editFadeOut < 0 || editValue + editFadeOut > trackDuration(track)) throw new Error("Fade times must fit within the clip.");
+        replaceTrack(track.id, { fadeInSeconds: editValue, fadeOutSeconds: editFadeOut });
+      } else {
+        const { processTrackAudio } = await import("../../lib/audio/track-edits");
+        const edited = await processTrackAudio(track.buffer, track.trimStartSeconds, track.trimEndSeconds, trackAction, editValue, controller.signal, setEditProgress);
+        controller.signal.throwIfAborted();
+        const scale = edited.duration / trackDuration(track);
+        replaceTrack(track.id, {
+          buffer: edited, trimStartSeconds: 0, trimEndSeconds: edited.duration,
+          fadeInSeconds: Math.min(edited.duration / 2, (trackAction === "reverse" ? track.fadeOutSeconds : track.fadeInSeconds) * scale),
+          fadeOutSeconds: Math.min(edited.duration / 2, (trackAction === "reverse" ? track.fadeInSeconds : track.fadeOutSeconds) * scale),
+        });
+        setCadenceProfiles({}); setCadenceSuggestions({}); setDnaSelection({ trackId: "", time: 0 });
+      }
+      setStatus(`${TRACK_ACTIONS.find((action) => action.id === trackAction)?.label} applied to ${track.name}. Play to audition; Undo restores the previous version.`);
+      editDialogRef.current?.close();
+    } catch (caught) {
+      if (!controller.signal.aborted) setEditError(caught instanceof Error ? caught.message : "This edit could not be completed.");
+    } finally {
+      editAbortRef.current = null;
+      if (!controller.signal.aborted) { setBusy(false); setEditProgress(null); }
+    }
   }
 
   function removeTrack(id: string) {
@@ -2176,6 +2251,24 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
         <p className="mt-2 text-[10px] leading-4 text-white/35">Projects and source audio are private to the signed-in account. Saving again updates this project.</p>
       </section> : null}
 
+      <div className="flex flex-wrap items-center gap-2 border-b border-white/10 bg-black/30 px-3 py-2">
+        <label className="flex min-w-0 items-center gap-2 text-sm text-white/70">
+          Stems
+          <select aria-label="Select stem" value={selectedTrack?.id ?? ""} disabled={!tracks.length} onChange={(event) => { setSelectedTrackId(event.target.value); setInspectorOpen(false); }} className="max-w-48 rounded-lg border border-white/15 bg-[#171717] px-2 py-2 text-sm text-white sm:max-w-80">
+            {!tracks.length ? <option value="">No stems loaded</option> : null}
+            {tracks.map((track, index) => <option key={track.id} value={track.id}>{index + 1}. {track.name}</option>)}
+          </select>
+        </label>
+        {selectedTrack ? <details ref={trackMenuRef} className="relative z-[60]" onKeyDown={(event) => { if (event.key === "Escape") event.currentTarget.open = false; }} onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) event.currentTarget.open = false; }}>
+          <summary onContextMenu={(event) => { event.preventDefault(); if (trackMenuRef.current) trackMenuRef.current.open = true; }} className="cursor-pointer list-none rounded-lg border border-white/15 px-3 py-2 text-sm text-white/80" aria-label="Selected track menu">Track ···</summary>
+          <div className="absolute right-0 top-full mt-1 grid max-h-[65dvh] w-52 gap-1 overflow-y-auto rounded-xl border border-white/15 bg-[#171717] p-2 shadow-2xl">
+            {TRACK_ACTIONS.map((action) => <button key={action.id} type="button" disabled={busy || recording} onClick={() => openTrackAction(action.id)} className="rounded-lg px-3 py-2 text-left text-sm hover:bg-white/10 disabled:opacity-30">{action.label}</button>)}
+            <button type="button" onClick={() => { if (trackMenuRef.current) trackMenuRef.current.open = false; setDnaOpen(true); dnaDialogRef.current?.showModal(); }} className="flex items-center gap-2 rounded-lg px-3 py-2 text-left text-sm hover:bg-white/10"><Dna size={18} aria-hidden="true" className="text-sky-300" /> View DNA</button>
+            <button type="button" onClick={() => { if (trackMenuRef.current) trackMenuRef.current.open = false; setInspectorOpen((open) => !open); }} className="rounded-lg px-3 py-2 text-left text-sm hover:bg-white/10">Trim · Fade · Gain · Pan</button>
+            <button type="button" onClick={() => { if (trackMenuRef.current) trackMenuRef.current.open = false; setEffectsTrackId(selectedTrack.id); }} className="rounded-lg px-3 py-2 text-left text-sm hover:bg-white/10">Track effects</button>
+          </div>
+        </details> : null}
+      </div>
       <nav aria-label="Engineer workspace views" className="flex items-center gap-1 border-b border-white/10 bg-black/30 px-3 py-2">
         <button type="button" aria-pressed={!lyricsOpen && !projectSettingsOpen && !cadenceOpen} onClick={() => { setLyricsOpen(false); setProjectSettingsOpen(false); setCadenceOpen(false); }} className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[9px] font-black uppercase tracking-wider ${!lyricsOpen && !projectSettingsOpen && !cadenceOpen ? "bg-white text-black" : "text-white/45"}`}><Layers3 size={14} />Timeline</button>
         <button type="button" aria-pressed={lyricsOpen} onClick={() => { setLyricsOpen(true); setProjectSettingsOpen(false); setInstrumentOpen(false); setCadenceOpen(false); }} className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[9px] font-black uppercase tracking-wider ${lyricsOpen ? "bg-white text-black" : "text-white/45"}`}><FileText size={14} />Lyrics</button>
@@ -2325,18 +2418,40 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
         </section>
       ) : null}
 
-      {!lyricsOpen && !projectSettingsOpen && !cadenceOpen ? <>
-      {selectedTrack ? <div className="space-y-3 p-3 sm:p-4">
+      <dialog ref={editDialogRef} onCancel={(event) => { if (editProgress !== null) event.preventDefault(); }} aria-labelledby="track-edit-title" className="fixed inset-0 m-auto max-h-[90dvh] w-[92vw] max-w-md overflow-y-auto rounded-2xl border border-white/15 bg-[#171717] p-5 text-white backdrop:bg-black/75">
+        <h2 id="track-edit-title" className="text-lg font-bold">{TRACK_ACTIONS.find((action) => action.id === trackAction)?.label}</h2>
+        <p className="mt-1 truncate text-sm text-white/55">{tracks.find((track) => track.id === editTrackId)?.name}</p>
+        <form onSubmit={(event) => { event.preventDefault(); void applyTrackAction(); }} className="mt-5 space-y-4">
+          {trackAction === "reverse" ? <p className="text-sm text-white/70">Reverse the audible clip. Its position on the timeline stays the same.</p> : <label className="block text-sm text-white/80">
+            {trackAction === "shift" ? "Shift in seconds (negative = earlier)" : trackAction === "gain" ? "Gain (dB)" : trackAction === "stretch" ? "Length (%) · 200% is twice as long" : trackAction === "transpose" ? "Pitch change (semitones)" : trackAction === "denoise" ? "Noise reduction (%)" : "Fade in (seconds)"}
+            <input autoFocus required type="number" disabled={editProgress !== null} value={Number.isNaN(editValue) ? "" : editValue} onChange={(event) => setEditValue(event.target.valueAsNumber)} min={trackAction === "stretch" ? 50 : trackAction === "transpose" ? -12 : trackAction === "gain" ? -24 : trackAction === "shift" ? undefined : 0} max={trackAction === "stretch" ? 200 : trackAction === "transpose" || trackAction === "gain" ? 12 : trackAction === "denoise" ? 100 : undefined} step={trackAction === "transpose" || trackAction === "denoise" || trackAction === "stretch" ? 1 : 0.01} className="mt-2 w-full rounded-lg border border-white/20 bg-black/40 px-3 py-3 text-base" />
+          </label>}
+          {trackAction === "fade" ? <label className="block text-sm text-white/80">Fade out (seconds)<input required type="number" min={0} step={0.01} disabled={editProgress !== null} value={Number.isNaN(editFadeOut) ? "" : editFadeOut} onChange={(event) => setEditFadeOut(event.target.valueAsNumber)} className="mt-2 w-full rounded-lg border border-white/20 bg-black/40 px-3 py-3 text-base" /></label> : null}
+          {trackAction === "stretch" || trackAction === "transpose" ? <p className="text-sm text-white/55">{trackAction === "stretch" ? "Pitch stays the same. Other stems keep their timing." : "Clip length stays the same."} Audition after applying; large changes can affect sound quality.</p> : null}
+          {trackAction === "denoise" ? <p className="text-sm text-white/55">Reduces steady background hiss using the clip’s quieter moments. Start low to preserve the voice and instruments.</p> : null}
+          {editError ? <p role="alert" className="text-sm text-red-300">{editError}</p> : null}
+          {editProgress !== null ? <p role="status" className="text-sm text-sky-200">Processing · {Math.round(editProgress * 100)}%</p> : null}
+          <div className="flex justify-end gap-2">
+            <button type="button" disabled={editProgress !== null} onClick={() => editDialogRef.current?.close()} className="rounded-lg border border-white/20 px-4 py-2 text-sm disabled:opacity-30">Cancel</button>
+            <button type="submit" disabled={editProgress !== null} className="rounded-lg bg-orange-400 px-4 py-2 text-sm font-bold text-black disabled:opacity-30">Apply</button>
+          </div>
+        </form>
+      </dialog>
+      <dialog ref={dnaDialogRef} onClose={() => setDnaOpen(false)} aria-label="Selected track DNA" className="fixed inset-0 m-auto max-h-[90dvh] w-[96vw] max-w-6xl overflow-y-auto rounded-2xl border border-white/15 bg-[#0a1420] p-4 text-white backdrop:bg-black/75">
+        <button type="button" autoFocus onClick={() => dnaDialogRef.current?.close()} className="mb-3 rounded-lg border border-white/20 px-4 py-2 text-sm">Close DNA</button>
+      {dnaOpen && selectedTrack ? <div className="space-y-3">
         <StarDnaAnalyzer key={selectedTrack.id} audio={selectedTrack.buffer} title={selectedTrack.name} mode="workstation" verified={false} trimRange={[selectedTrack.trimStartSeconds, selectedTrack.trimEndSeconds]} onInspect={(time) => setDnaSelection({ trackId: selectedTrack.id, time })} />
         <div className="flex flex-wrap items-center gap-2 rounded-xl border border-sky-300/20 bg-[#0a1420] p-3">
           <span className="mr-2 font-mono text-sm text-sky-200">{formatTime(dnaPosition)}</span>
           <button type="button" onClick={() => replaceTrack(selectedTrack.id, { trimStartSeconds: Math.min(dnaPosition, selectedTrack.trimEndSeconds) })} className="rounded-lg border border-orange-300/30 px-3 py-2 text-sm text-orange-200">Trim start here</button>
           <button type="button" onClick={() => replaceTrack(selectedTrack.id, { trimEndSeconds: Math.max(dnaPosition, selectedTrack.trimStartSeconds) })} className="rounded-lg border border-orange-300/30 px-3 py-2 text-sm text-orange-200">Trim end here</button>
-          <button type="button" onClick={() => document.getElementById("track-dna-controls")?.scrollIntoView({ behavior: "smooth", block: "center" })} className="rounded-lg border border-violet-300/30 px-3 py-2 text-sm text-violet-200">Fade · Gain · Pan</button>
-          <button type="button" onClick={() => setEffectsTrackId(selectedTrack.id)} className="rounded-lg border border-cyan-300/30 px-3 py-2 text-sm text-cyan-200">Track effects</button>
+          <button type="button" onClick={() => { dnaDialogRef.current?.close(); setInspectorOpen(true); }} className="rounded-lg border border-violet-300/30 px-3 py-2 text-sm text-violet-200">Fade · Gain · Pan</button>
+          <button type="button" onClick={() => { dnaDialogRef.current?.close(); setEffectsTrackId(selectedTrack.id); }} className="rounded-lg border border-cyan-300/30 px-3 py-2 text-sm text-cyan-200">Track effects</button>
           <span className="text-xs text-slate-400">Source preserved · edits apply on playback / export</span>
         </div>
       </div> : null}
+      </dialog>
+      {!lyricsOpen && !projectSettingsOpen && !cadenceOpen ? <>
       {tracks.length === 0 ? (
         <div className="min-h-[calc(100vh-12rem)] bg-[#070707]">
           <div className="flex h-12 items-center gap-2 border-b border-white/10 bg-black/60 px-3">
@@ -2480,7 +2595,7 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
                   return (
                     <article key={track.id} className={`grid h-[88px] grid-cols-[190px_1fr] border-b border-white/[0.07] last:border-b-0 ${inactive ? "opacity-45" : ""}`}>
                       <div className={`border-r px-2 py-2 ${selected ? "border-orange-400/50 bg-orange-500/10" : "border-white/10 bg-black/35"}`}>
-                        <button type="button" onClick={() => setSelectedTrackId(track.id)} className="block w-full text-left">
+                        <button type="button" onClick={() => setSelectedTrackId(track.id)} onContextMenu={(event) => { event.preventDefault(); setSelectedTrackId(track.id); if (trackMenuRef.current) trackMenuRef.current.open = true; }} className="block w-full text-left">
                           <span className="text-[9px] font-black uppercase tracking-wider text-orange-300/70">{String(index + 1).padStart(2, "0")}</span>
                           <span className="block truncate text-[11px] font-bold text-white/80" title={track.name}>{track.name}</span>
                         </button>
@@ -2612,11 +2727,11 @@ export default function StemSequencer({ onMixReady, initialFiles = [], onTrackCo
         </section>
       ) : null}
 
-      {selectedTrack ? (
+      {selectedTrack && inspectorOpen ? (
         <section id="track-dna-controls" className="mt-4 scroll-mt-24 rounded-2xl border border-orange-300/15 bg-orange-500/[0.035] p-4">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
-              <p className="text-[9px] font-black uppercase tracking-[0.18em] text-orange-300/70">Selected track inspector</p>
+              <button type="button" onClick={() => setInspectorOpen(false)} className="mb-2 text-sm text-orange-200">Close track controls</button>
               <h3 className="truncate text-sm font-black text-white/85">{selectedTrack.name}</h3>
             </div>
             <div className="flex items-center gap-1">
