@@ -1,10 +1,11 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { createClient } from "../../lib/supabase/client";
+import { createClient, isSupabaseConfigured } from "../../lib/supabase/client";
 
 export default function ResetPasswordPage() {
-  const supabase = useMemo(() => createClient(), []);
+  const configured = isSupabaseConfigured();
+  const supabase = useMemo(() => (configured ? createClient() : null), [configured]);
   const [password, setPassword] = useState("");
   const [confirmation, setConfirmation] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -16,6 +17,14 @@ export default function ResetPasswordPage() {
 
   useEffect(() => {
     let active = true;
+    if (!supabase) {
+      setReady(false);
+      setIsError(true);
+      setChecking(false);
+      setMessage("Password recovery is temporarily unavailable. Please try again later.");
+      return () => { active = false; };
+    }
+
     void (async () => {
       try {
         const { data: { user }, error } = await supabase.auth.getUser();
@@ -38,12 +47,13 @@ export default function ResetPasswordPage() {
         if (active) setChecking(false);
       }
     })();
+
     return () => { active = false; };
   }, [supabase]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!ready) return;
+    if (!ready || !supabase) return;
     if (password.length < 12) {
       setMessage("Use a password with at least 12 characters.");
       setIsError(true);
