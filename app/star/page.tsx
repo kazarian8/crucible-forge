@@ -4,7 +4,7 @@ import Link from "next/link";
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { CheckCircle2, Gauge, ImagePlus, LibraryBig, Music2, Play, Send, ShieldCheck, Sparkles, Upload, WandSparkles } from "lucide-react";
 import { createClient } from "../../lib/supabase/client";
-import { analyzeAudioFile, createWatermarkedPreview, type FileDnaAnalysis } from "../../lib/audio/file-dna";
+import { analyzeAudioFile, type FileDnaAnalysis } from "../../lib/audio/file-dna";
 import { playForgeConfirmation } from "../../lib/audio/forge-confirm";
 import { storageAudioMimeType } from "../../lib/audio/mime";
 
@@ -66,8 +66,8 @@ export default function CrucibleStarPage() {
   const [category, setCategory] = useState("auto");
   const [bpm, setBpm] = useState("");
   const [musicalKey, setMusicalKey] = useState("");
-  const [price, setPrice] = useState("0");
-  const [licenseType, setLicenseType] = useState("standard");
+  const price = "0";
+  const licenseType = "standard";
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [lastAnalysis, setLastAnalysis] = useState<FileDnaAnalysis | null>(null);
@@ -324,7 +324,6 @@ export default function CrucibleStarPage() {
       setDescription("");
       setBpm("");
       setMusicalKey("");
-      setPrice("0");
       setLastUploaded(insertedFile as StarFile);
       await load();
     } catch (error) {
@@ -349,44 +348,22 @@ export default function CrucibleStarPage() {
   }
 
   async function publish(item: StarFile) {
-    if (item.marketplace_item_id || item.publish_status === "published") return;
+    if (item.publish_status === "published") return;
     setPublishingId(item.id);
-    setMessage("Preparing a protected marketplace listing…");
-    const sb = createClient();
-    let previewPath: string | null = null;
+    setMessage("Posting your track to the public Moments wall…");
     try {
-      const { data: { user } } = await sb.auth.getUser();
-      if (!user) throw new Error("Sign in before publishing to the marketplace.");
-      if (item.price_cents > 0) {
-        setMessage("Creating a 30-second watermarked preview. The paid master stays private…");
-        const { data: master, error: downloadError } = await sb.storage.from("star-music").download(item.storage_path);
-        if (downloadError) throw downloadError;
-        const preview = await createWatermarkedPreview(master);
-        previewPath = `${user.id}/marketplace-previews/${item.id}.wav`;
-        const { error: previewError } = await sb.storage.from("star-music").upload(previewPath, preview, {
-          contentType: "audio/wav",
-          cacheControl: "3600",
-          upsert: true,
-        });
-        if (previewError) throw previewError;
-      }
-
-      const response = await fetch("/api/marketplace/publish", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ starFileId: item.id, previewPath }),
+      const response = await fetch("/api/tracks/publish", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ starFileId: item.id }),
       });
-      const result = await response.json() as { error?: string };
-      if (!response.ok) throw new Error(result.error || "Marketplace publishing failed.");
-      setMessage(`Published “${item.title}” to the Sound Library. The master remains in the private vault.`);
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Publishing failed.");
+      setMessage(`Published “${item.title}” to the public Moments wall for listening.`);
       setLastUploaded((current) => current?.id === item.id ? { ...current, publish_status: "published" } : current);
       await load();
     } catch (error) {
-      if (previewPath) await sb.storage.from("star-music").remove([previewPath]);
-      setMessage(error instanceof Error ? error.message : "Marketplace publishing failed.");
-    } finally {
-      setPublishingId("");
-    }
+      setMessage(error instanceof Error ? error.message : "Publishing failed.");
+    } finally { setPublishingId(""); }
   }
 
   function uploadNew() {
@@ -401,8 +378,6 @@ export default function CrucibleStarPage() {
     setCategory("auto");
     setBpm("");
     setMusicalKey("");
-    setPrice("0");
-    setLicenseType("standard");
     setMessage("");
     setLastAnalysis(null);
     setLastUploaded(null);
@@ -572,13 +547,11 @@ export default function CrucibleStarPage() {
               <select value={category} onChange={(e) => setCategory(e.target.value)} className="rounded-xl border border-white/10 bg-black/30 px-3 py-3 text-sm"><option value="auto">Auto-detect category</option><option value="beat">Beat</option><option value="loop">Loop</option><option value="sample">Sample</option><option value="one-shot">One-shot</option><option value="preset">Preset</option><option value="track">Track</option><option value="other">Other</option></select>
               <input value={bpm} onChange={(e) => setBpm(e.target.value)} inputMode="numeric" placeholder="BPM · auto if blank" className="rounded-xl border border-white/10 bg-black/30 px-3 py-3 text-sm" />
               <input value={musicalKey} onChange={(e) => setMusicalKey(e.target.value)} placeholder="Key · auto if blank" className="rounded-xl border border-white/10 bg-black/30 px-3 py-3 text-sm" />
-              <input value={price} onChange={(e) => setPrice(e.target.value)} inputMode="decimal" placeholder="Marketplace price · 0 = free" className="rounded-xl border border-white/10 bg-black/30 px-3 py-3 text-sm" />
-              <input value={licenseType} onChange={(e) => setLicenseType(e.target.value)} placeholder="License type" className="rounded-xl border border-white/10 bg-black/30 px-3 py-3 text-sm" />
               <textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Description / notes" className="min-h-24 rounded-xl border border-white/10 bg-black/30 p-3 text-sm sm:col-span-2" />
             </div>
             <button disabled={busy || !audioFile} className="mt-4 inline-flex items-center gap-2 rounded-xl bg-orange-500 px-5 py-3 text-sm font-black text-black disabled:opacity-40"><ShieldCheck size={17} />{busy ? "Processing…" : "Analyze, verify & upload"}</button>
             {message ? <p className="mt-4 rounded-xl border border-orange-300/15 bg-orange-500/10 p-3 text-sm text-orange-100">{message}</p> : null}
-            {lastUploaded ? <div className="mt-4 rounded-2xl border border-emerald-300/15 bg-emerald-400/[0.04] p-4"><p className="text-[10px] font-black uppercase tracking-[.2em] text-emerald-200">Choose what happens next</p><h3 className="mt-1 font-black">{lastUploaded.title}</h3><p className="mt-1 text-xs text-white/45">It is private unless you explicitly publish it.</p><div className="mt-3 flex flex-wrap gap-2"><Link href="/local-library" className="inline-flex items-center gap-2 rounded-xl bg-emerald-300 px-3 py-2 text-xs font-black text-black"><LibraryBig size={14} />Keep in Private Library</Link>{lastUploaded.publish_status === "published" ? <Link href="/sound-library" className="inline-flex items-center gap-2 rounded-xl border border-orange-300/20 px-3 py-2 text-xs font-black text-orange-200"><CheckCircle2 size={14} />View published file</Link> : <button type="button" disabled={publishingId === lastUploaded.id} onClick={() => void publish(lastUploaded)} className="inline-flex items-center gap-2 rounded-xl border border-orange-300/20 px-3 py-2 text-xs font-black text-orange-200"><Send size={14} />{publishingId === lastUploaded.id ? "Publishing…" : "Publish to Marketplace"}</button>}<button type="button" onClick={uploadNew} className="inline-flex items-center gap-2 rounded-xl border border-white/10 px-3 py-2 text-xs font-black"><Upload size={14} />Upload New</button></div></div> : null}
+            {lastUploaded ? <div className="mt-4 rounded-2xl border border-emerald-300/15 bg-emerald-400/[0.04] p-4"><p className="text-[10px] font-black uppercase tracking-[.2em] text-emerald-200">Choose what happens next</p><h3 className="mt-1 font-black">{lastUploaded.title}</h3><p className="mt-1 text-xs text-white/45">It is private unless you explicitly publish it.</p><div className="mt-3 flex flex-wrap gap-2"><Link href="/local-library" className="inline-flex items-center gap-2 rounded-xl bg-emerald-300 px-3 py-2 text-xs font-black text-black"><LibraryBig size={14} />Keep in Private Library</Link>{lastUploaded.publish_status === "published" ? <Link href="/moments" className="inline-flex items-center gap-2 rounded-xl border border-orange-300/20 px-3 py-2 text-xs font-black text-orange-200"><CheckCircle2 size={14} />View published file</Link> : <button type="button" disabled={publishingId === lastUploaded.id} onClick={() => void publish(lastUploaded)} className="inline-flex items-center gap-2 rounded-xl border border-orange-300/20 px-3 py-2 text-xs font-black text-orange-200"><Send size={14} />{publishingId === lastUploaded.id ? "Publishing…" : "Publish to wall"}</button>}<button type="button" onClick={uploadNew} className="inline-flex items-center gap-2 rounded-xl border border-white/10 px-3 py-2 text-xs font-black"><Upload size={14} />Upload New</button></div></div> : null}
           </form>
 
           <div className="rounded-3xl border border-white/10 bg-[#0a111c] p-5">
@@ -593,9 +566,9 @@ export default function CrucibleStarPage() {
             {files.map((item) => (
               <article key={item.id} className="rounded-2xl border border-white/8 bg-black/20 p-4">
                  {item.artwork_url ? <div className="mb-4 aspect-[16/6] rounded-xl bg-cover bg-center" style={{ backgroundImage: `url(${item.artwork_url})` }} /> : null}
-                <div className="flex flex-wrap items-center justify-between gap-3"><div><h3 className="font-black">{item.title}</h3><p className="mt-1 text-xs text-white/35">{item.category}{item.bpm ? ` · ${item.bpm} BPM` : ""}{item.musical_key ? ` · ${item.musical_key}` : ""}{item.price_cents > 0 ? ` · $${(item.price_cents / 100).toFixed(2)}` : " · free"}</p></div><div className="flex items-center gap-2"><span className="rounded-full border border-white/10 px-2 py-1 text-[10px] font-black uppercase text-white/55">{item.verification_status}</span><span className="rounded-xl bg-orange-500 px-3 py-1 text-sm font-black text-black">{item.grade ?? "—"} {item.analysis_score ?? ""}</span></div></div>
+                <div className="flex flex-wrap items-center justify-between gap-3"><div><h3 className="font-black">{item.title}</h3><p className="mt-1 text-xs text-white/35">{item.category}{item.bpm ? ` · ${item.bpm} BPM` : ""}{item.musical_key ? ` · ${item.musical_key}` : ""}</p></div><div className="flex items-center gap-2"><span className="rounded-full border border-white/10 px-2 py-1 text-[10px] font-black uppercase text-white/55">{item.verification_status}</span><span className="rounded-xl bg-orange-500 px-3 py-1 text-sm font-black text-black">{item.grade ?? "—"} {item.analysis_score ?? ""}</span></div></div>
                 {openDnaId === item.id && item.analysis?.content_type ? <div className="mt-3 rounded-xl border border-sky-300/15 bg-sky-400/[0.04] p-3"><p className="text-[10px] font-black uppercase tracking-wider text-sky-200">File DNA · {item.analysis.content_type} · <span className="transition-all duration-500">{item.analysis.content_confidence ?? 0}%</span></p><p className="mt-1 text-xs text-white/45">{(item.analysis.content_tags ?? []).join(" + ") || "No content tags"}</p><div className="mt-3 flex flex-wrap items-center gap-3 text-[11px] text-white/35"><span>{item.sample_rate ? `${item.sample_rate} Hz` : "rate n/a"}</span><span>{item.channels ? `${item.channels} ch` : "channels n/a"}</span><span>{item.duration_seconds ? `${Number(item.duration_seconds).toFixed(1)} sec` : "duration n/a"}</span><span>{(item.size_bytes / 1024 / 1024).toFixed(1)} MB</span></div></div> : null}
-                <div className="mt-3 flex flex-wrap gap-2"><button type="button" onClick={() => void play(item)} className="inline-flex items-center gap-2 rounded-xl border border-white/10 px-3 py-2 text-xs font-black"><Play size={14} />Private preview</button>{item.analysis?.content_type ? <button type="button" onClick={() => setOpenDnaId(openDnaId === item.id ? "" : item.id)} className="rounded-xl border border-sky-300/20 px-3 py-2 text-xs font-black text-sky-200">{openDnaId === item.id ? "Hide DNA" : "View DNA"}</button> : null}{openDnaId === item.id && item.analysis?.content_type ? confirmedIds.has(item.id) || item.analysis.artist_confirmed ? <>{confirmationGlowId === item.id ? <span className="rounded-xl border border-emerald-200 bg-emerald-300 px-3 py-2 text-xs font-black text-black shadow-[0_0_24px_rgba(110,231,183,0.7)]">DNA confirmed · {item.analysis.content_confidence ?? 0}%</span> : <span className="rounded-xl border border-emerald-300/15 px-3 py-2 text-xs font-black text-emerald-200">DNA confirmed</span>}<button type="button" onClick={() => beginCorrection(item)} className="rounded-xl px-2 py-2 text-[10px] font-black text-white/35">Edit DNA</button></> : <><button type="button" disabled={feedbackBusyId === item.id} onClick={() => void saveDnaFeedback(item, true)} className="rounded-xl border border-emerald-300/20 px-3 py-2 text-xs font-black text-emerald-200">DNA is right</button><button type="button" onClick={() => beginCorrection(item)} className="rounded-xl border border-sky-300/20 px-3 py-2 text-xs font-black text-sky-200">Correct DNA</button></> : null}{item.marketplace_item_id || item.publish_status === "published" ? <Link href="/sound-library" className="inline-flex items-center gap-2 rounded-xl bg-emerald-400 px-3 py-2 text-xs font-black text-black"><CheckCircle2 size={14} />Published</Link> : <><span className="inline-flex items-center rounded-xl border border-emerald-300/15 bg-emerald-400/[0.05] px-3 py-2 text-xs font-black text-emerald-200">Private draft</span><button type="button" disabled={publishingId === item.id || item.verification_status === "failed"} onClick={() => void publish(item)} className="inline-flex items-center gap-2 rounded-xl border border-orange-300/20 px-3 py-2 text-xs font-black text-orange-200 disabled:opacity-40"><Send size={14} />{publishingId === item.id ? "Publishing…" : "Publish (optional)"}</button></>}</div>
+                <div className="mt-3 flex flex-wrap gap-2"><button type="button" onClick={() => void play(item)} className="inline-flex items-center gap-2 rounded-xl border border-white/10 px-3 py-2 text-xs font-black"><Play size={14} />Private preview</button>{item.analysis?.content_type ? <button type="button" onClick={() => setOpenDnaId(openDnaId === item.id ? "" : item.id)} className="rounded-xl border border-sky-300/20 px-3 py-2 text-xs font-black text-sky-200">{openDnaId === item.id ? "Hide DNA" : "View DNA"}</button> : null}{openDnaId === item.id && item.analysis?.content_type ? confirmedIds.has(item.id) || item.analysis.artist_confirmed ? <>{confirmationGlowId === item.id ? <span className="rounded-xl border border-emerald-200 bg-emerald-300 px-3 py-2 text-xs font-black text-black shadow-[0_0_24px_rgba(110,231,183,0.7)]">DNA confirmed · {item.analysis.content_confidence ?? 0}%</span> : <span className="rounded-xl border border-emerald-300/15 px-3 py-2 text-xs font-black text-emerald-200">DNA confirmed</span>}<button type="button" onClick={() => beginCorrection(item)} className="rounded-xl px-2 py-2 text-[10px] font-black text-white/35">Edit DNA</button></> : <><button type="button" disabled={feedbackBusyId === item.id} onClick={() => void saveDnaFeedback(item, true)} className="rounded-xl border border-emerald-300/20 px-3 py-2 text-xs font-black text-emerald-200">DNA is right</button><button type="button" onClick={() => beginCorrection(item)} className="rounded-xl border border-sky-300/20 px-3 py-2 text-xs font-black text-sky-200">Correct DNA</button></> : null}{item.publish_status === "published" ? <Link href="/moments" className="inline-flex items-center gap-2 rounded-xl bg-emerald-400 px-3 py-2 text-xs font-black text-black"><CheckCircle2 size={14} />Published</Link> : <><span className="inline-flex items-center rounded-xl border border-emerald-300/15 bg-emerald-400/[0.05] px-3 py-2 text-xs font-black text-emerald-200">Private draft</span><button type="button" disabled={publishingId === item.id || item.verification_status === "failed"} onClick={() => void publish(item)} className="inline-flex items-center gap-2 rounded-xl border border-orange-300/20 px-3 py-2 text-xs font-black text-orange-200 disabled:opacity-40"><Send size={14} />{publishingId === item.id ? "Publishing…" : "Publish to wall"}</button></>}</div>
                 {correctingId === item.id ? <div className="mt-3 grid gap-2 rounded-2xl border border-sky-300/15 bg-sky-400/[0.04] p-3 sm:grid-cols-2"><select aria-label="Corrected content type" value={correctedType} onChange={(event) => setCorrectedType(event.target.value)} className="rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm"><option value="one-shot">One-shot</option><option value="loop">Loop</option><option value="sample">Sample</option><option value="stem">Stem</option><option value="track">Track</option></select><select aria-label="Corrected category" value={correctedCategory} onChange={(event) => setCorrectedCategory(event.target.value)} className="rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm"><option value="beat">Beat</option><option value="loop">Loop</option><option value="sample">Sample</option><option value="one-shot">One-shot</option><option value="track">Track</option><option value="other">Other</option></select><input aria-label="Corrected BPM" value={correctedBpm} onChange={(event) => setCorrectedBpm(event.target.value)} inputMode="numeric" placeholder="Correct BPM" className="rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm"/><input aria-label="Corrected key" value={correctedKey} onChange={(event) => setCorrectedKey(event.target.value)} placeholder="Correct key" className="rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm"/><input aria-label="Corrected content tags" value={correctedTags} onChange={(event) => setCorrectedTags(event.target.value)} placeholder="vocals, drums, bass…" className="rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm sm:col-span-2"/><div className="flex gap-2 sm:col-span-2"><button type="button" disabled={feedbackBusyId === item.id} onClick={() => void saveDnaFeedback(item, false)} className="rounded-xl bg-sky-300 px-3 py-2 text-xs font-black text-black">Save correction</button><button type="button" onClick={() => setCorrectingId("")} className="rounded-xl border border-white/10 px-3 py-2 text-xs font-black">Cancel</button></div></div> : null}
                 {playUrl[item.id] ? <audio className="mt-3 w-full" controls autoPlay src={playUrl[item.id]} /> : null}
               </article>
