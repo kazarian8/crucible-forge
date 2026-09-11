@@ -4,6 +4,8 @@ export const DEVELOPER_API_PLANS = {
     monthlyUsd: 49,
     monthlyRequests: 1000,
     requestsPerMinute: 30,
+    stripeProductId: "prod_VEvPoV8K5ljdAS",
+    stripePriceId: "price_1UERYeL2Q1z9VIQ1mPT2lTqd",
     description: "For prototypes and small music apps integrating Crucible.",
   },
   pro: {
@@ -11,6 +13,8 @@ export const DEVELOPER_API_PLANS = {
     monthlyUsd: 149,
     monthlyRequests: 5000,
     requestsPerMinute: 120,
+    stripeProductId: "prod_VEvPzd6M76arjm",
+    stripePriceId: "price_1UERYiL2Q1z9VIQ161feos4E",
     description: "For production music apps with steady Crucible API traffic.",
   },
   scale: {
@@ -18,6 +22,8 @@ export const DEVELOPER_API_PLANS = {
     monthlyUsd: 499,
     monthlyRequests: 25000,
     requestsPerMinute: 600,
+    stripeProductId: "prod_VEvPP9EnP0c5IN",
+    stripePriceId: "price_1UERYmL2Q1z9VIQ13gFyCTOz",
     description: "For high-volume partners building Crucible into their product.",
   },
 } as const;
