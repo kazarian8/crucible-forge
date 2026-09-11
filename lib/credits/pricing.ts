@@ -7,6 +7,7 @@ export const CREDIT_PRICES = {
   promotion12Hour: 300,
   promotion8Hour: 450,
   promotion4Hour: 900,
+  promoteBestTrack: 1000,
   usernameChange: 100,
   usernameFontChange: 25,
 } as const;
@@ -20,6 +21,7 @@ export const CREDIT_SERVICE_LABELS = {
   promotion12Hour: "3-day promotion · every 12 hours",
   promotion8Hour: "3-day promotion · every 8 hours",
   promotion4Hour: "3-day promotion · every 4 hours",
+  promoteBestTrack: "Promote your best track · hourly playlist push",
   usernameChange: "Username change",
   usernameFontChange: "Username font change",
 } as const;
