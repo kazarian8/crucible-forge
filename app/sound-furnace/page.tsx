@@ -3,10 +3,12 @@
 import StemSequencer from "../../components/sound-furnace/StemSequencer";
 import { CREDITS_UPDATED_EVENT } from "../../components/CreditBalance";
 import { CREDIT_PRICES } from "../../lib/credits/pricing";
-import { analyzeAudioFile } from "../../lib/audio/file-dna";
+import { createAnalysisCache, createMasteringReport, type MasteringReport as MasteringReportData } from "../../lib/audio/mastering-report";
+import MasteringReport from "../../components/star/MasteringReport";
 import { storageAudioMimeType } from "../../lib/audio/mime";
 import { createClient } from "../../lib/supabase/client";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   ChangeEvent,
   DragEvent,
@@ -50,6 +52,7 @@ type AudioStats = {
 };
 
 type ForgeResult = {
+  file: File;
   url: string;
   name: string;
   blob: Blob;
@@ -160,12 +163,10 @@ function analyzeBuffer(buffer: AudioBuffer): AudioStats {
 
 function waveformSamples(buffer: AudioBuffer, points = 1200) {
   const result = new Float32Array(points);
-  const block = Math.max(1, Math.floor(buffer.length / points));
-
   for (let point = 0; point < points; point += 1) {
     let max = 0;
-    const start = point * block;
-    const end = Math.min(buffer.length, start + block);
+    const start = Math.floor(point * buffer.length / points);
+    const end = Math.min(buffer.length, Math.max(start + 1, Math.floor((point + 1) * buffer.length / points)));
     for (let channel = 0; channel < buffer.numberOfChannels; channel += 1) {
       const data = buffer.getChannelData(channel);
       for (let index = start; index < end; index += 1) {
@@ -445,26 +446,32 @@ function Waveform({ samples, color, label }: { samples: Float32Array; color: str
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const ratio = window.devicePixelRatio || 1;
-    const width = canvas.clientWidth;
-    const height = canvas.clientHeight;
-    canvas.width = width * ratio;
-    canvas.height = height * ratio;
-    const context = canvas.getContext("2d");
-    if (!context) return;
-    context.scale(ratio, ratio);
-    context.clearRect(0, 0, width, height);
-    context.strokeStyle = "rgba(255,255,255,.08)";
-    context.beginPath();
-    context.moveTo(0, height / 2);
-    context.lineTo(width, height / 2);
-    context.stroke();
-    context.fillStyle = color;
-    const step = width / samples.length;
-    samples.forEach((sample, index) => {
-      const bar = Math.max(1, sample * (height - 12));
-      context.fillRect(index * step, (height - bar) / 2, Math.max(1, step * 0.74), bar);
-    });
+    const draw = () => {
+      const ratio = window.devicePixelRatio || 1;
+      const width = canvas.clientWidth;
+      const height = canvas.clientHeight;
+      canvas.width = width * ratio;
+      canvas.height = height * ratio;
+      const context = canvas.getContext("2d");
+      if (!context) return;
+      context.scale(ratio, ratio);
+      context.clearRect(0, 0, width, height);
+      context.strokeStyle = "rgba(255,255,255,.08)";
+      context.beginPath();
+      context.moveTo(0, height / 2);
+      context.lineTo(width, height / 2);
+      context.stroke();
+      context.fillStyle = color;
+      const step = width / samples.length;
+      samples.forEach((sample, index) => {
+        const bar = Math.max(1, sample * (height - 12));
+        context.fillRect(index * step, (height - bar) / 2, Math.max(1, step * 0.74), bar);
+      });
+    };
+    draw();
+    const observer = new ResizeObserver(draw);
+    observer.observe(canvas);
+    return () => observer.disconnect();
   }, [color, samples]);
 
   return (
@@ -510,6 +517,7 @@ function playForgeFinish() {
 }
 
 export default function SoundFurnacePage() {
+  const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
   const sourceAudioRef = useRef<HTMLAudioElement>(null);
   const resultAudioRef = useRef<HTMLAudioElement>(null);
@@ -538,6 +546,52 @@ export default function SoundFurnacePage() {
   const [completionStage, setCompletionStage] = useState<"choose" | "saving" | "actions">("choose");
   const [savedStar, setSavedStar] = useState<SavedStarResult | null>(null);
   const [publishing, setPublishing] = useState(false);
+  const [masterReport, setMasterReport] = useState<MasteringReportData | null>(null);
+  const [reportPending, setReportPending] = useState(false);
+  const [reportError, setReportError] = useState("");
+  const [resultTab, setResultTab] = useState<"master" | "distribution">("master");
+  const analyzeRef = useRef<ReturnType<typeof createAnalysisCache> | null>(null);
+  const reportGenerationRef = useRef(0);
+  const reportJobRef = useRef<{ file: File; task: Promise<MasteringReportData> } | null>(null);
+  const masterRejected = pendingVersion === "original" || savedStar?.chosenVersion === "original";
+
+  useEffect(() => () => { reportGenerationRef.current += 1; }, []);
+
+  function resetMasterReport() {
+    reportGenerationRef.current += 1;
+    reportJobRef.current = null;
+    setMasterReport(null);
+    setReportPending(false);
+    setReportError("");
+    setResultTab("master");
+    setSavedStar(null);
+    setPendingVersion(null);
+    setAuditionedMasterUrl("");
+    setCompletionOpen(false);
+    setCompletionStage("choose");
+  }
+
+  function prepareMasterReport(original: File, mastered: File) {
+    if (reportJobRef.current?.file === mastered) return reportJobRef.current.task;
+    const generation = reportGenerationRef.current;
+    analyzeRef.current ??= createAnalysisCache();
+    setReportPending(true);
+    setReportError("");
+    const task = createMasteringReport(original, mastered, analyzeRef.current).then((report) => {
+      if (generation === reportGenerationRef.current) setMasterReport(report);
+      return report;
+    }).catch((caught: unknown) => {
+      if (generation === reportGenerationRef.current) {
+        reportJobRef.current = null;
+        setReportError("Star analysis could not finish. Your master is ready to play and download. Retry the report below.");
+      }
+      throw caught;
+    }).finally(() => {
+      if (generation === reportGenerationRef.current) setReportPending(false);
+    });
+    reportJobRef.current = { file: mastered, task };
+    return task;
+  }
 
   useEffect(() => () => {
     if (sourceUrl) URL.revokeObjectURL(sourceUrl);
@@ -572,6 +626,11 @@ export default function SoundFurnacePage() {
   ] : [], [sourceStats]);
 
   async function acceptFile(candidate: File) {
+    if (busy || savingVersionRef.current) return;
+    resetMasterReport();
+    sourceAudioRef.current?.pause();
+    resultAudioRef.current?.pause();
+    setPlaying(null);
     setError("");
     setResult(null);
     setStemFiles([]);
@@ -613,6 +672,11 @@ export default function SoundFurnacePage() {
   }
 
   function acceptStemMix(mixed: AudioBuffer, name: string) {
+    if (busy || savingVersionRef.current) return;
+    resetMasterReport();
+    sourceAudioRef.current?.pause();
+    resultAudioRef.current?.pause();
+    setPlaying(null);
     setError("");
     setResult(null);
     if (sourceUrl) URL.revokeObjectURL(sourceUrl);
@@ -648,7 +712,7 @@ export default function SoundFurnacePage() {
 
   async function handleForge(event: FormEvent) {
     event.preventDefault();
-    if (!file || !buffer) return;
+    if (!file || !buffer || busy || savingVersionRef.current) return;
     const submitter = (event.nativeEvent as SubmitEvent).submitter as HTMLButtonElement | null;
     const requestedMode: ForgeMode = submitter?.value === "auto" ? "auto" : mode;
     if (requestedMode === "guided" && prompt.trim().length < 8) {
@@ -656,6 +720,8 @@ export default function SoundFurnacePage() {
       return;
     }
     setMode(requestedMode);
+    resetMasterReport();
+    setResult(null);
     setCompletionOpen(false);
     setPendingVersion(null);
     setAuditionedMasterUrl("");
@@ -672,8 +738,10 @@ export default function SoundFurnacePage() {
       const blob = encodeWav24(forged);
       const url = URL.createObjectURL(blob);
       const baseName = file.name.replace(/\.[^.]+$/, "");
+      const masteredFile = new File([blob], `${baseName}-crucible-master-24bit.wav`, { type: "audio/wav" });
       if (result?.url) URL.revokeObjectURL(result.url);
       setResult({
+        file: masteredFile,
         url,
         name: `${baseName}-crucible-master-24bit.wav`,
         blob,
@@ -684,7 +752,8 @@ export default function SoundFurnacePage() {
       setCompletionStage("choose");
       setSavedStar(null);
       setCompletionOpen(false);
-      setStatus("Forge complete. Listen to your finished master and compare it with the original before choosing a version.");
+      setStatus("Master ready. CrucibleStar is preparing your before-and-after DNA report automatically. Listen, then keep your master to continue to distribution.");
+      void prepareMasterReport(file, masteredFile).catch(() => undefined);
       window.setTimeout(() => document.getElementById("forge-ab-comparison")?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
     } catch {
       setError("The forge could not finish this track in your browser. Try closing other tabs or using a smaller file.");
@@ -702,20 +771,22 @@ export default function SoundFurnacePage() {
     setPlaying(null);
     setCompletionStage("saving");
     setError("");
-    setStatus("Saving your choice and checking the exact file with CrucibleStar…");
+    setStatus("Saving your chosen audio with its CrucibleStar report…");
 
     const selectedFile = chosenVersion === "forged"
-      ? new File([result.blob], result.name, { type: "audio/wav" })
+      ? result.file
       : file;
-    const supabase = createClient();
+    let supabase: ReturnType<typeof createClient> | undefined;
     let storagePath = "";
 
     try {
+      supabase = createClient();
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("Sign in before saving this track and requesting its CrucibleStar badge.");
       if (selectedFile.size > MAX_FILE_BYTES) throw new Error("The selected file is larger than CrucibleStar's 250 MB limit.");
 
-      const { analysis, hash } = await analyzeAudioFile(selectedFile);
+      const report = await prepareMasterReport(file, result.file);
+      const { analysis, hash } = chosenVersion === "forged" ? report.mastered : report.original;
       const cleanName = selectedFile.name.replace(/[^A-Za-z0-9._-]+/g, "-").slice(-120);
       storagePath = `${user.id}/${crypto.randomUUID()}-${cleanName}`;
       const mimeType = storageAudioMimeType(selectedFile);
@@ -779,15 +850,18 @@ export default function SoundFurnacePage() {
           learned_from_examples: analysis.learnedFromExamples,
           confidence_source: analysis.confidenceSource,
           feature_vector: featureVector,
+          chosen_version: chosenVersion,
+          mastering_report: report,
         },
         publish_status: analysis.status === "verified" ? "ready" : "draft",
       }).select("id,grade,analysis_score,verification_status").single();
 
       if (insertError || !saved) {
-        await supabase.storage.from("star-music").remove([storagePath]);
         throw insertError ?? new Error("The chosen file could not be saved.");
       }
 
+      // The saved row now owns this upload; later UI errors must not delete it.
+      storagePath = "";
       setSavedStar({
         id: String(saved.id),
         grade: String(saved.grade ?? analysis.grade),
@@ -796,13 +870,18 @@ export default function SoundFurnacePage() {
         chosenVersion,
       });
       setCompletionStage("actions");
+      if (chosenVersion === "forged") {
+        setResultTab("distribution");
+        setCompletionOpen(false);
+        router.push(`/tracks/${saved.id}?tab=distribution`);
+      }
       setStatus(
         saved.verification_status === "verified"
           ? `CrucibleStar verified the ${chosenVersion} version. Grade ${saved.grade ?? analysis.grade} · ${saved.analysis_score ?? analysis.score}/100.`
           : `The ${chosenVersion} version is saved privately. CrucibleStar marked it ${saved.verification_status} for review.`,
       );
     } catch (caught) {
-      if (storagePath) await supabase.storage.from("star-music").remove([storagePath]);
+      if (storagePath && supabase) await supabase.storage.from("star-music").remove([storagePath]).catch(() => undefined);
       setError(caught instanceof Error ? caught.message : "The selected version could not be saved.");
       setCompletionStage("choose");
       setStatus("Your original and forged audio are still safe. Choose a version and try again.");
@@ -1045,7 +1124,7 @@ export default function SoundFurnacePage() {
           </form>
         </div>
 
-        <section id="engineer-crucible" className="scroll-mt-24 mt-10 rounded-[28px] border border-violet-300/20 bg-gradient-to-br from-violet-500/[0.08] to-orange-500/[0.05] p-5 sm:p-7">
+        {masterRejected ? <section id="engineer-crucible" className="scroll-mt-24 mt-10 rounded-[28px] border border-violet-300/20 bg-gradient-to-br from-violet-500/[0.08] to-orange-500/[0.05] p-5 sm:p-7">
           <div className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
             <div>
               <p className="text-xs font-black uppercase tracking-[0.2em] text-violet-200">Crucible Engineer Mode</p>
@@ -1068,7 +1147,7 @@ export default function SoundFurnacePage() {
               Engineer Mode is open. Use Add stems to import up to 16 tracks, or run six-stem separation from the Forge.
             </div>
           ) : null}
-        </section>
+        </section> : null}
 
         {sourceSamples && (
           <section id="forge-ab-comparison" className="mt-10 scroll-mt-24 rounded-[28px] border border-white/10 bg-white/[0.025] p-5 sm:p-7">
@@ -1087,17 +1166,32 @@ export default function SoundFurnacePage() {
               </div>
 
               {result ? (
-                <div className="rounded-2xl border border-orange-400/25 bg-orange-500/[0.045] p-4">
-                  <Waveform samples={result.samples} color="rgba(251,146,60,.82)" label="Crucible forge" />
-                  <audio ref={resultAudioRef} src={result.url} onPlaying={() => setAuditionedMasterUrl(result.url)} onEnded={() => setPlaying(null)} preload="auto" playsInline />
+                <div className="rounded-2xl border border-orange-400/25 bg-orange-500/[0.045] p-4" data-testid="mastered-result">
+                  <Waveform key={result.url} samples={result.samples} color="rgba(251,146,60,.82)" label="Mastered · 24-bit WAV" />
+                  <audio key={result.url} ref={resultAudioRef} src={result.url} onPlaying={() => setAuditionedMasterUrl(result.url)} onEnded={() => setPlaying(null)} preload="auto" playsInline />
                   <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                     <button type="button" onClick={() => togglePlayback("result")} className="flex items-center justify-center gap-2 rounded-lg border border-orange-300/20 px-4 py-2 text-xs font-bold text-orange-100">
                       {playing === "result" ? <Square size={13} fill="currentColor" /> : <Play size={13} fill="currentColor" />} {playing === "result" ? "Stop forge" : "Play forge"}
                     </button>
                     <a href={result.url} download={result.name} className="flex items-center justify-center gap-2 rounded-lg bg-orange-500 px-4 py-2 text-xs font-black text-black"><Download size={14} /> Download 24-bit WAV</a>
-                    <button type="button" onClick={() => void openEngineerMode()} disabled={busy} className="flex items-center justify-center gap-2 rounded-lg bg-violet-300 px-4 py-2 text-xs font-black text-violet-950 disabled:opacity-40"><Hammer size={14} /> {engineerOpen ? "Return to Engineer Mode" : stemFiles.length > 0 ? "Enter Engineer Mode" : "Enable Engineer Mode"}</button>
+                    {masterRejected ? <button type="button" onClick={() => void openEngineerMode()} disabled={busy} className="flex items-center justify-center gap-2 rounded-lg bg-violet-300 px-4 py-2 text-xs font-black text-violet-950 disabled:opacity-40"><Hammer size={14} />Enter Engineer Mode</button> : null}
                   </div>
                   <div className="mt-4 flex flex-wrap gap-3 text-[10px] font-bold uppercase tracking-wider text-orange-100/55"><span>Peak {formatDb(result.stats.peakDb)}</span><span>Average {formatDb(result.stats.rmsDb)}</span><span>Dynamics {formatDb(result.stats.crestDb)}</span></div>
+                  <div role="tablist" aria-label="Mastered track" className="mt-4 flex gap-2">
+                    <button type="button" role="tab" id="master-report-tab" aria-controls="master-report-panel" aria-selected={resultTab === "master"} onClick={() => setResultTab("master")} className={`rounded-lg px-4 py-2 text-sm font-bold ${resultTab === "master" ? "bg-orange-400 text-black" : "border border-white/20"}`}>Star &amp; DNA</button>
+                    <button type="button" role="tab" id="master-distribution-tab" aria-controls="master-distribution-panel" aria-selected={resultTab === "distribution"} onClick={() => setResultTab("distribution")} className={`rounded-lg px-4 py-2 text-sm font-bold ${resultTab === "distribution" ? "bg-orange-400 text-black" : "border border-white/20"}`}><Globe2 size={15} className="mr-2 inline" />Distribution</button>
+                  </div>
+                  <div role="tabpanel" id="master-report-panel" aria-labelledby="master-report-tab" hidden={resultTab !== "master"}>
+                    {reportPending ? <p role="status" className="mt-4 text-sm text-sky-100"><LoaderCircle size={16} className="mr-2 inline animate-spin" />Preparing Star score and full DNA report…</p> : null}
+                    {reportError ? <div role="alert" className="mt-4 text-sm text-amber-100"><p>{reportError}</p><button type="button" disabled={reportPending} onClick={() => { if (file) void prepareMasterReport(file, result.file).catch(() => undefined); }} className="mt-2 rounded-lg border border-amber-200/30 px-3 py-2 font-bold">Retry Star analysis</button></div> : null}
+                    {masterReport ? <MasteringReport report={masterReport} /> : null}
+                  </div>
+                  <div role="tabpanel" id="master-distribution-panel" aria-labelledby="master-distribution-tab" hidden={resultTab !== "distribution"} className="mt-4 text-sm">
+                    <p>Keep your mastered version to save its DNA report and open distribution.</p>
+                    {savedStar?.chosenVersion === "forged" ? <Link href={`/tracks/${savedStar.id}?tab=distribution`} className="mt-3 inline-flex rounded-lg bg-orange-400 px-4 py-3 font-bold text-black">Open distribution</Link> : <button type="button" disabled={busy || auditionedMasterUrl !== result.url} onClick={() => { setPendingVersion("forged"); setCompletionOpen(true); }} className="mt-3 rounded-lg bg-orange-400 px-4 py-3 font-bold text-black disabled:opacity-40">Keep master &amp; continue</button>}
+                    {auditionedMasterUrl !== result.url ? <p className="mt-2 text-white/60">Play the master first to choose this version.</p> : null}
+                    <p className="mt-3 text-white/60">Delivery to streaming platforms is completed through <a href={process.env.NEXT_PUBLIC_DISTROKID_AFFILIATE_URL?.trim() || "https://distrokid.com/"} target="_blank" rel="sponsored noopener noreferrer" className="underline">DistroKid</a>.</p>
+                  </div>
                 </div>
               ) : (
                 <div className="flex min-h-36 items-center justify-center rounded-2xl border border-dashed border-white/10 text-center text-sm text-white/30"><Hammer className="mr-2" size={18} /> The forged waveform will appear here.</div>
@@ -1126,7 +1220,7 @@ export default function SoundFurnacePage() {
 
             {completionStage === "choose" ? (
               <>
-                <p className="mt-4 text-sm leading-6 text-white/55">Choose which exact audio file becomes your saved track. CrucibleStar will grade that version and attach any badge to it. Your original is never deleted.</p>
+                <p className="mt-4 text-sm leading-6 text-white/55">Keep your master to save its Star score and DNA report, then go straight to distribution. You can also choose to keep the original.</p>
                 <div className="mt-5 grid gap-3 sm:grid-cols-2">
                   <button type="button" aria-pressed={pendingVersion === "forged"} onClick={() => setPendingVersion("forged")} className="rounded-2xl bg-gradient-to-r from-orange-500 to-amber-300 p-4 text-left text-black">
                     <span className="block text-sm font-black">Use forged version</span>
@@ -1138,14 +1232,16 @@ export default function SoundFurnacePage() {
                   </button>
                 </div>
                 <p className="mt-4 text-sm text-orange-100" aria-live="polite">{pendingVersion ? `Selected: ${pendingVersion === "forged" ? "forged 24-bit master" : "unchanged original"}` : "Select a version above. Nothing is saved until you confirm."}</p>
-                <button type="button" disabled={!pendingVersion || auditionedMasterUrl !== result.url} onClick={() => { if (pendingVersion) void keepVersion(pendingVersion); }} className="mt-3 w-full rounded-xl bg-sky-300 px-4 py-3 text-sm font-black text-sky-950 disabled:opacity-35">Confirm version · Save and check with Star</button>
+                {pendingVersion === "original" ? <p className="mt-3 text-sm text-violet-200">Prefer to adjust the track yourself? Engineer Mode is available after saving your original.</p> : null}
+                <button type="button" disabled={!pendingVersion || auditionedMasterUrl !== result.url} onClick={() => { if (pendingVersion) void keepVersion(pendingVersion); }} className="mt-3 w-full rounded-xl bg-sky-300 px-4 py-3 text-sm font-black text-sky-950 disabled:opacity-35">{pendingVersion === "forged" ? "Keep master · Continue to distribution" : "Confirm version · Save original"}</button>
+                {error ? <p role="alert" className="mt-3 text-sm text-red-200">{error}</p> : null}
                 <button type="button" onClick={() => setCompletionOpen(false)} className="mt-4 w-full rounded-xl px-4 py-2 text-xs font-bold text-white/40">Keep comparing before I decide</button>
               </>
             ) : null}
 
             {completionStage === "saving" ? (
               <div className="grid min-h-44 place-items-center text-center">
-                <div><LoaderCircle className="mx-auto animate-spin text-sky-300" size={30} /><p className="mt-4 font-black">CrucibleStar is checking your final file…</p><p className="mt-2 text-xs text-white/40">The badge will belong only to this exact version.</p></div>
+                <div><LoaderCircle className="mx-auto animate-spin text-sky-300" size={30} /><p className="mt-4 font-black">{reportPending ? "Finishing your DNA report…" : "Saving your track and DNA report…"}</p><p className="mt-2 text-xs text-white/40">The Star score belongs to this exact version.</p></div>
               </div>
             ) : null}
 
@@ -1161,12 +1257,12 @@ export default function SoundFurnacePage() {
                 <button type="button" onClick={() => setCompletionOpen(false)} className="mt-4 w-full rounded-xl border border-white/20 px-4 py-3 text-sm font-bold">Back to listening</button>
                 <p className="mt-5 text-xs font-black uppercase tracking-[.18em] text-white/35">What do you want to do next?</p>
                 <div className="mt-3 grid grid-cols-2 gap-3">
-                  <button type="button" onClick={openSavedEngineerMode} className="flex items-center justify-center gap-2 rounded-xl bg-violet-300 px-3 py-3 text-xs font-black text-violet-950"><Hammer size={15} />Engineer Mode</button>
+                  {savedStar.chosenVersion === "original" ? <button type="button" onClick={openSavedEngineerMode} className="flex items-center justify-center gap-2 rounded-xl bg-violet-300 px-3 py-3 text-xs font-black text-violet-950"><Hammer size={15} />Engineer Mode</button> : null}
                   <button type="button" disabled={publishing || savedStar.verificationStatus !== "verified"} onClick={() => void publishSavedVersion()} className="flex items-center justify-center gap-2 rounded-xl bg-emerald-400 px-3 py-3 text-xs font-black text-black disabled:opacity-35"><Send size={15} />{publishing ? "Publishing…" : "Publish"}</button>
                   <a href={`/tracks/${savedStar.id}?tab=distribution`} className="flex items-center justify-center gap-2 rounded-xl bg-[#ff2d19] px-3 py-3 text-xs font-black text-white"><Globe2 size={15} />Distribution</a>
                   <a href="/local-library" className="flex items-center justify-center gap-2 rounded-xl border border-white/12 bg-white/[0.04] px-3 py-3 text-xs font-black text-white"><LibraryBig size={15} />Save / My Tracks</a>
                 </div>
-                {savedStar.verificationStatus !== "verified" ? <p className="mt-3 text-xs leading-5 text-amber-100/65">Publishing stays locked until this version passes CrucibleStar. You can save it or improve it in Engineer Mode now.</p> : null}
+                {savedStar.verificationStatus !== "verified" ? <p className="mt-3 text-xs leading-5 text-amber-100/65">This version is saved privately. Publishing stays locked until it passes CrucibleStar.</p> : null}
               </>
             ) : null}
           </div>

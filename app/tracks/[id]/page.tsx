@@ -5,6 +5,8 @@ import { useParams } from "next/navigation";
 import { Copy, Download, ExternalLink, Globe2, History, Link2, LockKeyhole, MoreHorizontal, Music2, SlidersHorizontal, Users } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { createClient } from "../../../lib/supabase/client";
+import MasteringReport from "../../../components/star/MasteringReport";
+import type { MasteringReport as MasteringReportData } from "../../../lib/audio/mastering-report";
 
 type Track = {
   id: string;
@@ -15,6 +17,7 @@ type Track = {
   size_bytes: number;
   verification_status: string;
   created_at: string;
+  analysis: { chosen_version?: "original" | "forged"; mastering_report?: MasteringReportData } | null;
 };
 
 type TrackVersion = {
@@ -72,7 +75,7 @@ export default function TrackProjectPage() {
     const [{ data: trackData, error: trackError }, { data: versionData, error: versionError }] = await Promise.all([
       supabase
         .from("star_music_files")
-        .select("id,title,artwork_url,storage_path,original_filename,size_bytes,verification_status,created_at")
+        .select("id,title,artwork_url,storage_path,original_filename,size_bytes,verification_status,created_at,analysis")
         .eq("id", trackId)
         .single(),
       supabase
@@ -245,6 +248,9 @@ export default function TrackProjectPage() {
           <section className="mt-7 rounded-3xl bg-white p-6 shadow-sm">
             <div className="grid size-14 place-items-center rounded-2xl bg-emerald-500 text-white"><Globe2 size={26} /></div>
             <h2 className="mt-5 text-2xl font-black">Distribute to 40+ Platforms</h2>
+            <p className="mt-3 break-words text-sm font-bold">{track.analysis?.chosen_version === "forged" ? "Accepted master" : "Saved track"}: {track.original_filename}</p>
+            {track.analysis?.mastering_report ? <MasteringReport report={track.analysis.mastering_report} /> : null}
+            <button type="button" onClick={() => void downloadVersion(track)} className="mt-4 inline-flex items-center gap-2 rounded-xl bg-zinc-200 px-4 py-3 text-sm font-bold"><Download size={17} />Download accepted audio</button>
             <p className="mt-2 max-w-xl text-sm leading-6 text-zinc-500">Send this finished track to DistroKid to manage delivery to Spotify, Apple Music, TikTok, YouTube Music, and other supported stores.</p>
             <a href={DISTROKID_URL} target="_blank" rel="sponsored noopener noreferrer" className="mt-6 inline-flex items-center gap-2 rounded-2xl bg-[#ff2d19] px-5 py-3 font-black text-white">Continue to DistroKid <ExternalLink size={17} /></a>
             <p className="mt-4 text-xs leading-5 text-zinc-400">Distribution is completed on DistroKid. Crucible does not mark a release distributed until a distributor confirms it.</p>
