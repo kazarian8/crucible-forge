@@ -1,5 +1,6 @@
 import "./globals.css";
 import CreditBalance from "../components/CreditBalance";
+import AccountQuickMenu from "../components/AccountQuickMenu";
 import ArtistBottomNav from "../components/ArtistBottomNav";
 import SequencerClipGestureGuard from "../components/SequencerClipGestureGuard";
 import SupportDock from "../components/SupportDock";
@@ -28,6 +29,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <CrucibleProductSwitcher />
         <ArtistBottomNav />
         <SequencerClipGestureGuard />
+        <AccountQuickMenu />
         <CreditBalance />
         <SupportDock />
       </body>
