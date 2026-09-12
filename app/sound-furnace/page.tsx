@@ -3,6 +3,7 @@
 import StemSequencer from "../../components/sound-furnace/StemSequencer";
 import { CREDITS_UPDATED_EVENT } from "../../components/CreditBalance";
 import { CREDIT_PRICES } from "../../lib/credits/pricing";
+import { compareMasterQuality, type MasterQuality } from "../../lib/audio/master-quality";
 import { analyzeAudioFile } from "../../lib/audio/file-dna";
 import { storageAudioMimeType } from "../../lib/audio/mime";
 import { createClient } from "../../lib/supabase/client";
@@ -50,6 +51,7 @@ type AudioStats = {
 };
 
 type ForgeResult = {
+  quality: MasterQuality & { beforeSha256: string; afterSha256: string };
   url: string;
   name: string;
   blob: Blob;
@@ -670,10 +672,15 @@ export default function SoundFurnacePage() {
     try {
       const forged = await forgeBuffer(buffer, requestedMode, prompt);
       const blob = encodeWav24(forged);
+      setStatus("Comparing the original and master with CrucibleStar…");
+      const before = await analyzeAudioFile(file);
+      const after = await analyzeAudioFile(blob);
+      const quality = { ...compareMasterQuality(before.analysis, after.analysis), beforeSha256: before.hash, afterSha256: after.hash };
       const url = URL.createObjectURL(blob);
       const baseName = file.name.replace(/\.[^.]+$/, "");
       if (result?.url) URL.revokeObjectURL(result.url);
       setResult({
+        quality,
         url,
         name: `${baseName}-crucible-master-24bit.wav`,
         blob,
@@ -779,6 +786,8 @@ export default function SoundFurnacePage() {
           learned_from_examples: analysis.learnedFromExamples,
           confidence_source: analysis.confidenceSource,
           feature_vector: featureVector,
+          master_quality: result.quality,
+          chosen_version: chosenVersion,
         },
         publish_status: analysis.status === "verified" ? "ready" : "draft",
       }).select("id,grade,analysis_score,verification_status").single();
@@ -1108,6 +1117,7 @@ export default function SoundFurnacePage() {
               <p className="text-sm text-sky-100">{auditionedMasterUrl === result.url ? "Take your time comparing. Continue when you are ready to choose." : "Play the finished master first, then choose the version you want to keep."}</p>
               <button type="button" disabled={busy || auditionedMasterUrl !== result.url} onClick={() => { sourceAudioRef.current?.pause(); resultAudioRef.current?.pause(); setPlaying(null); setCompletionOpen(true); }} className="mt-3 rounded-xl bg-orange-400 px-5 py-3 text-sm font-black text-black disabled:opacity-40">{savedStar ? "View saved version and next steps" : "Ready to choose my version"}</button>
             </div> : null}
+            {result ? <div className="mt-4 rounded-xl border border-amber-300/25 p-4 text-sm" role="status"><p className="font-bold">CrucibleStar: {result.quality.outcome === "technical_improvement" ? "Technical improvement measured" : "Listening review needed"}</p><p className="mt-2">Technical score: {result.quality.before.score} → {result.quality.after.score} / 100</p>{result.quality.reasons.map((reason) => <p className="mt-2" key={reason}>{reason}</p>)}<p className="mt-2 text-white/60">Compare at matched playback levels before choosing. These checks do not measure every aspect of sound quality.</p></div> : null}
             {result && <div className="mt-5 flex items-start gap-3 rounded-xl border border-emerald-400/20 bg-emerald-400/[0.06] p-4 text-sm text-emerald-100/75"><CheckCircle2 className="mt-0.5 shrink-0" size={18} /><p>Forge completed locally. The original file remains untouched; the download is a new 24-bit WAV.</p></div>}
           </section>
         )}
