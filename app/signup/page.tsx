@@ -30,6 +30,8 @@ export default function SignupPage() {
   const [message, setMessage] = useState("");
   const [isError, setIsError] = useState(false);
 
+  const usernameSyntaxValid = /^[A-Za-z0-9_]{3,24}$/.test(username.trim());
+
   useEffect(() => {
     const value = username.trim();
     if (!value) return void setUsernameStatus("idle");
@@ -46,8 +48,13 @@ export default function SignupPage() {
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!configured || usernameStatus !== "available") {
-      setMessage("Choose an available username first.");
+    if (!configured) {
+      setMessage("Account creation is temporarily unavailable.");
+      setIsError(true);
+      return;
+    }
+    if (!usernameSyntaxValid) {
+      setMessage("Choose a username with 3–24 letters, numbers, or _. ");
       setIsError(true);
       return;
     }
@@ -141,8 +148,10 @@ export default function SignupPage() {
           <label className="block"><span className="text-xs font-bold uppercase tracking-wider text-white/50">Email</span><input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="artist@email.com" autoComplete="email" className="mt-2 w-full rounded-xl border border-white/10 bg-white/[0.04] px-4 py-4 outline-none focus:border-orange-300/50" /></label>
           <label className="block"><span className="text-xs font-bold uppercase tracking-wider text-white/50">Password</span><input type={showPassword ? "text" : "password"} required minLength={12} value={password} onChange={(e) => setPassword(e.target.value)} placeholder="At least 12 characters" autoComplete="new-password" className="mt-2 w-full rounded-xl border border-white/10 bg-white/[0.04] px-4 py-4 outline-none focus:border-orange-300/50" /></label>
           <label className="block"><span className="text-xs font-bold uppercase tracking-wider text-white/50">Confirm password</span><input type={showPassword ? "text" : "password"} required minLength={12} value={confirmation} onChange={(e) => setConfirmation(e.target.value)} placeholder="Repeat your password" autoComplete="new-password" className="mt-2 w-full rounded-xl border border-white/10 bg-white/[0.04] px-4 py-4 outline-none focus:border-orange-300/50" /></label>
-          <label className="flex cursor-pointer items-center gap-3 text-sm text-white/65"><input type="checkbox" checked={showPassword} onChange={(e) => setShowPassword(e.target.checked)} className="h-4 w-4 accent-orange-400" /><span>{showPassword ? "Hide password" : "Show password"}</span></label>
-          <button type="submit" disabled={!configured || loading || !email || !password || !confirmation || usernameStatus !== "available"} className="w-full rounded-xl bg-gradient-to-r from-orange-600 to-amber-400 px-5 py-4 font-black text-black disabled:opacity-50">{loading ? "Creating account..." : "Create account"}</button>
+          <button type="button" aria-pressed={showPassword} onClick={() => setShowPassword((value) => !value)} className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-4 py-3 text-left text-sm font-bold text-white/70">
+            {showPassword ? "Hide password" : "Show password"}
+          </button>
+          <button type="submit" disabled={!configured || loading || !email || !password || !confirmation || !usernameSyntaxValid} className="w-full rounded-xl bg-gradient-to-r from-orange-600 to-amber-400 px-5 py-4 font-black text-black disabled:opacity-50">{loading ? "Creating account..." : "Create account"}</button>
         </form>
         {message ? <p role={isError ? "alert" : "status"} className={`mt-4 rounded-xl border p-3 text-sm ${isError ? "border-red-300/20 text-red-100" : "border-emerald-300/20 text-emerald-100"}`}>{message}</p> : null}
         <a href="/login" className="mt-6 block rounded-xl border border-white/10 px-5 py-3 text-center text-sm font-bold text-white/70">Already verified? Sign in</a>
