@@ -17,7 +17,6 @@ const PAID_PREFIXES = [
   "/workstation",
   "/sound-library",
   "/local-library",
-  "/star",
 ];
 const STAR_HOSTS = new Set(["cruciblestar.com", "www.cruciblestar.com"]);
 
@@ -25,6 +24,10 @@ function getSafeNextRoute(value: string | null, fallback = FIRST_RUN_AFTER_LOGIN
   const validLocalRoute = value?.startsWith("/") && !value.startsWith("//");
   const accountSetupRoute = value === "/account" || value?.startsWith("/account?") || value?.startsWith("/account#");
   return validLocalRoute && !accountSetupRoute ? value! : fallback;
+}
+
+function isFreeStarRoute(value: string) {
+  return value === "/star" || value.startsWith("/star/");
 }
 
 function preserveSupabaseState(source: NextResponse, target: NextResponse) {
@@ -80,10 +83,9 @@ export async function proxy(request: NextRequest) {
     return NextResponse.next({ request });
   };
 
-  // Protect every paid app surface, including CrucibleStar's root-domain rewrite.
-  // Checking isStarRoot here is essential because the request pathname is still "/"
-  // when entitlement is evaluated; the internal rewrite to /star happens later.
-  const paidRoute = isStarRoot || PAID_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
+  // CrucibleStar's DNA experience is intentionally public/free. Paid entitlement
+  // begins when a user enters Forge creation/editing/library/community surfaces.
+  const paidRoute = PAID_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
   const authenticatedRoute = paidRoute || isVaultRoute || pathname === "/account" || pathname === SUBSCRIBE_ROUTE || pathname.startsWith("/billing/success");
   const authEndpoint = pathname.startsWith("/auth/");
   const switchingAccount = pathname === LOGIN_ROUTE && searchParams.get("switch") === "1";
@@ -136,7 +138,7 @@ export async function proxy(request: NextRequest) {
 
   // Claims prove the token is valid, but verification status can change and must
   // come from the current Auth user record. This prevents a valid session from
-  // bypassing Crucible's mandatory email-confirmation gate.
+  // bypassing Crucible's mandatory email-confirmation gate on protected routes.
   const needsCurrentUser = Boolean(
     userId &&
       (authenticatedRoute ||
@@ -204,15 +206,15 @@ export async function proxy(request: NextRequest) {
     return redirectPreservingSession(request, response, getSafeNextRoute(searchParams.get("next"), SUBSCRIBE_ROUTE));
   }
   if (pathname === LOGIN_ROUTE && userId && !switchingAccount) {
-    if (!emailVerified) return redirectWithNext(request, VERIFY_EMAIL_ROUTE, getSafeNextRoute(searchParams.get("next"), SUBSCRIBE_ROUTE), undefined, response);
-    return redirectPreservingSession(
-      request,
-      response,
-      entitled ? getSafeNextRoute(searchParams.get("next"), isStarHost ? "/star" : defaultAfterLogin) : SUBSCRIBE_ROUTE,
-    );
+    const nextAfterLogin = getSafeNextRoute(searchParams.get("next"), isStarHost ? "/star" : defaultAfterLogin);
+    if (!emailVerified) return redirectWithNext(request, VERIFY_EMAIL_ROUTE, nextAfterLogin, undefined, response);
+    if (isFreeStarRoute(nextAfterLogin)) return redirectPreservingSession(request, response, nextAfterLogin);
+    return redirectPreservingSession(request, response, entitled ? nextAfterLogin : SUBSCRIBE_ROUTE);
   }
   if (pathname === SIGNUP_ROUTE && userId) {
-    if (!emailVerified) return redirectWithNext(request, VERIFY_EMAIL_ROUTE, SUBSCRIBE_ROUTE, undefined, response);
+    const nextAfterSignup = getSafeNextRoute(searchParams.get("next"), isStarHost ? "/star" : SUBSCRIBE_ROUTE);
+    if (!emailVerified) return redirectWithNext(request, VERIFY_EMAIL_ROUTE, isFreeStarRoute(nextAfterSignup) ? nextAfterSignup : SUBSCRIBE_ROUTE, undefined, response);
+    if (isFreeStarRoute(nextAfterSignup)) return redirectPreservingSession(request, response, nextAfterSignup);
     return redirectPreservingSession(request, response, FIRST_RUN_AFTER_LOGIN);
   }
 
