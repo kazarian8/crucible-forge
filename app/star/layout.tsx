@@ -1,17 +1,22 @@
 import Link from "next/link";
-import { Activity, LogIn, UserPlus } from "lucide-react";
+import { Activity } from "lucide-react";
+import { redirect } from "next/navigation";
 import StarSessionGate from "../../components/star/StarSessionGate";
 import { createClient } from "../../lib/supabase/server";
 
 export default async function StarLayout({ children }: { children: React.ReactNode }) {
-  let signedIn = false;
+  const supabase = await createClient();
+  const {
+    data: { user },
+    error,
+  } = await supabase.auth.getUser();
 
-  try {
-    const supabase = await createClient();
-    const { data: { user } } = await supabase.auth.getUser();
-    signedIn = Boolean(user);
-  } catch {
-    signedIn = false;
+  if (error || !user) {
+    redirect("/login?next=/star");
+  }
+
+  if (!user.email_confirmed_at) {
+    redirect("/verify-email");
   }
 
   return (
@@ -23,33 +28,22 @@ export default async function StarLayout({ children }: { children: React.ReactNo
             <p className="truncate text-[11px] font-bold text-white/45">Analyze first. Edit in Forge when you are ready.</p>
           </div>
 
-          {signedIn ? (
-            <div className="flex shrink-0 items-center gap-2">
-              <a
-                href="/auth/handoff?target=forge&next=/sound-furnace"
-                className="rounded-xl border border-sky-300/20 bg-sky-400/10 px-3 py-2 text-[10px] font-black text-sky-100"
-              >
-                Forge
-              </a>
-              <Link href="/account" className="rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-[10px] font-black text-white/75">Account</Link>
-              <form action="/auth/signout?next=/star" method="post">
-                <button type="submit" className="rounded-xl border border-orange-300/20 bg-orange-400/10 px-3 py-2 text-[10px] font-black text-orange-200">Sign Out</button>
-              </form>
-            </div>
-          ) : (
-            <div className="flex shrink-0 overflow-hidden rounded-xl border border-orange-300/25 bg-black/45">
-              <Link href="/login?next=/star" className="inline-flex items-center gap-1.5 border-r border-orange-300/20 px-3 py-2 text-[10px] font-black text-orange-100 hover:bg-orange-400/10">
-                <LogIn size={13} /> Sign In
-              </Link>
-              <Link href="/signup?next=/star" className="inline-flex items-center gap-1.5 bg-orange-400 px-3 py-2 text-[10px] font-black text-black hover:bg-orange-300">
-                <UserPlus size={13} /> Sign Up
-              </Link>
-            </div>
-          )}
+          <div className="flex shrink-0 items-center gap-2">
+            <a
+              href="/auth/handoff?target=forge&next=/sound-furnace"
+              className="rounded-xl border border-sky-300/20 bg-sky-400/10 px-3 py-2 text-[10px] font-black text-sky-100"
+            >
+              Forge
+            </a>
+            <Link href="/account" className="rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-[10px] font-black text-white/75">Account</Link>
+            <form action="/auth/signout?next=/star" method="post">
+              <button type="submit" className="rounded-xl border border-orange-300/20 bg-orange-400/10 px-3 py-2 text-[10px] font-black text-orange-200">Sign Out</button>
+            </form>
+          </div>
         </div>
       </div>
 
-      <StarSessionGate signedIn={signedIn}>{children}</StarSessionGate>
+      <StarSessionGate signedIn>{children}</StarSessionGate>
 
       <Link
         href="/star/analyzer"
