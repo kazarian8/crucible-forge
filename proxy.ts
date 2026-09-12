@@ -3,6 +3,7 @@ import { NextResponse, type NextRequest } from "next/server";
 
 const LOGIN_ROUTE = "/login";
 const SIGNUP_ROUTE = "/signup";
+const VERIFY_EMAIL_ROUTE = "/verify-email";
 const SUBSCRIBE_ROUTE = "/subscribe";
 const DEFAULT_AFTER_LOGIN = "/sound-furnace";
 
@@ -99,6 +100,7 @@ export async function proxy(request: NextRequest) {
   });
 
   let userId: string | undefined;
+  let emailVerified = false;
   try {
     const { data: claimsData } = await supabase.auth.getClaims();
     userId = claimsData?.claims?.sub;
@@ -106,11 +108,38 @@ export async function proxy(request: NextRequest) {
     userId = undefined;
   }
 
+  // Claims prove the token is valid, but verification status can change and must
+  // come from the current Auth user record. This prevents a valid session from
+  // bypassing Crucible's mandatory email-confirmation gate.
+  const needsCurrentUser = Boolean(
+    userId &&
+      (authenticatedRoute ||
+        pathname === LOGIN_ROUTE ||
+        pathname === SIGNUP_ROUTE ||
+        pathname === VERIFY_EMAIL_ROUTE),
+  );
+  if (needsCurrentUser) {
+    try {
+      const { data: { user }, error } = await supabase.auth.getUser();
+      if (error || !user) {
+        userId = undefined;
+      } else {
+        userId = user.id;
+        emailVerified = Boolean(user.email_confirmed_at);
+      }
+    } catch {
+      userId = undefined;
+    }
+  }
+
   const requestedRoute = `${pathname}${request.nextUrl.search}`;
   if (authenticatedRoute && !userId) return redirectWithNext(request, LOGIN_ROUTE, requestedRoute, "session", response);
+  if (authenticatedRoute && userId && !emailVerified) {
+    return redirectWithNext(request, VERIFY_EMAIL_ROUTE, requestedRoute, "email-not-verified", response);
+  }
 
   let entitled = false;
-  if (userId && authenticatedRoute) {
+  if (userId && emailVerified && authenticatedRoute) {
     const now = Date.now();
     const [{ data: subscription }, { data: developerAccess }] = await Promise.all([
       supabase
@@ -132,9 +161,15 @@ export async function proxy(request: NextRequest) {
     entitled = trialValid || activeValid || developerValid;
   }
 
+  // Payment/trial entitlement stays after identity verification. Verification can
+  // never substitute for an active trial, paid subscription, or explicit dev pass.
   if (paidRoute && !entitled) return redirectWithNext(request, SUBSCRIBE_ROUTE, requestedRoute, undefined, response);
   if (pathname === SUBSCRIBE_ROUTE && entitled) return redirectPreservingSession(request, response, DEFAULT_AFTER_LOGIN);
+  if (pathname === VERIFY_EMAIL_ROUTE && userId && emailVerified) {
+    return redirectPreservingSession(request, response, getSafeNextRoute(searchParams.get("next"), SUBSCRIBE_ROUTE));
+  }
   if (pathname === LOGIN_ROUTE && userId && !switchingAccount) {
+    if (!emailVerified) return redirectWithNext(request, VERIFY_EMAIL_ROUTE, getSafeNextRoute(searchParams.get("next"), SUBSCRIBE_ROUTE), undefined, response);
     return redirectPreservingSession(
       request,
       response,
@@ -142,6 +177,7 @@ export async function proxy(request: NextRequest) {
     );
   }
   if (pathname === SIGNUP_ROUTE && userId) {
+    if (!emailVerified) return redirectWithNext(request, VERIFY_EMAIL_ROUTE, SUBSCRIBE_ROUTE, undefined, response);
     return redirectPreservingSession(request, response, DEFAULT_AFTER_LOGIN);
   }
 
