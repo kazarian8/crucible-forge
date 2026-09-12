@@ -8,7 +8,17 @@ const SUBSCRIBE_ROUTE = "/subscribe";
 const FIRST_RUN_AFTER_LOGIN = "/sound-furnace";
 const RETURNING_AFTER_LOGIN = "/";
 
-const PAID_PREFIXES = ["/furnace", "/prompt-reforge", "/sound-furnace", "/studio"];
+const PAID_PREFIXES = [
+  "/furnace",
+  "/prompt-reforge",
+  "/sound-furnace",
+  "/studio",
+  "/moments",
+  "/workstation",
+  "/sound-library",
+  "/local-library",
+  "/star",
+];
 const STAR_HOSTS = new Set(["cruciblestar.com", "www.cruciblestar.com"]);
 
 function getSafeNextRoute(value: string | null, fallback = FIRST_RUN_AFTER_LOGIN) {
@@ -70,7 +80,10 @@ export async function proxy(request: NextRequest) {
     return NextResponse.next({ request });
   };
 
-  const paidRoute = PAID_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
+  // Protect every paid app surface, including CrucibleStar's root-domain rewrite.
+  // Checking isStarRoot here is essential because the request pathname is still "/"
+  // when entitlement is evaluated; the internal rewrite to /star happens later.
+  const paidRoute = isStarRoot || PAID_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
   const authenticatedRoute = paidRoute || isVaultRoute || pathname === "/account" || pathname === SUBSCRIBE_ROUTE || pathname.startsWith("/billing/success");
   const authEndpoint = pathname.startsWith("/auth/");
   const switchingAccount = pathname === LOGIN_ROUTE && searchParams.get("switch") === "1";
@@ -186,7 +199,7 @@ export async function proxy(request: NextRequest) {
   // Payment/trial entitlement stays after identity verification. Verification can
   // never substitute for an active trial, paid subscription, or explicit dev pass.
   if (paidRoute && !entitled) return redirectWithNext(request, SUBSCRIBE_ROUTE, requestedRoute, undefined, response);
-  if (pathname === SUBSCRIBE_ROUTE && entitled) return redirectPreservingSession(request, response, defaultAfterLogin);
+  if (pathname === SUBSCRIBE_ROUTE && entitled) return redirectPreservingSession(request, response, isStarHost ? "/star" : defaultAfterLogin);
   if (pathname === VERIFY_EMAIL_ROUTE && userId && emailVerified) {
     return redirectPreservingSession(request, response, getSafeNextRoute(searchParams.get("next"), SUBSCRIBE_ROUTE));
   }
