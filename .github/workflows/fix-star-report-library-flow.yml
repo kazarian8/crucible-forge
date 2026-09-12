@@ -1,0 +1,182 @@
+name: Fix Star report and library handoff
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/fix-star-report-library-flow.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Patch Sound Furnace completion flow
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          p = Path('app/sound-furnace/page.tsx')
+          s = p.read_text()
+
+          old_type = '''type SavedStarResult = {
+            id: string;
+            grade: string;
+            score: number;
+            verificationStatus: "pending" | "verified" | "warning" | "failed";
+            chosenVersion: "original" | "forged";
+          };'''
+          new_type = '''type SavedStarResult = {
+            id: string;
+            grade: string;
+            score: number;
+            verificationStatus: "pending" | "verified" | "warning" | "failed";
+            chosenVersion: "original" | "forged";
+            dna: {
+              contentType: string;
+              tags: string[];
+              bpm: number | null;
+              musicalKey: string | null;
+              duration: number;
+              sampleRate: number;
+              channels: number;
+              peakDb: number;
+              rmsDb: number;
+              silencePercent: number;
+              notes: string[];
+            };
+          };'''
+          if old_type not in s:
+            raise SystemExit('SavedStarResult marker not found')
+          s = s.replace(old_type, new_type, 1)
+
+          old_saved = '''      setSavedStar({
+                id: String(saved.id),
+                grade: String(saved.grade ?? analysis.grade),
+                score: Number(saved.analysis_score ?? analysis.score),
+                verificationStatus: saved.verification_status as SavedStarResult["verificationStatus"],
+                chosenVersion,
+              });
+              setCompletionStage("actions");'''
+          new_saved = '''      setSavedStar({
+                id: String(saved.id),
+                grade: String(saved.grade ?? analysis.grade),
+                score: Number(saved.analysis_score ?? analysis.score),
+                verificationStatus: saved.verification_status as SavedStarResult["verificationStatus"],
+                chosenVersion,
+                dna: {
+                  contentType: analysis.contentType,
+                  tags: analysis.contentTags,
+                  bpm: analysis.estimatedBpm,
+                  musicalKey: analysis.estimatedKey,
+                  duration: analysis.duration,
+                  sampleRate: analysis.sampleRate,
+                  channels: analysis.channels,
+                  peakDb: analysis.peakDb,
+                  rmsDb: analysis.rmsDb,
+                  silencePercent: analysis.silencePercent,
+                  notes: analysis.notes,
+                },
+              });
+              setCompletionStage("actions");
+              setCompletionOpen(true);'''
+          if old_saved not in s:
+            raise SystemExit('setSavedStar marker not found')
+          s = s.replace(old_saved, new_saved, 1)
+
+          # Do not advertise Engineer Mode before the listener rejects the master.
+          engineer_section_start = s.index('        <section id="engineer-crucible"')
+          engineer_section_end = s.index('        {sourceSamples && (', engineer_section_start)
+          s = s[:engineer_section_start] + s[engineer_section_end:]
+
+          inline_engineer = '''                    <button type="button" onClick={() => void openEngineerMode()} disabled={busy} className="flex items-center justify-center gap-2 rounded-lg bg-violet-300 px-4 py-2 text-xs font-black text-violet-950 disabled:opacity-40"><Hammer size={14} /> {engineerOpen ? "Return to Engineer Mode" : stemFiles.length > 0 ? "Enter Engineer Mode" : "Enable Engineer Mode"}</button>
+'''
+          if inline_engineer not in s:
+            raise SystemExit('inline Engineer Mode button marker not found')
+          s = s.replace(inline_engineer, '', 1)
+
+          actions_start = s.index('            {completionStage === "actions" && savedStar ? (')
+          actions_end_marker = '            ) : null}\n          </div>\n        </div>\n      ) : null}'
+          actions_end = s.index(actions_end_marker, actions_start)
+          actions_end += len('            ) : null}')
+
+          actions = r'''            {completionStage === "actions" && savedStar ? (
+              <>
+                <div className={`mt-5 rounded-2xl border p-4 ${savedStar.verificationStatus === "verified" ? "border-emerald-300/25 bg-emerald-400/[0.07]" : "border-amber-300/25 bg-amber-400/[0.07]"}`}>
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-[10px] font-black uppercase tracking-[.2em] text-sky-300">CrucibleStar badge</p>
+                      <p className="mt-1 text-lg font-black">{savedStar.verificationStatus === "verified" ? "Badge issued" : `Star report · ${savedStar.verificationStatus}`}</p>
+                    </div>
+                    <div className="flex items-center gap-2 rounded-xl bg-sky-300 px-3 py-2 font-black text-sky-950"><Star size={16} fill="currentColor" />{savedStar.grade} · {savedStar.score}</div>
+                  </div>
+                  <p className="mt-2 text-xs text-white/45">{savedStar.chosenVersion === "forged" ? "Forged 24-bit master" : "Original audio"} is the exact version checked by CrucibleStar.</p>
+                </div>
+
+                <div className="mt-4 rounded-2xl border border-sky-300/20 bg-sky-400/[0.04] p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-[10px] font-black uppercase tracking-[.2em] text-sky-300">DNA report</p>
+                      <h3 className="mt-1 text-lg font-black">{savedStar.dna.contentType || "Track"} analysis</h3>
+                    </div>
+                    <span className="rounded-lg border border-sky-300/20 px-2.5 py-1 text-xs font-black text-sky-200">{savedStar.verificationStatus}</span>
+                  </div>
+                  <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                    <div className="rounded-xl bg-black/25 p-3"><p className="text-[9px] uppercase tracking-wider text-white/30">Tempo</p><p className="mt-1 text-sm font-black">{savedStar.dna.bpm ? `${savedStar.dna.bpm} BPM` : "Not detected"}</p></div>
+                    <div className="rounded-xl bg-black/25 p-3"><p className="text-[9px] uppercase tracking-wider text-white/30">Key</p><p className="mt-1 text-sm font-black">{savedStar.dna.musicalKey || "Not detected"}</p></div>
+                    <div className="rounded-xl bg-black/25 p-3"><p className="text-[9px] uppercase tracking-wider text-white/30">Peak</p><p className="mt-1 text-sm font-black">{formatDb(savedStar.dna.peakDb)}</p></div>
+                    <div className="rounded-xl bg-black/25 p-3"><p className="text-[9px] uppercase tracking-wider text-white/30">Average</p><p className="mt-1 text-sm font-black">{formatDb(savedStar.dna.rmsDb)}</p></div>
+                    <div className="rounded-xl bg-black/25 p-3"><p className="text-[9px] uppercase tracking-wider text-white/30">Silence</p><p className="mt-1 text-sm font-black">{savedStar.dna.silencePercent.toFixed(1)}%</p></div>
+                    <div className="rounded-xl bg-black/25 p-3"><p className="text-[9px] uppercase tracking-wider text-white/30">Sample rate</p><p className="mt-1 text-sm font-black">{Math.round(savedStar.dna.sampleRate / 1000)} kHz</p></div>
+                    <div className="rounded-xl bg-black/25 p-3"><p className="text-[9px] uppercase tracking-wider text-white/30">Channels</p><p className="mt-1 text-sm font-black">{savedStar.dna.channels === 1 ? "Mono" : "Stereo"}</p></div>
+                    <div className="rounded-xl bg-black/25 p-3"><p className="text-[9px] uppercase tracking-wider text-white/30">Duration</p><p className="mt-1 text-sm font-black">{formatForgeTime(savedStar.dna.duration)}</p></div>
+                  </div>
+                  {savedStar.dna.tags.length > 0 ? <p className="mt-3 text-xs leading-5 text-sky-100/65">DNA: {savedStar.dna.tags.join(" · ")}</p> : null}
+                  {savedStar.dna.notes.length > 0 ? <div className="mt-3 rounded-xl border border-white/8 bg-black/20 p-3 text-xs leading-5 text-white/45">{savedStar.dna.notes.map((note) => <p key={note}>• {note}</p>)}</div> : null}
+                </div>
+
+                <p className="mt-5 text-xs font-black uppercase tracking-[.18em] text-white/35">Next</p>
+                {savedStar.chosenVersion === "forged" ? (
+                  <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                    <Link href="/local-library" className="flex items-center justify-center gap-2 rounded-xl bg-orange-400 px-4 py-3 text-sm font-black text-black"><LibraryBig size={16} />Save to Library</Link>
+                    <Link href={`/tracks/${savedStar.id}?tab=distribution`} className="flex items-center justify-center gap-2 rounded-xl border border-white/12 bg-white/[0.04] px-4 py-3 text-sm font-black text-white"><Globe2 size={16} />Distribution</Link>
+                  </div>
+                ) : (
+                  <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                    <button type="button" onClick={openSavedEngineerMode} className="flex items-center justify-center gap-2 rounded-xl bg-violet-300 px-4 py-3 text-sm font-black text-violet-950"><Hammer size={16} />Improve in Engineer Mode</button>
+                    <Link href="/local-library" className="flex items-center justify-center gap-2 rounded-xl border border-white/12 bg-white/[0.04] px-4 py-3 text-sm font-black text-white"><LibraryBig size={16} />Save Original to Library</Link>
+                  </div>
+                )}
+                <button type="button" onClick={() => setCompletionOpen(false)} className="mt-4 w-full rounded-xl px-4 py-2 text-xs font-bold text-white/40">Back to listening</button>
+              </>
+            ) : null}'''
+
+          s = s[:actions_start] + actions + s[actions_end:]
+          p.write_text(s)
+          PY
+      - name: Validate build
+        run: |
+          npm ci
+          npm run build
+      - name: Commit fix
+        shell: bash
+        run: |
+          if git diff --quiet -- app/sound-furnace/page.tsx; then
+            echo "No changes needed"
+            exit 0
+          fi
+          git config user.name "crucible-forge-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add app/sound-furnace/page.tsx
+          git commit -m "Show Star DNA report before library handoff"
+          git push
