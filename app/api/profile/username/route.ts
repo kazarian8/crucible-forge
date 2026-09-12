@@ -38,23 +38,6 @@ async function getProfile(userId: string) {
   return rows[0] ?? null;
 }
 
-function cleanLinks(value: unknown): ProfileLink[] {
-  if (!Array.isArray(value)) return [];
-  return value.slice(0, 8).flatMap((item) => {
-    if (!item || typeof item !== "object") return [];
-    const label = String((item as Record<string, unknown>).label ?? "").trim().slice(0, 30);
-    const rawUrl = String((item as Record<string, unknown>).url ?? "").trim();
-    if (!label || !rawUrl) return [];
-    try {
-      const parsed = new URL(rawUrl);
-      if (!/^https?:$/.test(parsed.protocol)) return [];
-      return [{ label, url: parsed.toString() }];
-    } catch {
-      return [];
-    }
-  });
-}
-
 export async function GET() {
   const user = await currentUser();
   if (!user) return NextResponse.json({ error: "Sign in required." }, { status: 401 });
@@ -96,34 +79,15 @@ export async function PATCH(request: NextRequest) {
     }
   }
 
-  const displayName = String(body.displayName ?? "").trim().slice(0, 80) || null;
-  const bio = String(body.bio ?? "").trim().slice(0, 500) || null;
-  const avatarUrl = String(body.avatarUrl ?? "").trim().slice(0, 1000) || null;
-  const websiteRaw = String(body.website ?? "").trim();
-  let website: string | null = null;
-  if (websiteRaw) {
-    try {
-      const parsed = new URL(websiteRaw);
-      if (!/^https?:$/.test(parsed.protocol)) throw new Error("bad protocol");
-      website = parsed.toString();
-    } catch {
-      if (reservation) await refundServiceCredits(user.id, reservation.jobId).catch(() => null);
-      return NextResponse.json({ error: "Website must be a valid http or https link." }, { status: 400 });
-    }
-  }
-
   try {
+    // This endpoint is intentionally limited to username identity changes. Do not
+    // touch bio, avatar, links, website, display name, or profile privacy when a
+    // user changes their username.
     const patch = {
       username,
       username_font: usernameFont,
       username_change_count: profile.username_change_count + (usernameChanged && !firstUsername ? 1 : 0),
-      username_changed_at: usernameChanged ? new Date().toISOString() : undefined,
-      display_name: displayName,
-      bio,
-      avatar_url: avatarUrl,
-      website,
-      profile_links: cleanLinks(body.profileLinks),
-      is_public: body.isPublic !== false,
+      ...(usernameChanged ? { username_changed_at: new Date().toISOString() } : {}),
       updated_at: new Date().toISOString(),
     };
 
