@@ -67,6 +67,7 @@ export default function SignupPage() {
     setIsError(false);
 
     try {
+      const nextRoute = safeNext();
       const response = await fetch("/auth/signup", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -76,7 +77,7 @@ export default function SignupPage() {
           password,
           username: username.trim(),
           usernameFont,
-          next: safeNext(),
+          next: nextRoute,
           website,
           startedAt: startedAt.current,
         }),
@@ -89,13 +90,16 @@ export default function SignupPage() {
         else if (result.error === "username-taken") setMessage("That username was just taken. Pick another one.");
         else if (result.error === "email-in-use") setMessage("Email already in use. Sign in instead.");
         else if (result.error === "blocked") setMessage("Signup could not be verified. Refresh the page and try again.");
+        else if (result.error === "email-verification-required") setMessage("Email verification is required before Crucible can create an active account. Try again shortly.");
         else if (String(result.error || "").toLowerCase().includes("rate")) setMessage("The confirmation email service is temporarily at its limit. Try again shortly.");
         else setMessage("Account creation is temporarily unavailable.");
         setIsError(true);
         return;
       }
 
-      setMessage("Verification email sent. Your account stays inactive until you confirm it. The verification window is 15 minutes.");
+      const verifyUrl = new URL("/verify-email", window.location.origin);
+      verifyUrl.searchParams.set("next", nextRoute);
+      window.location.assign(verifyUrl.toString());
     } catch {
       setLoading(false);
       setMessage("Account creation is temporarily unavailable.");
