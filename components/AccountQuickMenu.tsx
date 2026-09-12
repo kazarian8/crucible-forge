@@ -42,28 +42,46 @@ export default function AccountQuickMenu() {
     let cancelled = false;
     const supabase = createClient();
 
-    void Promise.all([
-      supabase.auth.getUser(),
-      fetch("/api/profile/username", { cache: "no-store" })
-        .then(async (response) => (response.ok ? ((await response.json()) as ProfileResponse) : null))
-        .catch(() => null),
-    ]).then(([userResult, profilePayload]) => {
-      if (cancelled) return;
-      const user = userResult.data.user;
-      if (!user) {
-        setAccount(null);
-        return;
+    async function loadAccount() {
+      try {
+        const [userResult, profilePayload] = await Promise.all([
+          supabase.auth.getUser(),
+          fetch("/api/profile/username", { cache: "no-store" })
+            .then(async (response) => (response.ok ? ((await response.json()) as ProfileResponse) : null))
+            .catch(() => null),
+        ]);
+        if (cancelled) return;
+        const user = userResult.data.user;
+        if (!user) {
+          setAccount(null);
+          return;
+        }
+        setAccount({
+          email: user.email ?? null,
+          profile: profilePayload?.profile ?? null,
+        });
+      } catch {
+        if (!cancelled) setAccount(null);
       }
-      setAccount({
-        email: user.email ?? null,
-        profile: profilePayload?.profile ?? null,
-      });
-    }).catch(() => {
-      if (!cancelled) setAccount(null);
-    });
+    }
+
+    const refreshProfile = () => {
+      void loadAccount();
+    };
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") void loadAccount();
+    };
+
+    void loadAccount();
+    window.addEventListener("crucible:profile-updated", refreshProfile);
+    window.addEventListener("focus", refreshProfile);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
 
     return () => {
       cancelled = true;
+      window.removeEventListener("crucible:profile-updated", refreshProfile);
+      window.removeEventListener("focus", refreshProfile);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
   }, [hidden, pathname]);
 
