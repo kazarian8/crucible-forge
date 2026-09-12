@@ -40,6 +40,32 @@ type CollaborationInfo = {
 
 const DISTROKID_URL = process.env.NEXT_PUBLIC_DISTROKID_AFFILIATE_URL?.trim() || "https://distrokid.com/";
 const DISTROKID_SPOTLIGHT_URL = "https://distrokid.com/spotlight/";
+const DISTRIBUTION_PLATFORMS = [
+  "Amazon Music",
+  "Anghami",
+  "Apple Music",
+  "MediaNet",
+  "Boomplay",
+  "Deezer",
+  "Instagram / Facebook",
+  "Adaptr",
+  "FLO",
+  "YouTube Music",
+  "iHeartRadio",
+  "Claro Música",
+  "iTunes",
+  "Joox",
+  "Kuack Media",
+  "MassiveMusic",
+  "NetEase",
+  "Qobuz",
+  "Pandora",
+  "Saavn",
+  "Spotify",
+  "Tencent",
+  "TIDAL",
+  "TikTok & other ByteDance stores",
+] as const;
 
 function displayDate(value: string) {
   return new Intl.DateTimeFormat(undefined, {
@@ -251,9 +277,20 @@ export default function TrackProjectPage() {
             <div className="mt-6 rounded-2xl border border-zinc-200 p-5">
               <div className="flex items-start gap-3">
                 <div className="grid size-9 shrink-0 place-items-center rounded-full bg-zinc-950 text-sm font-black text-white">1</div>
-                <div>
+                <div className="min-w-0 flex-1">
                   <h3 className="font-black">Distribute to 40+ Platforms</h3>
-                  <p className="mt-1 text-sm leading-6 text-zinc-500">Send this mastered track to DistroKid for delivery to Spotify, Apple Music, TikTok, YouTube Music, and other supported stores.</p>
+                  <p className="mt-1 text-sm leading-6 text-zinc-500">Send this mastered track to DistroKid for delivery to major global and regional destinations including Spotify, Apple Music, Amazon Music, TikTok / ByteDance, YouTube Music, TIDAL, and more.</p>
+
+                  <details className="mt-4 rounded-2xl bg-zinc-50 p-4">
+                    <summary className="cursor-pointer text-sm font-black text-zinc-800">View listed distribution platforms ({DISTRIBUTION_PLATFORMS.length})</summary>
+                    <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3">
+                      {DISTRIBUTION_PLATFORMS.map((platform) => (
+                        <span key={platform} className="rounded-xl border border-zinc-200 bg-white px-3 py-2 text-xs font-bold text-zinc-700">{platform}</span>
+                      ))}
+                    </div>
+                    <p className="mt-3 text-xs leading-5 text-zinc-400">Platform availability and store naming can change through DistroKid; Crucible shows the destinations artists can expect to encounter in the distribution flow.</p>
+                  </details>
+
                   <a href={DISTROKID_URL} target="_blank" rel="sponsored noopener noreferrer" className="mt-4 inline-flex items-center gap-2 rounded-2xl bg-[#ff2d19] px-5 py-3 font-black text-white">Continue to DistroKid <ExternalLink size={17} /></a>
                 </div>
               </div>
