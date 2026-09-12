@@ -19,7 +19,7 @@ export const CREDIT_SERVICE_LABELS = {
   usernameChange: "Username change",
   usernameFontChange: "Username font change",
   profileLink: "Additional profile link",
-  brandWebsiteAd2Hours: "Advertise your brand or website · 2 hours",
+  brandWebsiteAd2Hours: "Paid Brand Link · 2 hours",
 } as const;
 
 export type CreditService = keyof typeof CREDIT_PRICES;
