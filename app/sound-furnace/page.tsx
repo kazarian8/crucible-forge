@@ -1,5 +1,9 @@
 "use client";
 
+import { useRouter } from "next/navigation";
+import QualityReport from "../../components/star/QualityReport";
+import { assessAudioQuality, compareAudioQuality, type QualityAssessment, type QualityComparison } from "../../lib/audio/quality-assessment";
+
 import StemSequencer from "../../components/sound-furnace/StemSequencer";
 import { CREDITS_UPDATED_EVENT } from "../../components/CreditBalance";
 import { CREDIT_PRICES } from "../../lib/credits/pricing";
@@ -58,6 +62,8 @@ type ForgeResult = {
 };
 
 type SavedStarResult = {
+  quality: QualityAssessment;
+  comparison: QualityComparison | null;
   id: string;
   grade: string;
   score: number;
@@ -510,6 +516,7 @@ function playForgeFinish() {
 }
 
 export default function SoundFurnacePage() {
+  const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
   const sourceAudioRef = useRef<HTMLAudioElement>(null);
   const resultAudioRef = useRef<HTMLAudioElement>(null);
@@ -716,6 +723,8 @@ export default function SoundFurnacePage() {
       if (selectedFile.size > MAX_FILE_BYTES) throw new Error("The selected file is larger than CrucibleStar's 250 MB limit.");
 
       const { analysis, hash } = await analyzeAudioFile(selectedFile);
+      const comparison = chosenVersion === "forged" && buffer
+        ? compareAudioQuality(await assessAudioQuality(buffer), analysis.quality) : null;
       const cleanName = selectedFile.name.replace(/[^A-Za-z0-9._-]+/g, "-").slice(-120);
       storagePath = `${user.id}/${crypto.randomUUID()}-${cleanName}`;
       const mimeType = storageAudioMimeType(selectedFile);
@@ -762,7 +771,10 @@ export default function SoundFurnacePage() {
         verification_status: analysis.status,
         verification_notes: analysis.notes,
         analysis: {
-          engine: "crucible-file-dna-browser-v2",
+          engine: "crucible-file-dna-browser-v3",
+          score_kind: "technical-checklist",
+          quality: analysis.quality,
+          quality_comparison: comparison,
           sha256: hash,
           analyzed_at: new Date().toISOString(),
           content_type: analysis.contentType,
@@ -789,6 +801,8 @@ export default function SoundFurnacePage() {
       }
 
       setSavedStar({
+        quality: analysis.quality,
+        comparison,
         id: String(saved.id),
         grade: String(saved.grade ?? analysis.grade),
         score: Number(saved.analysis_score ?? analysis.score),
@@ -798,7 +812,7 @@ export default function SoundFurnacePage() {
       setCompletionStage("actions");
       setStatus(
         saved.verification_status === "verified"
-          ? `CrucibleStar verified the ${chosenVersion} version. Grade ${saved.grade ?? analysis.grade} · ${saved.analysis_score ?? analysis.score}/100.`
+          ? `CrucibleStar verified the ${chosenVersion} version. Technical checks passed; quality grading is not calibrated.`
           : `The ${chosenVersion} version is saved privately. CrucibleStar marked it ${saved.verification_status} for review.`,
       );
     } catch (caught) {
@@ -812,7 +826,7 @@ export default function SoundFurnacePage() {
   }
 
   async function publishSavedVersion() {
-    if (!savedStar || savedStar.verificationStatus !== "verified") return;
+    if (!savedStar || publishing || savedStar.verificationStatus !== "verified") return;
     setPublishing(true);
     setError("");
     try {
@@ -821,10 +835,15 @@ export default function SoundFurnacePage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ starFileId: savedStar.id, previewPath: null }),
       });
-      const payload = await response.json().catch(() => ({})) as { error?: string };
+      const payload = await response.json().catch(() => ({})) as { error?: string; itemId?: string | null };
       if (!response.ok) throw new Error(payload.error || "Publishing failed.");
       setStatus("Published successfully. Your private master remains saved in My Tracks.");
       setCompletionOpen(false);
+      if (payload.itemId) {
+        router.push(`/sound-library?edit=${encodeURIComponent(payload.itemId)}`);
+      } else {
+        setError("Your track is published, but its editor link was not returned. Open your published track to edit its picture.");
+      }
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Publishing failed.");
     } finally {
@@ -1126,7 +1145,7 @@ export default function SoundFurnacePage() {
 
             {completionStage === "choose" ? (
               <>
-                <p className="mt-4 text-sm leading-6 text-white/55">Choose which exact audio file becomes your saved track. CrucibleStar will grade that version and attach any badge to it. Your original is never deleted.</p>
+                <p className="mt-4 text-sm leading-6 text-white/55">Choose which exact audio file becomes your saved track. CrucibleStar will check that version and attach any badge to it. Your original is never deleted.</p>
                 <div className="mt-5 grid gap-3 sm:grid-cols-2">
                   <button type="button" aria-pressed={pendingVersion === "forged"} onClick={() => setPendingVersion("forged")} className="rounded-2xl bg-gradient-to-r from-orange-500 to-amber-300 p-4 text-left text-black">
                     <span className="block text-sm font-black">Use forged version</span>
@@ -1134,7 +1153,7 @@ export default function SoundFurnacePage() {
                   </button>
                   <button type="button" aria-pressed={pendingVersion === "original"} onClick={() => setPendingVersion("original")} className="rounded-2xl border border-white/12 bg-white/[0.04] p-4 text-left text-white">
                     <span className="block text-sm font-black">Keep original</span>
-                    <span className="mt-1 block text-xs text-white/45">Save and grade the unchanged source file</span>
+                    <span className="mt-1 block text-xs text-white/45">Save and check the unchanged source file</span>
                   </button>
                 </div>
                 <p className="mt-4 text-sm text-orange-100" aria-live="polite">{pendingVersion ? `Selected: ${pendingVersion === "forged" ? "forged 24-bit master" : "unchanged original"}` : "Select a version above. Nothing is saved until you confirm."}</p>
@@ -1153,11 +1172,12 @@ export default function SoundFurnacePage() {
               <>
                 <div className={`mt-5 rounded-2xl border p-4 ${savedStar.verificationStatus === "verified" ? "border-emerald-300/25 bg-emerald-400/[0.07]" : "border-amber-300/25 bg-amber-400/[0.07]"}`}>
                   <div className="flex items-center justify-between gap-3">
-                    <div><p className="text-[10px] font-black uppercase tracking-[.2em] text-sky-300">CrucibleStar result</p><p className="mt-1 text-lg font-black">{savedStar.verificationStatus === "verified" ? "Verified badge earned" : `Saved · ${savedStar.verificationStatus}`}</p></div>
-                    <div className="flex items-center gap-2 rounded-xl bg-sky-300 px-3 py-2 font-black text-sky-950"><Star size={16} fill="currentColor" />{savedStar.grade} · {savedStar.score}</div>
+                    <div><p className="text-[10px] font-black uppercase tracking-[.2em] text-sky-300">CrucibleStar result</p><p className="mt-1 text-lg font-black">{savedStar.verificationStatus === "verified" ? "Technical checks passed" : `Saved · ${savedStar.verificationStatus}`}</p></div>
+                    <div className="flex items-center gap-2 rounded-xl bg-sky-300 px-3 py-2 font-black text-sky-950"><Star size={16} fill="currentColor" />Technical</div>
                   </div>
                   <p className="mt-2 text-xs text-white/45">{savedStar.chosenVersion === "forged" ? "Forged 24-bit master" : "Original audio"} is now the saved version.</p>
                 </div>
+                <QualityReport quality={savedStar.quality} comparison={savedStar.comparison} />
                 <button type="button" onClick={() => setCompletionOpen(false)} className="mt-4 w-full rounded-xl border border-white/20 px-4 py-3 text-sm font-bold">Back to listening</button>
                 <p className="mt-5 text-xs font-black uppercase tracking-[.18em] text-white/35">What do you want to do next?</p>
                 <div className="mt-3 grid grid-cols-2 gap-3">

@@ -99,12 +99,38 @@ export default function SoundLibraryPage() {
         );
         setSellers(sellerMap);
       }
+      const editId = new URLSearchParams(window.location.search).get("edit");
+      if (editId) {
+        const userId = authResult.data.user?.id;
+        if (!userId) {
+          setMessage("Sign in as the track owner to edit its picture and details.");
+        } else {
+          const cached = ((itemsResult.data ?? []) as Item[]).find((item) => item.id === editId && item.user_id === userId);
+          if (cached) setEditingItem(cached);
+          else {
+            // A direct lookup also handles listings outside the newest 100 results.
+            const { data: target, error: targetError } = await supabase.from("sound_library_items")
+              .select("id,user_id,title,description,category,artwork_url,free_download,price_cents,preview_url,watermark_label,bpm,musical_key,license_type,crucible_score,crucible_grade,created_at")
+              .eq("id", editId).eq("user_id", userId).maybeSingle();
+            if (cancelled) return;
+            if (targetError || !target) setMessage("This published track could not be opened for editing. Check that you are signed in as its owner.");
+            else setEditingItem(target as Item);
+          }
+        }
+      }
       setLoading(false);
     }
 
     void loadMarketplace();
     return () => { cancelled = true; };
   }, []);
+
+  function closeListingEditor() {
+    setEditingItem(null);
+    const url = new URL(window.location.href);
+    url.searchParams.delete("edit");
+    window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+  }
 
   useEffect(
     () => () => {
@@ -183,7 +209,7 @@ export default function SoundLibraryPage() {
 
   return (
     <main className="min-h-screen bg-[#060606] pb-28 text-white">
-      {editingItem ? <ListingEditor key={editingItem.id} item={editingItem} onClose={() => setEditingItem(null)} onSaved={(patch) => { setItems((current) => current.map((item) => item.id === editingItem.id ? { ...item, ...patch } : item)); setEditingItem(null); setMessage("Listing updated. Your picture is saved to the track and its Moment."); }} /> : null}
+      {editingItem ? <ListingEditor key={editingItem.id} item={editingItem} onClose={closeListingEditor} onSaved={(patch) => { setItems((current) => current.map((item) => item.id === editingItem.id ? { ...item, ...patch } : item)); closeListingEditor(); setMessage("Listing updated. Your picture is saved to the track and its Moment."); }} /> : null}
 
       <audio
         ref={audioRef}
@@ -243,7 +269,7 @@ export default function SoundLibraryPage() {
               <span className="sr-only">Sort marketplace</span>
               <select value={sortMode} onChange={(event) => setSortMode(event.target.value as SortMode)} className="appearance-none rounded-xl border border-white/10 bg-[#111] py-3 pl-9 pr-8 text-[10px] font-black text-white/65">
                 <option value="newest">Newest first</option>
-                <option value="rating">Highest Star rating</option>
+                <option value="rating">Highest technical checklist score</option>
                 <option value="price-low">Price: low to high</option>
                 <option value="price-high">Price: high to low</option>
               </select>
@@ -294,9 +320,9 @@ export default function SoundLibraryPage() {
                         <p className="text-[9px] text-white/30">Independent seller</p>
                       </div>
                     </div>
-                    <div className={`shrink-0 rounded-lg border px-2 py-1.5 ${score != null ? "border-amber-300/25 bg-amber-300/10" : "border-white/10 bg-white/[0.03]"}`} title="Crucible Star audio quality rating">
+                    <div className={`shrink-0 rounded-lg border px-2 py-1.5 ${score != null ? "border-amber-300/25 bg-amber-300/10" : "border-white/10 bg-white/[0.03]"}`} title="Technical checklist only; not a sound-quality grade">
                       <p className={`flex items-center gap-1 text-[9px] font-black uppercase tracking-wider ${score != null ? "text-amber-200" : "text-white/30"}`}><Star size={11} fill={score != null ? "currentColor" : "none"} />Crucible Star</p>
-                      <p className="mt-0.5 text-right font-mono text-[11px] font-black">{score != null ? `${item.crucible_grade ?? "—"} · ${score}/100` : "Not rated"}</p>
+                      <p className="mt-0.5 text-right font-mono text-[11px] font-black">{score != null ? `Technical · ${score}/100` : "Not checked"}</p>
                     </div>
                   </div>
 

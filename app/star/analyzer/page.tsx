@@ -130,7 +130,7 @@ export default function CrucibleStarAnalyzerPage() {
                     className={`min-w-48 rounded-xl border px-3 py-3 text-left transition disabled:opacity-50 ${active ? "border-sky-300/45 bg-sky-300/10" : "border-white/8 bg-black/25"}`}
                   >
                     <span className="block truncate text-xs font-black text-white/85">{track.title}</span>
-                    <span className="mt-1 block text-[10px] text-white/35">{openingId === track.id ? "Opening…" : `${track.grade ?? "—"}${typeof track.analysis_score === "number" ? ` · ${track.analysis_score}/100` : ""}`}</span>
+                    <span className="mt-1 block text-[10px] text-white/35">{openingId === track.id ? "Opening…" : `Technical: ${track.verification_status}`}</span>
                   </button>
                 );
               })}
