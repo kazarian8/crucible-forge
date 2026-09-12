@@ -21,7 +21,12 @@ const items: readonly NavItem[] = [
 
 export default function ArtistBottomNav() {
   const pathname = usePathname();
-  const hidden = pathname.startsWith("/login") || pathname.startsWith("/signup") || pathname.startsWith("/verify-email");
+  const hidden =
+    pathname.startsWith("/login") ||
+    pathname.startsWith("/signup") ||
+    pathname.startsWith("/verify-email") ||
+    pathname.startsWith("/subscribe") ||
+    pathname.startsWith("/billing/success");
   if (hidden) return null;
 
   return (
