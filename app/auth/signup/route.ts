@@ -153,6 +153,22 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "email-in-use" }, { status: 409 });
     }
 
+    // Email verification is mandatory for Crucible. With Supabase confirmations
+    // enabled, password sign-up creates the user but does NOT return a session.
+    // If a live session comes back here, fail closed rather than silently
+    // admitting an unverified account because the provider setting was changed.
+    if (data.session) {
+      await supabase.auth.signOut().catch(() => undefined);
+      if (data.user) {
+        const cleanupAdmin = createAdminClient();
+        await cleanupAdmin.auth.admin.deleteUser(data.user.id).catch(() => undefined);
+      }
+      return NextResponse.json(
+        { error: "email-verification-required" },
+        { status: 503, headers: { "Cache-Control": "private, no-store" } },
+      );
+    }
+
     if (expertInvite && data.user) {
       const expertAdmin = createAdminClient();
       const { error: accessError } = await expertAdmin
@@ -167,7 +183,7 @@ export async function POST(request: NextRequest) {
     }
 
     return NextResponse.json(
-      { ok: true, pendingVerification: !data.session, expertMusicianDev: Boolean(expertInvite) },
+      { ok: true, pendingVerification: true, expertMusicianDev: Boolean(expertInvite) },
       { headers: { "Cache-Control": "private, no-store" } },
     );
   } catch (error) {
