@@ -39,6 +39,7 @@ type CollaborationInfo = {
 };
 
 const DISTROKID_URL = process.env.NEXT_PUBLIC_DISTROKID_AFFILIATE_URL?.trim() || "https://distrokid.com/";
+const DISTROKID_SPOTLIGHT_URL = "https://distrokid.com/spotlight/";
 
 function displayDate(value: string) {
   return new Intl.DateTimeFormat(undefined, {
@@ -244,11 +245,32 @@ export default function TrackProjectPage() {
         ) : (
           <section className="mt-7 rounded-3xl bg-white p-6 shadow-sm">
             <div className="grid size-14 place-items-center rounded-2xl bg-emerald-500 text-white"><Globe2 size={26} /></div>
-            <h2 className="mt-5 text-2xl font-black">Distribute to 40+ Platforms</h2>
-            <p className="mt-2 max-w-xl text-sm leading-6 text-zinc-500">Send this finished track to DistroKid to manage delivery to Spotify, Apple Music, TikTok, YouTube Music, and other supported stores.</p>
-            <a href={DISTROKID_URL} target="_blank" rel="sponsored noopener noreferrer" className="mt-6 inline-flex items-center gap-2 rounded-2xl bg-[#ff2d19] px-5 py-3 font-black text-white">Continue to DistroKid <ExternalLink size={17} /></a>
-            <p className="mt-4 text-xs leading-5 text-zinc-400">Distribution is completed on DistroKid. Crucible does not mark a release distributed until a distributor confirms it.</p>
-            <div className="mt-6 rounded-2xl border border-dashed border-zinc-200 p-4 text-sm font-bold text-zinc-400">More distribution options coming later.</div>
+            <h2 className="mt-5 text-2xl font-black">Release Your Master</h2>
+            <p className="mt-2 max-w-xl text-sm leading-6 text-zinc-500">Your finished track can move from Crucible straight into distribution, then into DistroKid Spotlight for an additional shot at playlist exposure.</p>
+
+            <div className="mt-6 rounded-2xl border border-zinc-200 p-5">
+              <div className="flex items-start gap-3">
+                <div className="grid size-9 shrink-0 place-items-center rounded-full bg-zinc-950 text-sm font-black text-white">1</div>
+                <div>
+                  <h3 className="font-black">Distribute to 40+ Platforms</h3>
+                  <p className="mt-1 text-sm leading-6 text-zinc-500">Send this mastered track to DistroKid for delivery to Spotify, Apple Music, TikTok, YouTube Music, and other supported stores.</p>
+                  <a href={DISTROKID_URL} target="_blank" rel="sponsored noopener noreferrer" className="mt-4 inline-flex items-center gap-2 rounded-2xl bg-[#ff2d19] px-5 py-3 font-black text-white">Continue to DistroKid <ExternalLink size={17} /></a>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-4 rounded-2xl border border-zinc-200 p-5">
+              <div className="flex items-start gap-3">
+                <div className="grid size-9 shrink-0 place-items-center rounded-full bg-emerald-500 text-sm font-black text-white">2</div>
+                <div>
+                  <h3 className="font-black">Push for Playlist Exposure</h3>
+                  <p className="mt-1 text-sm leading-6 text-zinc-500">After distribution, open DistroKid Spotlight to submit eligible music for public voting and playlist consideration, including DistroKid playlist opportunities such as Rap Scallion. Placement is never guaranteed.</p>
+                  <a href={DISTROKID_SPOTLIGHT_URL} target="_blank" rel="noopener noreferrer" className="mt-4 inline-flex items-center gap-2 rounded-2xl bg-emerald-500 px-5 py-3 font-black text-white">Open DistroKid Spotlight <ExternalLink size={17} /></a>
+                </div>
+              </div>
+            </div>
+
+            <p className="mt-4 text-xs leading-5 text-zinc-400">Distribution and Spotlight submission are completed on DistroKid. Crucible does not promise store delivery, playlist placement, votes, streams, or acceptance.</p>
           </section>
         )}
 
