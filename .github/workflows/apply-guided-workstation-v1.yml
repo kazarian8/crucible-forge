@@ -1,0 +1,544 @@
+name: Apply guided workstation v1
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/apply-guided-workstation-v1.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Apply guided command workstation behavior
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          seq_path = Path("components/sound-furnace/StemSequencer.tsx")
+          text = seq_path.read_text()
+          original = text
+
+          def once(old: str, new: str, label: str):
+              global text
+              if old not in text:
+                  raise SystemExit(f"anchor missing: {label}")
+              text = text.replace(old, new, 1)
+
+          # Reverb environment catalog. Existing projects remain compatible because
+          # reverbSpace is optional and falls back to Large Room.
+          once(
+          '''const EFFECT_PRESETS = [
+            { id: "warm", label: "Warm", detail: "Body and analog weight" },
+            { id: "clear", label: "Clear", detail: "Presence and definition" },
+            { id: "air", label: "Air", detail: "Open top end" },
+            { id: "bass", label: "Bass", detail: "Focused low-end punch" },
+            { id: "echo", label: "Echo", detail: "Tempo-safe depth" },
+            { id: "space", label: "Space", detail: "Natural room tail" },
+          ] as const;
+          ''',
+          '''const EFFECT_PRESETS = [
+            { id: "warm", label: "Warm", detail: "Body and analog weight" },
+            { id: "clear", label: "Clear", detail: "Presence and definition" },
+            { id: "air", label: "Air", detail: "Open top end" },
+            { id: "bass", label: "Bass", detail: "Focused low-end punch" },
+            { id: "echo", label: "Echo", detail: "Tempo-safe depth" },
+            { id: "space", label: "Reverb", detail: "Room and environment space" },
+          ] as const;
+          const REVERB_SPACES = [
+            { id: "small-room", label: "Small Room", decay: 0.55, darkness: 0.12 },
+            { id: "large-room", label: "Large Room", decay: 1.25, darkness: 0.16 },
+            { id: "large-hall", label: "Large Hall", decay: 2.4, darkness: 0.2 },
+            { id: "concert-hall", label: "Concert Hall", decay: 3.4, darkness: 0.24 },
+            { id: "large-cylinder", label: "Large Cylinder", decay: 2.8, darkness: 0.33 },
+            { id: "chamber", label: "Chamber", decay: 1.7, darkness: 0.28 },
+            { id: "plate", label: "Plate", decay: 1.95, darkness: 0.08 },
+            { id: "tunnel", label: "Tunnel", decay: 3.0, darkness: 0.38 },
+            { id: "cathedral", label: "Cathedral", decay: 5.1, darkness: 0.32 },
+            { id: "open-air", label: "Outdoors / Open Air", decay: 0.32, darkness: 0.04 },
+          ] as const;
+          ''',
+          "effect presets")
+
+          once(
+          '''type EffectPreset = typeof EFFECT_PRESETS[number]["id"];
+          type MusicalNote = typeof MUSICAL_NOTES[number];
+          ''',
+          '''type EffectPreset = typeof EFFECT_PRESETS[number]["id"];
+          type ReverbSpace = typeof REVERB_SPACES[number]["id"];
+          type MusicalNote = typeof MUSICAL_NOTES[number];
+          ''',
+          "reverb type")
+
+          once(
+          '''type TrackEffects = {
+            enabled: boolean;
+            preset: EffectPreset;
+            intensity: number;
+            focusNote: MusicalNote;
+            octave: number;
+          };
+          ''',
+          '''type TrackEffects = {
+            enabled: boolean;
+            preset: EffectPreset;
+            intensity: number;
+            focusNote: MusicalNote;
+            octave: number;
+            reverbSpace?: ReverbSpace;
+          };
+          ''',
+          "track effects type")
+
+          # Give spacious reverbs enough offline-render tail.
+          text = text.replace(
+          '''  const effectTail = active.some((track) => track.effects.enabled && track.effects.preset === "space")
+            ? 3
+          ''',
+          '''  const effectTail = active.some((track) => track.effects.enabled && track.effects.preset === "space")
+            ? 6
+          ''', 1)
+
+          once(
+          '''      if (track.effects.preset === "space") {
+                const convolver = context.createConvolver();
+                const wet = context.createGain();
+                const seconds = 0.35 + amount * 2.2;
+                const impulse = context.createBuffer(2, Math.ceil(context.sampleRate * seconds), context.sampleRate);
+                for (let channel = 0; channel < impulse.numberOfChannels; channel += 1) {
+                  const data = impulse.getChannelData(channel);
+                  for (let index = 0; index < data.length; index += 1) {
+                    data[index] = (Math.random() * 2 - 1) * Math.pow(1 - index / data.length, 2.4);
+                  }
+                }
+                convolver.buffer = impulse;
+                wet.gain.value = amount * 0.6;
+                tone.connect(convolver).connect(wet).connect(context.destination);
+              }
+          ''',
+          '''      if (track.effects.preset === "space") {
+                const convolver = context.createConvolver();
+                const wet = context.createGain();
+                const space = REVERB_SPACES.find((item) => item.id === (track.effects.reverbSpace ?? "large-room")) ?? REVERB_SPACES[1];
+                const impulseSeconds = Math.max(0.2, space.decay * (0.78 + amount * 0.44));
+                const impulse = context.createBuffer(2, Math.ceil(context.sampleRate * impulseSeconds), context.sampleRate);
+                for (let channel = 0; channel < impulse.numberOfChannels; channel += 1) {
+                  const data = impulse.getChannelData(channel);
+                  for (let index = 0; index < data.length; index += 1) {
+                    const progress = index / Math.max(1, data.length - 1);
+                    const envelope = Math.pow(1 - progress, 1.75 + space.darkness * 3.2);
+                    const toneDamping = 1 - progress * space.darkness * 0.55;
+                    data[index] = (Math.random() * 2 - 1) * envelope * toneDamping;
+                  }
+                }
+                convolver.buffer = impulse;
+                wet.gain.value = amount * 0.62;
+                tone.connect(convolver).connect(wet).connect(context.destination);
+              }
+          ''',
+          "reverb render")
+
+          # Command / selection state.
+          once(
+          '''  const [selectedTrackId, setSelectedTrackId] = useState("");
+            const [playheadSeconds, setPlayheadSeconds] = useState(0);
+          ''',
+          '''  const [selectedTrackId, setSelectedTrackId] = useState("");
+            const [commandTargetIds, setCommandTargetIds] = useState<string[]>([]);
+            const [multiSelectEnabled, setMultiSelectEnabled] = useState(false);
+            const [commandScope, setCommandScope] = useState<"tracks" | "master">("tracks");
+            const [commandText, setCommandText] = useState("");
+            const [commandBusy, setCommandBusy] = useState(false);
+            const [activeCommandControl, setActiveCommandControl] = useState("");
+            const [processingControl, setProcessingControl] = useState("");
+            const [commandStatus, setCommandStatus] = useState("Select a track to begin.");
+            const [lyricEditOpen, setLyricEditOpen] = useState(false);
+            const [lyricStart, setLyricStart] = useState(0);
+            const [lyricEnd, setLyricEnd] = useState(4);
+            const [lyricReplacement, setLyricReplacement] = useState("");
+            const [lyricKeepCadence, setLyricKeepCadence] = useState(true);
+            const [lyricStatus, setLyricStatus] = useState("");
+            const [playheadSeconds, setPlayheadSeconds] = useState(0);
+          ''',
+          "command state")
+
+          # Project-level history wording.
+          text = text.replace('setStatus("Undid the last track edit.");', 'setStatus("Undid the last project edit.");', 1)
+          text = text.replace('setStatus("Redid the last track edit.");', 'setStatus("Redid the last project edit.");', 1)
+          text = text.replace('aria-label="Undo last track edit"', 'aria-label="Undo last project edit"')
+          text = text.replace('aria-label="Redo last track edit"', 'aria-label="Redo last project edit"')
+
+          # Command engine. It deliberately uses deterministic mappings for audio
+          # actions; natural-language AI can be layered over the same actions later.
+          command_engine = r'''
+
+            function selectTrackForCommand(id: string) {
+              setCommandScope("tracks");
+              setSelectedTrackId(id);
+              setCommandTargetIds((current) => {
+                if (!multiSelectEnabled) return [id];
+                if (current.includes(id)) {
+                  const next = current.filter((item) => item !== id);
+                  return next.length ? next : [id];
+                }
+                return [...current, id];
+              });
+              const track = tracks.find((item) => item.id === id);
+              if (track) setCommandStatus(`${track.name} · Command Ready`);
+            }
+
+            function commandTargets() {
+              if (commandScope === "master") return tracks;
+              const ids = commandTargetIds.length ? commandTargetIds : selectedTrackId ? [selectedTrackId] : [];
+              return tracks.filter((track) => ids.includes(track.id));
+            }
+
+            function trackRmsDb(track: StemTrack) {
+              const start = Math.max(0, Math.floor(track.trimStartSeconds * track.buffer.sampleRate));
+              const end = Math.min(track.buffer.length, Math.ceil(track.trimEndSeconds * track.buffer.sampleRate));
+              let sum = 0;
+              let count = 0;
+              for (let channel = 0; channel < track.buffer.numberOfChannels; channel += 1) {
+                const data = track.buffer.getChannelData(channel);
+                for (let index = start; index < end; index += 4) {
+                  sum += data[index] * data[index];
+                  count += 1;
+                }
+              }
+              const rms = Math.sqrt(sum / Math.max(1, count));
+              return rms > 0 ? 20 * Math.log10(rms) : -96;
+            }
+
+            function clampGain(value: number) {
+              return Math.max(-24, Math.min(12, Math.round(value * 10) / 10));
+            }
+
+            function selectedLabel() {
+              if (commandScope === "master") return "MASTER";
+              const targets = commandTargets();
+              if (targets.length === 0) return "Select a track";
+              if (targets.length === 1) return targets[0].name;
+              return `${targets.length} tracks selected`;
+            }
+
+            async function runWorkstationCommand() {
+              const raw = commandText.trim();
+              if (!raw || commandBusy) return;
+              const lower = raw.toLowerCase();
+
+              if (/^(undo|undo that|put it back)$/i.test(raw)) {
+                undoTrackEdit();
+                setCommandStatus("Undid the last project edit.");
+                return;
+              }
+              if (/^(redo|redo that)$/i.test(raw)) {
+                redoTrackEdit();
+                setCommandStatus("Redid the last project edit.");
+                return;
+              }
+
+              const targets = commandTargets();
+              if (targets.length === 0) {
+                setCommandStatus("Select a stem first, or choose MASTER.");
+                return;
+              }
+
+              let control = activeCommandControl;
+              if (!control) {
+                if (/reverb|room|hall|cathedral|chamber|plate|tunnel|open air|outdoor/.test(lower)) control = "Reverb";
+                else if (/delay|echo|slap/.test(lower)) control = "Delay";
+                else if (/pan|left|right|center/.test(lower)) control = "Pan";
+                else if (/fade/.test(lower)) control = "Fade";
+                else if (/gain|louder|quieter|volume|turn up|turn down/.test(lower)) control = "Gain";
+                else if (/normaliz/.test(lower)) control = "Normalize";
+                else if (/balance|match levels/.test(lower)) control = "Balance";
+                else if (/warm|clear|bright|air|bass/.test(lower)) control = "Tone";
+              }
+
+              setProcessingControl(control || "Command");
+              setCommandBusy(true);
+              setCommandStatus(`Crucible editing · ${selectedLabel()}${control ? ` · ${control}` : ""}`);
+              await new Promise<void>((resolve) => window.setTimeout(resolve, 260));
+
+              let applied = false;
+              let summary = "";
+              const targetIds = new Set(targets.map((track) => track.id));
+
+              if (/normaliz/.test(lower) || control === "Normalize") {
+                commitTracks((current) => current.map((track) => {
+                  if (!targetIds.has(track.id)) return track;
+                  const delta = -18 - trackRmsDb(track);
+                  return { ...track, gainDb: clampGain(track.gainDb + delta) };
+                }));
+                applied = true;
+                summary = `Normalized ${targets.length} track${targets.length === 1 ? "" : "s"} toward -18 dB RMS.`;
+              } else if (/balance|match levels/.test(lower) || control === "Balance") {
+                const levels = targets.map((track) => trackRmsDb(track) + track.gainDb).sort((a, b) => a - b);
+                const target = levels[Math.floor(levels.length / 2)] ?? -18;
+                commitTracks((current) => current.map((track) => {
+                  if (!targetIds.has(track.id)) return track;
+                  const currentLevel = trackRmsDb(track) + track.gainDb;
+                  return { ...track, gainDb: clampGain(track.gainDb + (target - currentLevel)) };
+                }));
+                applied = true;
+                summary = `Balanced ${targets.length} track${targets.length === 1 ? "" : "s"} around their median level.`;
+              } else if (/reverb|room|hall|cathedral|chamber|plate|tunnel|open air|outdoor/.test(lower) || control === "Reverb") {
+                const matched = REVERB_SPACES.find((space) => lower.includes(space.label.toLowerCase().replace(" / ", " ")) || lower.includes(space.id.replaceAll("-", " ")));
+                const space = matched?.id ?? "large-room";
+                commitTracks((current) => current.map((track) => targetIds.has(track.id) ? {
+                  ...track,
+                  effects: { ...track.effects, enabled: true, preset: "space", reverbSpace: space },
+                } : track));
+                applied = true;
+                summary = `Applied ${REVERB_SPACES.find((item) => item.id === space)?.label ?? "Large Room"} reverb to ${targets.length} track${targets.length === 1 ? "" : "s"}.`;
+              } else if (/delay|echo|slap/.test(lower) || control === "Delay") {
+                commitTracks((current) => current.map((track) => targetIds.has(track.id) ? {
+                  ...track,
+                  effects: { ...track.effects, enabled: true, preset: "echo" },
+                } : track));
+                applied = true;
+                summary = `Delay enabled on ${targets.length} track${targets.length === 1 ? "" : "s"}.`;
+              } else if (/pan|left|right|center/.test(lower) || control === "Pan") {
+                let pan = 0;
+                if (/left/.test(lower)) pan = -0.35;
+                if (/right/.test(lower)) pan = 0.35;
+                if (/hard left/.test(lower)) pan = -0.8;
+                if (/hard right/.test(lower)) pan = 0.8;
+                if (/center/.test(lower)) pan = 0;
+                commitTracks((current) => current.map((track) => targetIds.has(track.id) ? { ...track, pan } : track));
+                applied = true;
+                summary = `Pan updated on ${targets.length} track${targets.length === 1 ? "" : "s"}.`;
+              } else if (/fade/.test(lower) || control === "Fade") {
+                const secondsMatch = lower.match(/(\d+(?:\.\d+)?)\s*(?:sec|second|s)\b/);
+                const length = Math.max(0.05, Math.min(12, secondsMatch ? Number(secondsMatch[1]) : 1.5));
+                const fadeIn = /fade\s*in/.test(lower);
+                const fadeOut = /fade\s*out|outro|ending/.test(lower) || !fadeIn;
+                commitTracks((current) => current.map((track) => {
+                  if (!targetIds.has(track.id)) return track;
+                  return {
+                    ...track,
+                    fadeInSeconds: fadeIn ? Math.min(length, trackDuration(track) / 2) : track.fadeInSeconds,
+                    fadeOutSeconds: fadeOut ? Math.min(length, trackDuration(track) / 2) : track.fadeOutSeconds,
+                  };
+                }));
+                applied = true;
+                summary = `${fadeIn ? "Fade in" : "Fade out"} updated to ${length.toFixed(1)}s.`;
+              } else if (/gain|louder|quieter|volume|turn up|turn down/.test(lower) || control === "Gain") {
+                const dbMatch = lower.match(/([+-]?\d+(?:\.\d+)?)\s*db/);
+                let delta = dbMatch ? Number(dbMatch[1]) : /quieter|turn down|lower/.test(lower) ? -2 : 2;
+                if (/minus|down/.test(lower) && delta > 0) delta *= -1;
+                commitTracks((current) => current.map((track) => targetIds.has(track.id) ? { ...track, gainDb: clampGain(track.gainDb + delta) } : track));
+                applied = true;
+                summary = `${delta >= 0 ? "+" : ""}${delta.toFixed(1)} dB on ${targets.length} track${targets.length === 1 ? "" : "s"}.`;
+              } else if (/warm|clear|bright|air|bass/.test(lower)) {
+                const preset: EffectPreset = /warm/.test(lower) ? "warm" : /bass/.test(lower) ? "bass" : /air|bright/.test(lower) ? "air" : "clear";
+                commitTracks((current) => current.map((track) => targetIds.has(track.id) ? {
+                  ...track,
+                  effects: { ...track.effects, enabled: true, preset },
+                } : track));
+                applied = true;
+                summary = `${preset[0].toUpperCase() + preset.slice(1)} tone applied.`;
+              }
+
+              setProcessingControl("");
+              setCommandBusy(false);
+              setCommandStatus(applied ? `✓ ${summary} · Undo available` : "That command is not mapped yet. Pick a function or add it to the Crucible Command Key.");
+              if (applied) setCommandText("");
+            }
+          '''
+          anchor = '\n  return (\n    <section className="min-h-[calc(100vh-4.5rem)]'
+          if anchor not in text:
+              raise SystemExit("return anchor missing")
+          text = text.replace(anchor, command_engine + anchor, 1)
+
+          # Route visible track taps through the command selection system.
+          text = text.replace('onClick={() => setSelectedTrackId(track.id)}', 'onClick={() => selectTrackForCommand(track.id)}')
+          text = text.replace('setSelectedTrackId(track.id);\n                              setEffectsTrackId', 'selectTrackForCommand(track.id);\n                              setEffectsTrackId')
+
+          # Add green user-selected and cyan Crucible-processing visual states.
+          once(
+          '''                  const selected = selectedTrack?.id === track.id;
+                    const clipLeft = (track.startSeconds / rulerDuration) * 100;
+          ''',
+          '''                  const selected = selectedTrack?.id === track.id;
+                    const commandSelected = commandScope === "tracks" && commandTargetIds.includes(track.id);
+                    const commandProcessing = commandBusy && commandSelected;
+                    const clipLeft = (track.startSeconds / rulerDuration) * 100;
+          ''',
+          "track selection vars")
+
+          once(
+          '''                    <article key={track.id} className={`grid h-[88px] grid-cols-[190px_1fr] border-b border-white/[0.07] last:border-b-0 ${inactive ? "opacity-45" : ""}`}>
+          ''',
+          '''                    <article key={track.id} className={`grid h-[88px] grid-cols-[190px_1fr] border-b border-white/[0.07] last:border-b-0 transition-shadow ${inactive ? "opacity-45" : ""} ${commandProcessing ? "shadow-[inset_0_0_0_1px_rgba(34,211,238,.85),0_0_22px_rgba(34,211,238,.2)]" : commandSelected ? "shadow-[inset_0_0_0_1px_rgba(74,222,128,.72),0_0_18px_rgba(74,222,128,.16)]" : ""}`}>
+          ''',
+          "track article style")
+
+          text = text.replace(
+          'className={`border-r px-2 py-2 ${selected ? "border-orange-400/50 bg-orange-500/10" : "border-white/10 bg-black/35"}`}',
+          'className={`border-r px-2 py-2 ${commandSelected ? "border-emerald-300/60 bg-emerald-400/10" : selected ? "border-orange-400/50 bg-orange-500/10" : "border-white/10 bg-black/35"}`}',
+          1)
+          text = text.replace(
+          'className={`relative overflow-hidden text-left ${selected ? "ring-1 ring-inset ring-orange-300/45" : ""}`}',
+          'className={`relative overflow-hidden text-left ${commandProcessing ? "ring-2 ring-inset ring-cyan-300/90" : commandSelected ? "ring-2 ring-inset ring-emerald-300/75" : selected ? "ring-1 ring-inset ring-orange-300/45" : ""}`}',
+          1)
+
+          # Command bar goes immediately below the workstation view tabs.
+          command_ui = r'''
+
+                <section className="border-b border-emerald-300/15 bg-[linear-gradient(90deg,rgba(16,185,129,.07),rgba(34,211,238,.035),transparent)] p-3">
+                  <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
+                    <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => { setCommandScope("master"); setCommandTargetIds([]); setActiveCommandControl(""); setCommandStatus("MASTER · Command Ready"); }}
+                        className={`rounded-lg border px-3 py-2 text-[10px] font-black uppercase tracking-wider ${commandScope === "master" ? "border-emerald-200 bg-emerald-300 text-emerald-950 shadow-[0_0_18px_rgba(110,231,183,.25)]" : "border-white/10 text-white/45"}`}
+                      >MASTER</button>
+                      <button
+                        type="button"
+                        aria-pressed={multiSelectEnabled}
+                        onClick={() => { setMultiSelectEnabled((value) => !value); setCommandScope("tracks"); }}
+                        className={`rounded-lg border px-3 py-2 text-[10px] font-black ${multiSelectEnabled ? "border-emerald-300/60 bg-emerald-400/15 text-emerald-100" : "border-white/10 text-white/45"}`}
+                      >{multiSelectEnabled ? "Multi-select ON" : "Select multiple"}</button>
+                      <div className={`min-w-0 rounded-lg border px-3 py-2 font-mono text-[10px] font-black uppercase tracking-wider ${commandBusy ? "border-cyan-300/65 bg-cyan-300/10 text-cyan-100 shadow-[0_0_20px_rgba(34,211,238,.18)]" : commandScope === "master" || commandTargetIds.length ? "border-emerald-300/45 bg-emerald-400/[0.07] text-emerald-100" : "border-white/10 text-white/35"}`}>
+                        {commandBusy ? `CRUCIBLE EDITING · ${selectedLabel()}${processingControl ? ` · ${processingControl}` : ""}` : `${selectedLabel()} · ${commandScope === "master" || commandTargetIds.length ? "Command Ready" : "Select a track"}`}
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {["Gain", "Pan", "Fade", "Reverb", "Delay", "Balance", "Normalize"].map((control) => (
+                        <button key={control} type="button" onClick={() => setActiveCommandControl(control)} className={`rounded-md border px-2.5 py-1.5 text-[9px] font-black uppercase tracking-wider ${processingControl === control ? "border-cyan-200 bg-cyan-300 text-cyan-950 shadow-[0_0_16px_rgba(34,211,238,.35)]" : activeCommandControl === control ? "border-emerald-200 bg-emerald-300 text-emerald-950" : "border-white/10 text-white/45"}`}>{control}</button>
+                      ))}
+                      <button type="button" onClick={() => { setLyricEditOpen((open) => !open); setActiveCommandControl("Lyric Edit"); }} className={`rounded-md border px-2.5 py-1.5 text-[9px] font-black uppercase tracking-wider ${lyricEditOpen ? "border-emerald-200 bg-emerald-300 text-emerald-950" : "border-white/10 text-white/45"}`}>Lyric Edit</button>
+                    </div>
+                  </div>
+                  <div className="mt-3 grid gap-2 sm:grid-cols-[auto_auto_minmax(0,1fr)_auto]">
+                    <button type="button" onClick={undoTrackEdit} disabled={!canUndo || commandBusy} aria-label="Undo last project edit" className="rounded-lg border border-white/10 px-3 py-2 text-sm font-black text-white/60 disabled:opacity-25">↶ Undo</button>
+                    <button type="button" onClick={redoTrackEdit} disabled={!canRedo || commandBusy} aria-label="Redo last project edit" className="rounded-lg border border-white/10 px-3 py-2 text-sm font-black text-white/60 disabled:opacity-25">↷ Redo</button>
+                    <input
+                      value={commandText}
+                      onChange={(event) => setCommandText(event.target.value)}
+                      onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void runWorkstationCommand(); } }}
+                      placeholder={commandScope === "master" ? "Tell Crucible what to do to the full mix…" : "Example: make this louder, Large Hall reverb, balance these…"}
+                      className="min-w-0 rounded-xl border border-emerald-300/20 bg-black/45 px-4 py-3 text-sm text-white outline-none placeholder:text-white/25 focus:border-emerald-300/60"
+                    />
+                    <button type="button" onClick={() => void runWorkstationCommand()} disabled={commandBusy || !commandText.trim()} className={`rounded-xl px-5 py-3 text-xs font-black uppercase tracking-wider disabled:opacity-30 ${commandBusy ? "bg-cyan-300 text-cyan-950" : "bg-emerald-300 text-emerald-950"}`}>{commandBusy ? "Working…" : "Run"}</button>
+                  </div>
+                  <p className={`mt-2 text-[10px] font-bold ${commandBusy ? "text-cyan-200" : "text-white/40"}`}>{commandStatus}</p>
+                </section>
+          '''
+          nav_anchor = '''      </nav>\n\n\n      {projectSettingsOpen ? ('''
+          if nav_anchor not in text:
+              raise SystemExit("nav anchor missing")
+          text = text.replace(nav_anchor, '      </nav>\n' + command_ui + '\n\n      {projectSettingsOpen ? (', 1)
+
+          # Reverb environment picker inside the existing per-stem effects panel.
+          reverb_picker = r'''
+
+                      {selectedTrack.effects.preset === "space" ? (
+                        <div className="mt-4 rounded-xl border border-cyan-300/15 bg-cyan-400/[0.035] p-3">
+                          <p className="text-[9px] font-black uppercase tracking-[0.16em] text-cyan-200/60">Reverb environment</p>
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            {REVERB_SPACES.map((space) => (
+                              <button key={space.id} type="button" onClick={() => replaceTrack(selectedTrack.id, { effects: { ...selectedTrack.effects, enabled: true, preset: "space", reverbSpace: space.id } })} className={`rounded-lg border px-3 py-2 text-[10px] font-black ${ (selectedTrack.effects.reverbSpace ?? "large-room") === space.id ? "border-emerald-200 bg-emerald-300 text-emerald-950" : "border-white/10 text-white/45"}`}>{space.label}</button>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
+          '''
+          effect_anchor = '''              </div>\n\n              <div className="mt-5 grid gap-3 sm:grid-cols-2">'''
+          if effect_anchor not in text:
+              raise SystemExit("effect picker anchor missing")
+          text = text.replace(effect_anchor, '              </div>\n' + reverb_picker + '\n\n              <div className="mt-5 grid gap-3 sm:grid-cols-2">', 1)
+
+          # Lyric Edit UI: this implements targeting, region selection and staging
+          # without pretending a voice-matched synthesis provider is connected.
+          lyric_ui = r'''
+
+              {selectedTrack && lyricEditOpen ? (
+                <section className="mt-4 rounded-2xl border border-emerald-300/20 bg-emerald-400/[0.035] p-4">
+                  <div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-start">
+                    <div>
+                      <p className="text-[9px] font-black uppercase tracking-[0.2em] text-emerald-200/70">Lyric Edit · Beta</p>
+                      <h3 className="mt-1 text-sm font-black text-white/85">{selectedTrack.name}</h3>
+                      <p className="mt-1 max-w-2xl text-xs leading-5 text-white/40">Choose the vocal region and replacement words. Crucible keeps this staged until a voice-matched render is available, so it never fakes an audio replacement.</p>
+                    </div>
+                    <button type="button" onClick={() => setLyricEditOpen(false)} className="text-xs font-black text-white/35">Close</button>
+                  </div>
+                  <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                    <label className="text-[9px] font-black uppercase tracking-wider text-white/35">Start seconds
+                      <input type="number" min="0" max={selectedTrack.buffer.duration} step="0.01" value={lyricStart} onChange={(event) => setLyricStart(Math.max(0, event.target.valueAsNumber || 0))} className="mt-1 w-full rounded-lg border border-white/10 bg-black/45 px-3 py-2.5 text-sm text-white" />
+                    </label>
+                    <label className="text-[9px] font-black uppercase tracking-wider text-white/35">End seconds
+                      <input type="number" min="0" max={selectedTrack.buffer.duration} step="0.01" value={lyricEnd} onChange={(event) => setLyricEnd(Math.max(0, event.target.valueAsNumber || 0))} className="mt-1 w-full rounded-lg border border-white/10 bg-black/45 px-3 py-2.5 text-sm text-white" />
+                    </label>
+                  </div>
+                  <label className="mt-3 block text-[9px] font-black uppercase tracking-wider text-white/35">Replacement words
+                    <textarea value={lyricReplacement} onChange={(event) => setLyricReplacement(event.target.value)} rows={3} maxLength={500} placeholder="Type the replacement line…" className="mt-1 w-full rounded-xl border border-white/10 bg-black/45 p-3 text-sm normal-case tracking-normal text-white outline-none focus:border-emerald-300/50" />
+                  </label>
+                  <label className="mt-3 flex items-center gap-2 text-xs font-bold text-white/55"><input type="checkbox" checked={lyricKeepCadence} onChange={(event) => setLyricKeepCadence(event.target.checked)} className="accent-emerald-300" /> Preserve the existing cadence and phrase length</label>
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    <button type="button" onClick={() => {
+                      if (!lyricReplacement.trim()) { setLyricStatus("Type the replacement words first."); return; }
+                      if (lyricEnd <= lyricStart) { setLyricStatus("End time must be after start time."); return; }
+                      setLyricStatus(`Staged ${lyricStart.toFixed(2)}–${lyricEnd.toFixed(2)}s · ${lyricKeepCadence ? "preserve cadence" : "free timing"}. Voice-matched render engine still needs to be connected before Preview / Apply can alter audio.`);
+                    }} className="rounded-xl bg-emerald-300 px-4 py-2.5 text-xs font-black text-emerald-950">Stage lyric change</button>
+                    <span className="text-[10px] text-white/35">Original audio remains untouched.</span>
+                  </div>
+                  {lyricStatus ? <p className="mt-2 text-xs leading-5 text-emerald-100/70">{lyricStatus}</p> : null}
+                </section>
+              ) : null}
+          '''
+          lyric_anchor = '''      {tracks.length > 0 && cadenceOpen ? ('''
+          if lyric_anchor not in text:
+              raise SystemExit("lyric ui anchor missing")
+          text = text.replace(lyric_anchor, lyric_ui + '\n\n      {tracks.length > 0 && cadenceOpen ? (', 1)
+
+          if text == original:
+              raise SystemExit("No sequencer changes produced")
+          seq_path.write_text(text)
+
+          # Product naming: one-click stereo mastering is Remaster. Forge stays
+          # reserved for the Engineer Mode mix action.
+          furnace = Path("app/sound-furnace/page.tsx")
+          f = furnace.read_text()
+          f2 = f.replace("Auto Forge", "Remaster")
+          if f2 == f:
+              raise SystemExit("Auto Forge label not found")
+          furnace.write_text(f2)
+
+          workstation = Path("app/workstation/page.tsx")
+          w = workstation.read_text()
+          w = w.replace('>Mastering</Link>', '>Remaster</Link>')
+          workstation.write_text(w)
+          PY
+
+      - name: Verify production build
+        run: |
+          npm ci
+          npm run build
+
+      - name: Commit verified guided workstation
+        shell: bash
+        run: |
+          if git diff --quiet; then
+            echo "No guided workstation changes"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add components/sound-furnace/StemSequencer.tsx app/sound-furnace/page.tsx app/workstation/page.tsx
+          git commit -m "Add guided workstation commands and Remaster naming"
+          git push
