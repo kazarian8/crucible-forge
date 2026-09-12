@@ -47,6 +47,18 @@ export async function proxy(request: NextRequest) {
   const hostname = request.headers.get("host")?.split(":")[0].toLowerCase();
   const isStarHost = Boolean(hostname && STAR_HOSTS.has(hostname));
   const isStarRoot = Boolean(isStarHost && pathname === "/");
+  const isVaultRoute = pathname === "/owner-vault" || pathname.startsWith("/owner-vault/");
+
+  // The legal/ownership vault is intentionally a CrucibleStar-only surface.
+  // Forge can initiate a secure one-time handoff, but never renders vault data.
+  if (isVaultRoute && !isStarHost) {
+    const handoffUrl = request.nextUrl.clone();
+    handoffUrl.pathname = "/auth/handoff";
+    handoffUrl.search = "";
+    handoffUrl.searchParams.set("target", "star");
+    handoffUrl.searchParams.set("next", `${pathname}${request.nextUrl.search}`);
+    return NextResponse.redirect(handoffUrl, 303);
+  }
 
   const makeBaseResponse = () => {
     if (isStarRoot) {
@@ -58,7 +70,7 @@ export async function proxy(request: NextRequest) {
   };
 
   const paidRoute = PAID_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
-  const authenticatedRoute = paidRoute || pathname === "/account" || pathname === SUBSCRIBE_ROUTE || pathname.startsWith("/billing/success");
+  const authenticatedRoute = paidRoute || isVaultRoute || pathname === "/account" || pathname === SUBSCRIBE_ROUTE || pathname.startsWith("/billing/success");
   const authEndpoint = pathname.startsWith("/auth/");
   const switchingAccount = pathname === LOGIN_ROUTE && searchParams.get("switch") === "1";
 
