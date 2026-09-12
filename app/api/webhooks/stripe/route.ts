@@ -20,6 +20,12 @@ type StripeSubscription = {
   metadata?: { user_id?: string };
 };
 
+type VaultIdentityRow = {
+  id: string;
+  user_id: string;
+  legal_name: string;
+};
+
 function allowedStatus(value: string) {
   return [
     "inactive",
@@ -144,6 +150,112 @@ async function grantCredits(
   });
 }
 
+function normalizeName(value: string) {
+  return value
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+}
+
+function legalNameMatches(entered: string, firstName: string, lastName: string) {
+  const enteredParts = normalizeName(entered);
+  const firstParts = normalizeName(firstName);
+  const lastParts = normalizeName(lastName);
+  if (!enteredParts.length || !firstParts.length || !lastParts.length) return false;
+  const first = firstParts.join(" ");
+  const last = lastParts.join(" ");
+  return enteredParts[0] === first && enteredParts[enteredParts.length - 1] === last;
+}
+
+async function auditIdentity(vaultId: string, userId: string, eventType: string, data: Record<string, unknown> = {}) {
+  await adminRequest("creator_vault_audit_log", {
+    method: "POST",
+    headers: { Prefer: "return=minimal" },
+    body: JSON.stringify({
+      vault_id: vaultId,
+      user_id: userId,
+      event_type: eventType,
+      event_data: data,
+    }),
+  }).catch(() => null);
+}
+
+async function handleIdentityEvent(event: Stripe.Event, secretKey: string) {
+  const eventObject = event.data.object as unknown as { id?: string; metadata?: Record<string, string> };
+  const sessionId = typeof eventObject.id === "string" ? eventObject.id : null;
+  const vaultId = eventObject.metadata?.vault_id ?? null;
+  const userId = eventObject.metadata?.user_id ?? null;
+  if (!sessionId || !vaultId || !userId) return;
+
+  const vaultRows = await adminRequest<VaultIdentityRow[]>(
+    `creator_vaults?id=eq.${encodeURIComponent(vaultId)}&user_id=eq.${encodeURIComponent(userId)}&select=id,user_id,legal_name&limit=1`,
+  );
+  const vault = vaultRows[0];
+  if (!vault) return;
+
+  if (event.type === "identity.verification_session.verified") {
+    const stripe = getStripeClient(secretKey);
+    const verified = await stripe.identity.verificationSessions.retrieve(sessionId);
+    const outputs = verified.verified_outputs;
+    const firstName = outputs?.first_name ?? "";
+    const lastName = outputs?.last_name ?? "";
+    const nameMatch = legalNameMatches(vault.legal_name, firstName, lastName);
+    const now = new Date().toISOString();
+
+    await adminRequest(`creator_vaults?id=eq.${encodeURIComponent(vaultId)}&user_id=eq.${encodeURIComponent(userId)}`, {
+      method: "PATCH",
+      headers: { Prefer: "return=minimal" },
+      body: JSON.stringify({
+        identity_session_id: sessionId,
+        identity_status: nameMatch ? "verified" : "requires_input",
+        identity_verified_at: nameMatch ? now : null,
+        legal_name_verified: nameMatch,
+        unlock_failed_count: 0,
+        unlock_locked_until: null,
+        updated_at: now,
+      }),
+    });
+
+    if (nameMatch) {
+      await adminRequest(
+        `partner_vault_sessions?user_id=eq.${encodeURIComponent(userId)}&vault_id=eq.${encodeURIComponent(vaultId)}&status=in.(created,started,identity_pending)`,
+        {
+          method: "PATCH",
+          headers: { Prefer: "return=minimal" },
+          body: JSON.stringify({ status: "completed", completed_at: now, updated_at: now }),
+        },
+      ).catch(() => null);
+      await auditIdentity(vaultId, userId, "identity_verified", { provider: "stripe_identity", legalNameMatched: true });
+    } else {
+      await auditIdentity(vaultId, userId, "identity_legal_name_mismatch", { provider: "stripe_identity" });
+    }
+    return;
+  }
+
+  if (event.type === "identity.verification_session.requires_input") {
+    await adminRequest(`creator_vaults?id=eq.${encodeURIComponent(vaultId)}&user_id=eq.${encodeURIComponent(userId)}`, {
+      method: "PATCH",
+      headers: { Prefer: "return=minimal" },
+      body: JSON.stringify({ identity_status: "requires_input", legal_name_verified: false, updated_at: new Date().toISOString() }),
+    });
+    await auditIdentity(vaultId, userId, "identity_requires_input", { provider: "stripe_identity" });
+    return;
+  }
+
+  if (event.type === "identity.verification_session.canceled") {
+    await adminRequest(`creator_vaults?id=eq.${encodeURIComponent(vaultId)}&user_id=eq.${encodeURIComponent(userId)}`, {
+      method: "PATCH",
+      headers: { Prefer: "return=minimal" },
+      body: JSON.stringify({ identity_status: "canceled", legal_name_verified: false, updated_at: new Date().toISOString() }),
+    });
+    await auditIdentity(vaultId, userId, "identity_canceled", { provider: "stripe_identity" });
+  }
+}
+
 export async function POST(request: Request) {
   const { secretKey, webhookSecret } = getBillingConfig();
 
@@ -177,7 +289,9 @@ export async function POST(request: Request) {
   }
 
   try {
-    if (
+    if (event.type.startsWith("identity.verification_session.")) {
+      await handleIdentityEvent(event, secretKey);
+    } else if (
       event.type === "customer.subscription.created" ||
       event.type === "customer.subscription.updated" ||
       event.type === "customer.subscription.deleted"
