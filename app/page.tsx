@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { AudioLines, LibraryBig, Music2, Radio, SlidersHorizontal, Sparkles, Upload } from "lucide-react";
+import { AudioLines, LibraryBig, Music2, Radio, ShieldCheck, SlidersHorizontal, Sparkles, Upload } from "lucide-react";
 
 const cards = [
   {
@@ -7,6 +7,12 @@ const cards = [
     description: "Analyze a device file, save the private master, and publish it when you choose.",
     href: "/star",
     icon: Upload,
+  },
+  {
+    title: "Protect Your Work",
+    description: "Keep ownership records, copyright paperwork, business documents, and legal files together in your private CrucibleStar Owner Vault.",
+    href: "/owner-vault",
+    icon: ShieldCheck,
   },
   {
     title: "Moments",
@@ -63,12 +69,25 @@ export default function HomePage() {
           </div>
         </section>
 
+        <section className="mt-6 rounded-[26px] border border-sky-300/20 bg-[linear-gradient(135deg,rgba(14,165,233,.12),rgba(2,6,23,.9))] p-6 sm:p-7">
+          <div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-center">
+            <div className="max-w-2xl">
+              <div className="flex items-center gap-2 text-sky-300"><ShieldCheck size={20} /><span className="text-xs font-black uppercase tracking-[0.2em]">Independent protection</span></div>
+              <h3 className="mt-3 text-2xl font-black">Protect your work. Keep it all in one place.</h3>
+              <p className="mt-2 text-sm leading-6 text-white/55">Let Crucible guide you through a private ownership vault for your work, copyright-assistance records, business information, contracts, and supporting legal documents. Only the verified owner can unlock the vault.</p>
+            </div>
+            <Link href="/owner-vault" className="inline-flex shrink-0 items-center justify-center gap-2 rounded-2xl bg-sky-300 px-5 py-3 text-sm font-black text-slate-950">
+              <ShieldCheck size={18} /> Protect Your Work
+            </Link>
+          </div>
+        </section>
+
         <section className="mt-8">
           <div className="mb-4 flex items-center justify-between">
             <h3 className="text-lg font-black">Your Crucible</h3>
-            <span className="text-[10px] font-black uppercase tracking-[0.18em] text-white/30">Master · Verify · Release</span>
+            <span className="text-[10px] font-black uppercase tracking-[0.18em] text-white/30">Master · Verify · Protect · Release</span>
           </div>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
             {cards.map((card) => {
               const Icon = card.icon;
               return (
