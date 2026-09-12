@@ -5,12 +5,13 @@ const LOGIN_ROUTE = "/login";
 const SIGNUP_ROUTE = "/signup";
 const VERIFY_EMAIL_ROUTE = "/verify-email";
 const SUBSCRIBE_ROUTE = "/subscribe";
-const DEFAULT_AFTER_LOGIN = "/sound-furnace";
+const FIRST_RUN_AFTER_LOGIN = "/sound-furnace";
+const RETURNING_AFTER_LOGIN = "/";
 
 const PAID_PREFIXES = ["/furnace", "/prompt-reforge", "/sound-furnace", "/studio"];
 const STAR_HOSTS = new Set(["cruciblestar.com", "www.cruciblestar.com"]);
 
-function getSafeNextRoute(value: string | null, fallback = DEFAULT_AFTER_LOGIN) {
+function getSafeNextRoute(value: string | null, fallback = FIRST_RUN_AFTER_LOGIN) {
   const validLocalRoute = value?.startsWith("/") && !value.startsWith("//");
   const accountSetupRoute = value === "/account" || value?.startsWith("/account?") || value?.startsWith("/account#");
   return validLocalRoute && !accountSetupRoute ? value! : fallback;
@@ -151,9 +152,10 @@ export async function proxy(request: NextRequest) {
   }
 
   let entitled = false;
-  if (userId && emailVerified && authenticatedRoute) {
+  let onboardingCompleted = false;
+  if (userId && emailVerified && (authenticatedRoute || pathname === LOGIN_ROUTE)) {
     const now = Date.now();
-    const [{ data: subscription }, { data: developerAccess }] = await Promise.all([
+    const [{ data: subscription }, { data: developerAccess }, { data: profile }] = await Promise.all([
       supabase
         .from("pro_subscriptions")
         .select("status,current_period_end,trial_end")
@@ -166,17 +168,25 @@ export async function proxy(request: NextRequest) {
         .eq("enabled", true)
         .gt("invite_expires_at", new Date(now).toISOString())
         .maybeSingle(),
+      supabase
+        .from("profiles")
+        .select("onboarding_completed_at")
+        .eq("id", userId)
+        .maybeSingle(),
     ]);
     const trialValid = subscription?.status === "trialing" && Boolean(subscription.trial_end) && new Date(subscription!.trial_end as string).getTime() > now;
     const activeValid = subscription?.status === "active" && Boolean(subscription.current_period_end) && new Date(subscription!.current_period_end as string).getTime() > now;
     const developerValid = Boolean(developerAccess?.enabled) && Boolean(developerAccess?.invite_expires_at) && new Date(developerAccess!.invite_expires_at as string).getTime() > now;
     entitled = trialValid || activeValid || developerValid;
+    onboardingCompleted = Boolean(profile?.onboarding_completed_at);
   }
+
+  const defaultAfterLogin = onboardingCompleted ? RETURNING_AFTER_LOGIN : FIRST_RUN_AFTER_LOGIN;
 
   // Payment/trial entitlement stays after identity verification. Verification can
   // never substitute for an active trial, paid subscription, or explicit dev pass.
   if (paidRoute && !entitled) return redirectWithNext(request, SUBSCRIBE_ROUTE, requestedRoute, undefined, response);
-  if (pathname === SUBSCRIBE_ROUTE && entitled) return redirectPreservingSession(request, response, DEFAULT_AFTER_LOGIN);
+  if (pathname === SUBSCRIBE_ROUTE && entitled) return redirectPreservingSession(request, response, defaultAfterLogin);
   if (pathname === VERIFY_EMAIL_ROUTE && userId && emailVerified) {
     return redirectPreservingSession(request, response, getSafeNextRoute(searchParams.get("next"), SUBSCRIBE_ROUTE));
   }
@@ -185,12 +195,12 @@ export async function proxy(request: NextRequest) {
     return redirectPreservingSession(
       request,
       response,
-      entitled ? getSafeNextRoute(searchParams.get("next"), isStarHost ? "/star" : DEFAULT_AFTER_LOGIN) : SUBSCRIBE_ROUTE,
+      entitled ? getSafeNextRoute(searchParams.get("next"), isStarHost ? "/star" : defaultAfterLogin) : SUBSCRIBE_ROUTE,
     );
   }
   if (pathname === SIGNUP_ROUTE && userId) {
     if (!emailVerified) return redirectWithNext(request, VERIFY_EMAIL_ROUTE, SUBSCRIBE_ROUTE, undefined, response);
-    return redirectPreservingSession(request, response, DEFAULT_AFTER_LOGIN);
+    return redirectPreservingSession(request, response, FIRST_RUN_AFTER_LOGIN);
   }
 
   return response;
