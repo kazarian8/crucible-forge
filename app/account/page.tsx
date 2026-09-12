@@ -48,6 +48,7 @@ export default function AccountPage() {
       setUsernameFont(payload.profile?.username_font ?? usernameFont);
       setMessage(payload.charged ? `Locked in. ${payload.charged} credits used.` : "Locked in. No credits used.");
       window.dispatchEvent(new Event("crucible:credits-updated"));
+      window.dispatchEvent(new Event("crucible:profile-updated"));
     } catch {
       setMessage("Could not update username.");
     } finally {
