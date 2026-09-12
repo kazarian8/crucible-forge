@@ -25,6 +25,17 @@ function currentParentCookieDomain(request: NextRequest) {
   return null;
 }
 
+function isAuthCookieName(name: string) {
+  return name.startsWith("sb-") || name.includes("auth-token");
+}
+
+function expireCookie(response: NextResponse, name: string, domain?: string) {
+  response.headers.append(
+    "set-cookie",
+    `${name}=; Path=/;${domain ? ` Domain=${domain};` : ""} Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax`,
+  );
+}
+
 async function listUsers() {
   const admin = createAdminClient();
   const users: UserSummary[] = [];
@@ -115,7 +126,13 @@ export async function POST(request: NextRequest) {
         p_email: email,
       });
       const guard = Array.isArray(guardResult.data) ? guardResult.data[0] : guardResult.data;
-      if (!guardResult.error && guard && typeof guard === "object" && "allowed" in guard && (guard as { allowed?: boolean }).allowed === false) {
+      if (
+        !guardResult.error &&
+        guard &&
+        typeof guard === "object" &&
+        "allowed" in guard &&
+        (guard as { allowed?: boolean }).allowed === false
+      ) {
         return NextResponse.json(
           { error: "rate-limited" },
           { status: 429, headers: { "Cache-Control": "private, no-store", "Retry-After": "900" } },
@@ -134,6 +151,9 @@ export async function POST(request: NextRequest) {
     const supabase = createServerClient(supabaseUrl, supabaseKey, {
       cookies: {
         getAll() {
+          // Sign-in must start from a clean server auth state. Existing browser
+          // cookies are reconciled onto the response after Supabase returns the
+          // fresh session.
           return [];
         },
         setAll(cookiesToSet) {
@@ -146,46 +166,60 @@ export async function POST(request: NextRequest) {
     if (error) {
       const account = await findUserByEmail(email);
       if (account === null) {
-        return NextResponse.json({ error: "account-not-found" }, { status: 404, headers: { "Cache-Control": "private, no-store" } });
+        return NextResponse.json(
+          { error: "account-not-found" },
+          { status: 404, headers: { "Cache-Control": "private, no-store" } },
+        );
       }
       if (account && !account.email_confirmed_at) {
-        return NextResponse.json({ error: "email-not-verified" }, { status: 403, headers: { "Cache-Control": "private, no-store" } });
+        return NextResponse.json(
+          { error: "email-not-verified" },
+          { status: 403, headers: { "Cache-Control": "private, no-store" } },
+        );
       }
       if (account) {
-        return NextResponse.json({ error: "wrong-password" }, { status: 401, headers: { "Cache-Control": "private, no-store" } });
+        return NextResponse.json(
+          { error: "wrong-password" },
+          { status: 401, headers: { "Cache-Control": "private, no-store" } },
+        );
       }
-      return NextResponse.json({ error: "invalid-credentials" }, { status: 401, headers: { "Cache-Control": "private, no-store" } });
+      return NextResponse.json(
+        { error: "invalid-credentials" },
+        { status: 401, headers: { "Cache-Control": "private, no-store" } },
+      );
     }
 
     const response = NextResponse.json(
       { ok: true },
-      { headers: { "Cache-Control": "private, no-store" } },
+      { headers: { "Cache-Control": "private, no-store", Pragma: "no-cache", Expires: "0" } },
     );
 
-    const staleNames = new Set(
+    const pendingNames = new Set(pendingCookies.map(({ name }) => name));
+    const requestAuthNames = new Set(
       request.cookies
         .getAll()
         .map(({ name }) => name)
-        .filter((name) => name.startsWith("sb-") || name.includes("auth-token")),
+        .filter(isAuthCookieName),
     );
-    pendingCookies.forEach(({ name }) => staleNames.add(name));
     const parentDomain = currentParentCookieDomain(request);
 
-    staleNames.forEach((name) => {
-      response.headers.append(
-        "set-cookie",
-        `${name}=; Path=/; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax`,
-      );
-      if (parentDomain) {
-        response.headers.append(
-          "set-cookie",
-          `${name}=; Path=/; Domain=${parentDomain}; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax`,
-        );
-      }
+    // Important: do not emit a host-only deletion for a cookie that is being
+    // replaced in the same response. Some iOS privacy browsers can apply those
+    // duplicate Set-Cookie operations inconsistently and leave the stale refresh
+    // token behind. A fresh host cookie naturally overwrites the old host cookie.
+    requestAuthNames.forEach((name) => {
+      if (!pendingNames.has(name)) expireCookie(response, name);
+      if (parentDomain) expireCookie(response, name, parentDomain);
     });
 
+    // Also remove any older parent-domain variant for newly-issued cookie names.
+    // That prevents duplicate auth cookies from being sent by Safari/WebKit.
+    if (parentDomain) {
+      pendingNames.forEach((name) => expireCookie(response, name, parentDomain));
+    }
+
     pendingCookies.forEach(({ name, value, options }) => {
-      response.cookies.set(name, value, { ...options, domain: undefined });
+      response.cookies.set(name, value, { ...options, domain: undefined, path: "/" });
     });
 
     return response;
