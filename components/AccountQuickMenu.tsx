@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { LogOut, UserRound } from "lucide-react";
+import { LogOut, Repeat2, UserRound } from "lucide-react";
 import { useEffect, useState } from "react";
 
 type ProfileResponse = {
@@ -56,6 +56,17 @@ export default function AccountQuickMenu() {
           {username ? `@${username}` : "Account"}
         </span>
       </Link>
+
+      <form action="/auth/signout?next=/login?switch=1" method="post">
+        <button
+          type="submit"
+          className="flex items-center gap-1.5 rounded-xl border border-white/10 px-3 py-2 text-xs font-black text-white/60 transition hover:border-sky-300/25 hover:bg-sky-400/10 hover:text-sky-100"
+          title="Switch account"
+        >
+          <Repeat2 size={14} aria-hidden="true" />
+          <span>Switch</span>
+        </button>
+      </form>
 
       <form action="/auth/signout?next=/login" method="post">
         <button
