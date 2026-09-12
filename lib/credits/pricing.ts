@@ -6,6 +6,7 @@ export const CREDIT_PRICES = {
   export24Bit: 0,
   usernameChange: 100,
   usernameFontChange: 25,
+  profileLink: 100,
 } as const;
 
 export const CREDIT_SERVICE_LABELS = {
@@ -16,6 +17,7 @@ export const CREDIT_SERVICE_LABELS = {
   export24Bit: "24-bit export",
   usernameChange: "Username change",
   usernameFontChange: "Username font change",
+  profileLink: "Additional profile link",
 } as const;
 
 export type CreditService = keyof typeof CREDIT_PRICES;
